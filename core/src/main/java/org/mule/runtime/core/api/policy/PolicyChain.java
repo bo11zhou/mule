@@ -12,10 +12,9 @@ import static java.util.Optional.ofNullable;
 import static org.mule.runtime.api.notification.PolicyNotification.PROCESS_END;
 import static org.mule.runtime.api.notification.PolicyNotification.PROCESS_START;
 import static org.mule.runtime.core.api.lifecycle.LifecycleUtils.initialiseIfNeeded;
-import static org.mule.runtime.core.privileged.processor.MessageProcessors.newChain;
+import static org.mule.runtime.core.privileged.processor.MessageProcessors.buildNewChainWithListOfProcessors;
 import static org.mule.runtime.core.privileged.processor.MessageProcessors.processToApply;
-import static org.mule.runtime.core.privileged.processor.MessageProcessors.processWithChildContext;
-import static reactor.core.publisher.Mono.from;
+import static reactor.core.publisher.Flux.from;
 
 import org.mule.api.annotation.NoExtend;
 import org.mule.runtime.api.component.AbstractComponent;
@@ -27,14 +26,14 @@ import org.mule.runtime.api.lifecycle.Startable;
 import org.mule.runtime.api.lifecycle.Stoppable;
 import org.mule.runtime.core.api.MuleContext;
 import org.mule.runtime.core.api.context.notification.FlowStackElement;
+import org.mule.runtime.core.api.context.notification.ServerNotificationHandler;
 import org.mule.runtime.core.api.event.CoreEvent;
+import org.mule.runtime.core.api.exception.BaseExceptionHandler;
 import org.mule.runtime.core.api.processor.Processor;
-import org.mule.runtime.core.api.processor.ReactiveProcessor;
 import org.mule.runtime.core.api.processor.strategy.ProcessingStrategy;
 import org.mule.runtime.core.internal.context.notification.DefaultFlowCallStack;
 import org.mule.runtime.core.internal.exception.MessagingException;
 import org.mule.runtime.core.internal.policy.PolicyNotificationHelper;
-import org.mule.runtime.core.privileged.event.BaseEventContext;
 import org.mule.runtime.core.privileged.processor.chain.MessageProcessorChain;
 
 import java.util.List;
@@ -57,12 +56,16 @@ public class PolicyChain extends AbstractComponent
   @Inject
   private MuleContext muleContext;
 
+  @Inject
+  private ServerNotificationHandler notificationManager;
+
   private ProcessingStrategy processingStrategy;
 
   private List<Processor> processors;
   private MessageProcessorChain processorChain;
 
-  private ReactiveProcessor chainWithMPs;
+  private String flowStackEntryName;
+
   private PolicyNotificationHelper notificationHelper;
 
   private boolean propagateMessageTransformations;
@@ -75,12 +78,16 @@ public class PolicyChain extends AbstractComponent
 
   @Override
   public final void initialise() throws InitialisationException {
-    processorChain = newChain(of(processingStrategy), processors);
-    chainWithMPs = processingStrategy.onPipeline(processorChain);
+    processorChain = buildNewChainWithListOfProcessors(ofNullable(processingStrategy), processors, policyChainErrorHandler());
     initialiseIfNeeded(processorChain, muleContext);
 
-    notificationHelper =
-        new PolicyNotificationHelper(muleContext.getNotificationManager(), muleContext.getConfiguration().getId(), this);
+    notificationHelper = new PolicyNotificationHelper(notificationManager, muleContext.getConfiguration().getId(), this);
+
+    flowStackEntryName = getLocation().getLocation() + "[before next]";
+  }
+
+  public ProcessingStrategy getProcessingStrategy() {
+    return processingStrategy;
   }
 
   public void setProcessingStrategy(ProcessingStrategy processingStrategy) {
@@ -110,30 +117,45 @@ public class PolicyChain extends AbstractComponent
 
   @Override
   public CoreEvent process(CoreEvent event) throws MuleException {
-    return processToApply(event, chainWithMPs);
+    return processToApply(event, processorChain);
   }
 
   @Override
   public Publisher<CoreEvent> apply(Publisher<CoreEvent> publisher) {
     return from(publisher)
-        .flatMap(event -> {
-          pushBeforeNextFlowStackElement()
-              .andThen(req -> ((BaseEventContext) req.getContext())
-                  .onResponse((resp, t) -> popFlowFlowStackElement().accept(req)))
-              .andThen(notificationHelper.notification(PROCESS_START))
-              .accept(event);
-          return from(processWithChildContext(event, chainWithMPs, ofNullable(getLocation())))
-              .doOnNext(e -> notificationHelper.fireNotification(e, null, PROCESS_END))
-              .doOnError(MessagingException.class, t -> {
-                notificationHelper.fireNotification(t.getEvent(), t, PROCESS_END);
-                this.onError.ifPresent(onError -> onError.accept(t));
-              });
-        });
+        .doOnNext(pushBeforeNextFlowStackElement()
+            .andThen(notificationHelper.notification(PROCESS_START)))
+        .transform(processorChain)
+        .doOnNext(popFlowFlowStackElement()
+            .andThen(e -> notificationHelper.fireNotification(e, null,
+                                                              PROCESS_END)));
+  }
+
+  public MuleContext getMuleContext() {
+    return muleContext;
+  }
+
+  private BaseExceptionHandler policyChainErrorHandler() {
+    return new BaseExceptionHandler() {
+
+      @Override
+      public void onError(Exception exception) {
+        MessagingException t = (MessagingException) exception;
+        notificationHelper.fireNotification(t.getEvent(), t, PROCESS_END);
+        popFlowFlowStackElement().accept(t.getEvent());
+        onError.ifPresent(onError -> onError.accept(t));
+      }
+
+      @Override
+      public String toString() {
+        return PolicyChain.class.getSimpleName() + ".errorHandler @ " + getLocation().getLocation();
+      }
+    };
   }
 
   private Consumer<CoreEvent> pushBeforeNextFlowStackElement() {
     return event -> ((DefaultFlowCallStack) event.getFlowCallStack())
-        .push(new FlowStackElement(getLocation().getLocation() + "[before next]", null));
+        .push(new FlowStackElement(flowStackEntryName, null));
   }
 
   private Consumer<CoreEvent> popFlowFlowStackElement() {
@@ -148,7 +170,8 @@ public class PolicyChain extends AbstractComponent
     this.propagateMessageTransformations = propagateMessageTransformations;
   }
 
-  public void onChainError(Consumer<Exception> onError) {
+  public PolicyChain onChainError(Consumer<Exception> onError) {
     this.onError = of(onError);
+    return this;
   }
 }

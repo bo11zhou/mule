@@ -14,45 +14,61 @@ import static org.hamcrest.CoreMatchers.instanceOf;
 import static org.hamcrest.CoreMatchers.not;
 import static org.hamcrest.CoreMatchers.nullValue;
 import static org.hamcrest.CoreMatchers.sameInstance;
+import static org.hamcrest.Matchers.is;
 import static org.junit.Assert.assertThat;
 import static org.junit.Assert.fail;
 import static org.junit.rules.ExpectedException.none;
-import static org.mockito.Matchers.any;
-import static org.mockito.Matchers.eq;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.withSettings;
+import static org.mule.runtime.api.i18n.I18nMessageFactory.createStaticMessage;
 import static org.mule.runtime.core.api.construct.Flow.INITIAL_STATE_STOPPED;
-import static org.mule.runtime.core.api.processor.ReactiveProcessor.ProcessingType.BLOCKING;
+import static org.mule.runtime.core.api.processor.ReactiveProcessor.ProcessingType.CPU_LITE;
 import static org.mule.runtime.core.api.processor.strategy.AsyncProcessingStrategyFactory.DEFAULT_MAX_CONCURRENCY;
+import static org.mule.runtime.core.api.rx.Exceptions.propagateWrappingFatal;
 import static reactor.core.publisher.Mono.just;
 
+import org.mule.runtime.api.deployment.management.ComponentInitialStateManager;
 import org.mule.runtime.api.exception.MuleException;
 import org.mule.runtime.api.i18n.I18nMessage;
 import org.mule.runtime.api.lifecycle.Disposable;
+import org.mule.runtime.api.lifecycle.Lifecycle;
 import org.mule.runtime.api.lifecycle.LifecycleException;
 import org.mule.runtime.api.lifecycle.Startable;
 import org.mule.runtime.api.lifecycle.Stoppable;
 import org.mule.runtime.core.api.construct.Flow;
 import org.mule.runtime.core.api.construct.FlowConstruct;
 import org.mule.runtime.core.api.event.CoreEvent;
+import org.mule.runtime.core.api.exception.FlowExceptionHandler;
 import org.mule.runtime.core.api.processor.Processor;
 import org.mule.runtime.core.api.processor.ReactiveProcessor;
 import org.mule.runtime.core.api.processor.Sink;
 import org.mule.runtime.core.api.processor.strategy.ProcessingStrategy;
 import org.mule.runtime.core.api.source.MessageSource;
 import org.mule.runtime.core.internal.construct.DefaultFlowBuilder.DefaultFlow;
+import org.mule.runtime.core.internal.context.MuleContextWithRegistry;
+import org.mule.runtime.core.internal.exception.MessagingException;
 import org.mule.runtime.core.internal.processor.strategy.BlockingProcessingStrategyFactory;
-import org.mule.runtime.core.internal.transformer.simple.StringAppendTransformer;
+import org.mule.runtime.core.internal.registry.MuleRegistry;
 import org.mule.tck.SensingNullMessageProcessor;
 import org.mule.tck.core.lifecycle.LifecycleTrackerProcessor;
 
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.BiFunction;
+
 import org.junit.After;
+import org.junit.Ignore;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.ExpectedException;
@@ -60,11 +76,10 @@ import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 import org.junit.runners.Parameterized.Parameters;
 import org.mockito.InOrder;
+import org.reactivestreams.Publisher;
 
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.List;
-import java.util.function.BiFunction;
+import io.qameta.allure.Issue;
+import reactor.core.publisher.Flux;
 
 @RunWith(Parameterized.class)
 public class DefaultFlowTestCase extends AbstractFlowConstructTestCase {
@@ -74,7 +89,7 @@ public class DefaultFlowTestCase extends AbstractFlowConstructTestCase {
   private DefaultFlowBuilder.DefaultFlow flow;
   private DefaultFlowBuilder.DefaultFlow stoppedFlow;
   private SensingNullMessageProcessor sensingMessageProcessor;
-  private BiFunction<Processor, CoreEvent, CoreEvent> triggerFunction;
+  private final BiFunction<Processor, CoreEvent, CoreEvent> triggerFunction;
 
   @Rule
   public ExpectedException expectedException = none();
@@ -103,9 +118,6 @@ public class DefaultFlowTestCase extends AbstractFlowConstructTestCase {
     sensingMessageProcessor = getSensingNullMessageProcessor();
 
     List<Processor> processors = new ArrayList<>();
-    processors.add(new StringAppendTransformer("a"));
-    processors.add(new StringAppendTransformer("b"));
-    processors.add(new StringAppendTransformer("c"));
     processors.add(event -> CoreEvent.builder(event).addVariable("thread", currentThread()).build());
     processors.add(sensingMessageProcessor);
 
@@ -218,7 +230,7 @@ public class DefaultFlowTestCase extends AbstractFlowConstructTestCase {
     // When max concurrency is default Integer.MAX_VALUE then the Scheduler is created with no withMaxConcurrentTasks
     // configuration.
     verify(muleContext.getSchedulerService())
-        .ioScheduler(eq(muleContext.getSchedulerBaseConfig().withName(flow.getName() + "." + BLOCKING.name())));
+        .cpuLightScheduler(eq(muleContext.getSchedulerBaseConfig().withName(flow.getName() + "." + CPU_LITE.name())));
   }
 
   @Test
@@ -234,7 +246,7 @@ public class DefaultFlowTestCase extends AbstractFlowConstructTestCase {
       customFlow.start();
       assertThat(customFlow.getMaxConcurrency(), equalTo(customMaxConcurrency));
       verify(muleContext.getSchedulerService())
-          .ioScheduler(eq(muleContext.getSchedulerBaseConfig().withName(flow.getName() + "." + BLOCKING.name())));
+          .cpuLightScheduler(eq(muleContext.getSchedulerBaseConfig().withName(flow.getName() + "." + CPU_LITE.name())));
       customFlow.stop();
 
     } finally {
@@ -272,18 +284,152 @@ public class DefaultFlowTestCase extends AbstractFlowConstructTestCase {
     InOrder inOrder = inOrder(sink, processor, processingStrategy);
 
     inOrder.verify((Startable) processingStrategy).start();
-    inOrder.verify(processingStrategy).createSink(any(FlowConstruct.class), any(ReactiveProcessor.class));
     inOrder.verify((Startable) processor).start();
+    inOrder.verify(processingStrategy).createSink(any(FlowConstruct.class), any(ReactiveProcessor.class));
 
     flow.stop();
 
     inOrder.verify((Disposable) sink).dispose();
     inOrder.verify((Stoppable) processor).stop();
     inOrder.verify((Stoppable) processingStrategy).stop();
-
   }
 
   @Test
+  public void lifecycleOrderWithErrorHandler() throws MuleException {
+    Sink sink = mock(Sink.class, withSettings().extraInterfaces(Disposable.class));
+    Processor processor = mock(Processor.class, withSettings().extraInterfaces(Startable.class, Stoppable.class));
+    ProcessingStrategy processingStrategy =
+        mock(ProcessingStrategy.class, withSettings().extraInterfaces(Startable.class, Stoppable.class));
+    when(processingStrategy.createSink(any(FlowConstruct.class), any(ReactiveProcessor.class)))
+        .thenReturn(sink);
+
+    final FlowExceptionHandler errorHandler = mock(FlowExceptionHandler.class, withSettings().extraInterfaces(Lifecycle.class));
+
+    flow = (DefaultFlow) Flow.builder(FLOW_NAME, muleContext)
+        .source(directInboundMessageSource)
+        .processors(singletonList(processor))
+        .processingStrategyFactory((muleContext, s) -> processingStrategy)
+        .messagingExceptionHandler(errorHandler)
+        .build();
+
+    flow.initialise();
+    flow.start();
+
+    InOrder inOrder = inOrder(sink, processor, errorHandler, processingStrategy);
+
+    inOrder.verify((Startable) processingStrategy).start();
+    inOrder.verify((Startable) errorHandler).start();
+    inOrder.verify((Startable) processor).start();
+    inOrder.verify(processingStrategy).createSink(any(FlowConstruct.class), any(ReactiveProcessor.class));
+
+    flow.stop();
+
+    inOrder.verify((Disposable) sink).dispose();
+    inOrder.verify((Stoppable) processor).stop();
+    inOrder.verify((Stoppable) errorHandler).stop();
+    inOrder.verify((Stoppable) processingStrategy).stop();
+  }
+
+  @Test
+  public void lifecycleOrderDispose() throws MuleException {
+    Sink sink = mock(Sink.class, withSettings().extraInterfaces(Disposable.class));
+    Processor processor = mock(Processor.class, withSettings().extraInterfaces(Disposable.class));
+    ProcessingStrategy processingStrategy =
+        mock(ProcessingStrategy.class, withSettings().extraInterfaces(Disposable.class));
+    when(processingStrategy.createSink(any(FlowConstruct.class), any(ReactiveProcessor.class)))
+        .thenReturn(sink);
+    flow = (DefaultFlow) Flow.builder(FLOW_NAME, muleContext)
+        .source(directInboundMessageSource)
+        .processors(singletonList(processor))
+        .processingStrategyFactory((muleContext, s) -> processingStrategy)
+        .build();
+
+    flow.initialise();
+
+    InOrder inOrder = inOrder(sink, processor, processingStrategy);
+
+    flow.dispose();
+
+    inOrder.verify((Disposable) processor).dispose();
+    inOrder.verify((Disposable) processingStrategy).dispose();
+  }
+
+  @Test
+  public void lifecycleOrderDisposeWithErrorHandler() throws MuleException {
+    Sink sink = mock(Sink.class, withSettings().extraInterfaces(Disposable.class));
+    Processor processor = mock(Processor.class, withSettings().extraInterfaces(Disposable.class));
+    ProcessingStrategy processingStrategy =
+        mock(ProcessingStrategy.class, withSettings().extraInterfaces(Disposable.class));
+    when(processingStrategy.createSink(any(FlowConstruct.class), any(ReactiveProcessor.class)))
+        .thenReturn(sink);
+
+    final FlowExceptionHandler errorHandler = mock(FlowExceptionHandler.class, withSettings().extraInterfaces(Lifecycle.class));
+
+    flow = (DefaultFlow) Flow.builder(FLOW_NAME, muleContext)
+        .source(directInboundMessageSource)
+        .processors(singletonList(processor))
+        .processingStrategyFactory((muleContext, s) -> processingStrategy)
+        .messagingExceptionHandler(errorHandler)
+        .build();
+
+    flow.initialise();
+
+    InOrder inOrder = inOrder(sink, processor, errorHandler, processingStrategy);
+
+    flow.dispose();
+
+    inOrder.verify((Disposable) errorHandler).dispose();
+    inOrder.verify((Disposable) processor).dispose();
+    inOrder.verify((Disposable) processingStrategy).dispose();
+  }
+
+  @Test
+  @Issue("MULE-18089")
+  public void lifecycleWithStartSourceFalse() throws Exception {
+    MuleContextWithRegistry mcwr = (MuleContextWithRegistry) muleContext;
+    final MuleRegistry registry = spy(mcwr.getRegistry());
+    final ComponentInitialStateManager initialStateManager = mock(ComponentInitialStateManager.class);
+    when(initialStateManager.mustStartMessageSource(any())).thenReturn(false);
+    when(registry.lookupObject(ComponentInitialStateManager.SERVICE_ID)).thenReturn(initialStateManager);
+    when(mcwr.getRegistry()).thenReturn(registry);
+    directInboundMessageSource = spy(directInboundMessageSource);
+
+    muleContext.start();
+
+    Sink sink = mock(Sink.class, withSettings().extraInterfaces(Disposable.class));
+    Processor processor = mock(Processor.class, withSettings().extraInterfaces(Startable.class, Stoppable.class));
+    ProcessingStrategy processingStrategy =
+        mock(ProcessingStrategy.class, withSettings().extraInterfaces(Startable.class, Stoppable.class));
+    when(processingStrategy.createSink(any(FlowConstruct.class), any(ReactiveProcessor.class)))
+        .thenReturn(sink);
+    flow = (DefaultFlow) Flow.builder(FLOW_NAME, muleContext)
+        .source(directInboundMessageSource)
+        .processors(singletonList(processor))
+        .processingStrategyFactory((muleContext, s) -> processingStrategy)
+        .build();
+
+    flow.initialise();
+    flow.start();
+
+    InOrder inOrder = inOrder(sink, processor, processingStrategy);
+
+    verify((Startable) directInboundMessageSource, never()).start();
+    inOrder.verify((Startable) processingStrategy).start();
+    inOrder.verify((Startable) processor).start();
+    inOrder.verify(processingStrategy).createSink(any(FlowConstruct.class), any(ReactiveProcessor.class));
+
+    flow.stop();
+
+    verify((Stoppable) directInboundMessageSource, never()).stop();
+    inOrder.verify((Disposable) sink).dispose();
+    inOrder.verify((Stoppable) processor).stop();
+    inOrder.verify((Stoppable) processingStrategy).stop();
+
+    muleContext.stop();
+  }
+
+  @Test
+  @Ignore("MULE-16210")
   public void originalExceptionThrownWhenStartAndStopOfProcessorBothFail() throws Exception {
     final Exception startException = new IllegalArgumentException();
     final Exception stopException = new IllegalStateException();
@@ -308,6 +454,7 @@ public class DefaultFlowTestCase extends AbstractFlowConstructTestCase {
   }
 
   @Test
+  @Ignore("MULE-16210")
   public void originalExceptionThrownWhenStartAndStopOfSourceBothFail() throws Exception {
     final Exception startException = new IllegalArgumentException();
     final Exception stopException = new IllegalStateException();
@@ -331,6 +478,41 @@ public class DefaultFlowTestCase extends AbstractFlowConstructTestCase {
       assertThat(e.getCause(), instanceOf(MuleException.class));
       assertThat(e.getCause().getCause(), sameInstance(startException));
     }
+  }
 
+  @Test
+  @Issue("MULE-17386")
+  public void doNotExecuteOnErrorContinueDefinedOutsideTheFlow() throws MuleException {
+    AtomicBoolean nonExpectedError = new AtomicBoolean();
+    final BiFunction<Processor, CoreEvent, CoreEvent> triggerFunction =
+        (listener, event) -> just(event).transform(listener).onErrorContinue((e, o) -> nonExpectedError.set(true)).block();
+
+    flow = (DefaultFlow) Flow.builder(FLOW_NAME, muleContext)
+        .source(flow.getSource())
+        .processors(singletonList(new ErrorProcessor()))
+        .processingStrategyFactory(new BlockingProcessingStrategyFactory())
+        .build();
+    flow.initialise();
+    flow.start();
+
+    CoreEvent response = triggerFunction.apply(directInboundMessageSource.getListener(), testEvent());
+    assertThat(response, nullValue());
+    assertThat(nonExpectedError.get(), is(false));
+  }
+
+  public static class ErrorProcessor implements Processor {
+
+    @Override
+    public CoreEvent process(CoreEvent event) throws MuleException {
+      throw new MessagingException(createStaticMessage("Test error"), event);
+    }
+
+    @Override
+    public Publisher<CoreEvent> apply(Publisher<CoreEvent> publisher) {
+      return Flux.from(publisher)
+          .doOnNext(event -> {
+            throw propagateWrappingFatal(new MessagingException(createStaticMessage("message"), event));
+          });
+    }
   }
 }

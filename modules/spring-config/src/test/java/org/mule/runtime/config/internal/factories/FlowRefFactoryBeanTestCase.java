@@ -13,12 +13,14 @@ import static java.util.Optional.of;
 import static org.hamcrest.CoreMatchers.equalTo;
 import static org.hamcrest.CoreMatchers.instanceOf;
 import static org.hamcrest.CoreMatchers.not;
+import static org.hamcrest.CoreMatchers.sameInstance;
 import static org.junit.Assert.assertNotSame;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertThat;
-import static org.mockito.Matchers.any;
-import static org.mockito.Matchers.anyString;
-import static org.mockito.Matchers.eq;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
@@ -28,6 +30,8 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.withSettings;
 import static org.mule.runtime.api.component.AbstractComponent.LOCATION_KEY;
+import static org.mule.runtime.api.el.BindingContextUtils.NULL_BINDING_CONTEXT;
+import static org.mule.runtime.api.metadata.DataType.STRING;
 import static org.mule.runtime.core.api.lifecycle.LifecycleUtils.disposeIfNeeded;
 import static org.mule.runtime.core.api.lifecycle.LifecycleUtils.initialiseIfNeeded;
 import static org.mule.runtime.core.api.lifecycle.LifecycleUtils.setMuleContextIfNeeded;
@@ -45,15 +49,18 @@ import org.mule.runtime.api.component.location.Location;
 import org.mule.runtime.api.exception.MuleException;
 import org.mule.runtime.api.lifecycle.Disposable;
 import org.mule.runtime.api.lifecycle.Initialisable;
-import org.mule.runtime.api.lifecycle.InitialisationException;
 import org.mule.runtime.api.lifecycle.Startable;
 import org.mule.runtime.api.lifecycle.Stoppable;
+import org.mule.runtime.api.metadata.DataType;
+import org.mule.runtime.api.metadata.TypedValue;
 import org.mule.runtime.core.api.MuleContext;
 import org.mule.runtime.core.api.construct.Flow;
 import org.mule.runtime.core.api.context.MuleContextAware;
 import org.mule.runtime.core.api.el.ExtendedExpressionManager;
 import org.mule.runtime.core.api.event.CoreEvent;
+import org.mule.runtime.core.api.lifecycle.LifecycleState;
 import org.mule.runtime.core.api.processor.Processor;
+import org.mule.runtime.core.api.processor.ReactiveProcessor;
 import org.mule.runtime.core.api.processor.strategy.ProcessingStrategy;
 import org.mule.runtime.core.internal.processor.chain.SubflowMessageProcessorChainBuilder;
 import org.mule.runtime.core.privileged.event.BaseEventContext;
@@ -61,6 +68,10 @@ import org.mule.runtime.core.privileged.processor.chain.MessageProcessorChain;
 import org.mule.runtime.core.privileged.routing.RoutePathNotFoundException;
 import org.mule.tck.junit4.AbstractMuleTestCase;
 import org.mule.tck.size.SmallTest;
+
+import java.util.List;
+
+import javax.inject.Inject;
 
 import org.junit.Before;
 import org.junit.Rule;
@@ -70,12 +81,6 @@ import org.mockito.MockSettings;
 import org.mockito.stubbing.Answer;
 import org.reactivestreams.Publisher;
 import org.springframework.context.ApplicationContext;
-
-import java.util.List;
-
-import javax.inject.Inject;
-
-import reactor.core.publisher.Mono;
 
 @SmallTest
 public class FlowRefFactoryBeanTestCase extends AbstractMuleTestCase {
@@ -92,13 +97,14 @@ public class FlowRefFactoryBeanTestCase extends AbstractMuleTestCase {
   private static final String DYNAMIC_NON_EXISTANT = "#['nonExistant']";
 
   private CoreEvent result;
-  private ProcessingStrategy callerFlowProcessingStrategy = mock(ProcessingStrategy.class);
-  private Flow callerFlow = mock(Flow.class, INITIALIZABLE_MESSAGE_PROCESSOR);
-  private Flow targetFlow = mock(Flow.class, INITIALIZABLE_MESSAGE_PROCESSOR);
-  private MessageProcessorChain targetSubFlow = mock(MessageProcessorChain.class, INITIALIZABLE_MESSAGE_PROCESSOR);
-  private Processor targetSubFlowChild = (Processor) mock(Object.class, INITIALIZABLE_MESSAGE_PROCESSOR);
-  private SubflowMessageProcessorChainBuilder targetSubFlowChainBuilder = spy(new SubflowMessageProcessorChainBuilder());
-  private ApplicationContext applicationContext = mock(ApplicationContext.class);
+  private final ProcessingStrategy callerFlowProcessingStrategy = mock(ProcessingStrategy.class);
+  private final Flow callerFlow = mock(Flow.class, INITIALIZABLE_MESSAGE_PROCESSOR);
+  private final Flow targetFlow = mock(Flow.class, INITIALIZABLE_MESSAGE_PROCESSOR);
+  private final LifecycleState flowLifeCycleState = mock(LifecycleState.class);
+  private final MessageProcessorChain targetSubFlow = mock(MessageProcessorChain.class, INITIALIZABLE_MESSAGE_PROCESSOR);
+  private final Processor targetSubFlowChild = (Processor) mock(Object.class, INITIALIZABLE_MESSAGE_PROCESSOR);
+  private final SubflowMessageProcessorChainBuilder targetSubFlowChainBuilder = spy(new SubflowMessageProcessorChainBuilder());
+  private final ApplicationContext applicationContext = mock(ApplicationContext.class);
   private ExtendedExpressionManager expressionManager;
   private MuleContext mockMuleContext;
 
@@ -114,11 +120,16 @@ public class FlowRefFactoryBeanTestCase extends AbstractMuleTestCase {
     expressionManager = mockMuleContext.getExpressionManager();
     doReturn(true).when(expressionManager).isExpression(anyString());
     when(targetFlow.apply(any(Publisher.class))).thenReturn(just(result));
+    when(targetFlow.referenced()).thenReturn(targetFlow);
+    // For flow lifecycle checks
+    when(flowLifeCycleState.isStarted()).thenReturn(true);
+    when(targetFlow.getLifecycleState()).thenReturn(flowLifeCycleState);
 
     List<Processor> targetSubFlowProcessors = singletonList(targetSubFlowChild);
     when(targetSubFlow.getMessageProcessors()).thenReturn(targetSubFlowProcessors);
     targetSubFlowChainBuilder.chain(targetSubFlowProcessors);
     when(targetSubFlowChild.apply(any(Publisher.class))).thenReturn(just(result));
+    when(targetSubFlow.apply(any(Publisher.class))).thenReturn(just(result));
 
     mockMuleContext.getInjector().inject(this);
 
@@ -137,7 +148,7 @@ public class FlowRefFactoryBeanTestCase extends AbstractMuleTestCase {
     assertNotSame(targetFlow, getFlowRefProcessor(flowRefFactoryBean));
     assertNotSame(targetFlow, getFlowRefProcessor(flowRefFactoryBean));
 
-    verifyProcess(flowRefFactoryBean, targetFlow, 0);
+    verifyProcess(flowRefFactoryBean, targetFlow);
     verifyLifecycle(targetFlow, 0);
   }
 
@@ -149,7 +160,7 @@ public class FlowRefFactoryBeanTestCase extends AbstractMuleTestCase {
     assertNotSame(targetFlow, getFlowRefProcessor(flowRefFactoryBean));
     assertNotSame(targetFlow, getFlowRefProcessor(flowRefFactoryBean));
 
-    verifyProcess(flowRefFactoryBean, targetFlow, 0);
+    verifyProcess(flowRefFactoryBean, targetFlow);
     verifyLifecycle(targetFlow, 0);
   }
 
@@ -161,8 +172,16 @@ public class FlowRefFactoryBeanTestCase extends AbstractMuleTestCase {
     assertThat(targetSubFlow, not(equalTo(getFlowRefProcessor(flowRefFactoryBean))));
     assertThat(targetSubFlow, not(equalTo(getFlowRefProcessor(flowRefFactoryBean))));
 
-    verifyProcess(flowRefFactoryBean, targetSubFlowChild, 1);
-    verify(targetSubFlowChainBuilder).setProcessingStrategy(callerFlowProcessingStrategy);
+    verifyProcess(flowRefFactoryBean, targetSubFlowChild);
+    verify(targetSubFlowChainBuilder).setProcessingStrategy(argThat(ps -> {
+      ReactiveProcessor pipeline = mock(ReactiveProcessor.class);
+      ReactiveProcessor processor = mock(ReactiveProcessor.class);
+
+      ps.onProcessor(processor);
+      verify(callerFlowProcessingStrategy).onProcessor(processor);
+      assertThat(ps.onPipeline(pipeline), sameInstance(pipeline));
+      return true;
+    }));
   }
 
   @Test
@@ -173,8 +192,16 @@ public class FlowRefFactoryBeanTestCase extends AbstractMuleTestCase {
     assertNotSame(targetSubFlow, getFlowRefProcessor(flowRefFactoryBean));
     assertNotSame(targetSubFlow, getFlowRefProcessor(flowRefFactoryBean));
 
-    verifyProcess(flowRefFactoryBean, targetSubFlowChild, 1);
-    verify(targetSubFlowChainBuilder).setProcessingStrategy(callerFlowProcessingStrategy);
+    verifyProcess(flowRefFactoryBean, targetSubFlowChild);
+    verify(targetSubFlowChainBuilder).setProcessingStrategy(argThat(ps -> {
+      ReactiveProcessor pipeline = mock(ReactiveProcessor.class);
+      ReactiveProcessor processor = mock(ReactiveProcessor.class);
+
+      ps.onProcessor(processor);
+      verify(callerFlowProcessingStrategy).onProcessor(processor);
+      assertThat(ps.onPipeline(pipeline), sameInstance(pipeline));
+      return true;
+    }));
   }
 
   @Test
@@ -224,24 +251,25 @@ public class FlowRefFactoryBeanTestCase extends AbstractMuleTestCase {
   @Test
   public void dynamicFlowRefDoesNotExist() throws Exception {
     doReturn(true).when(expressionManager).isExpression(anyString());
-    doReturn("other").when(expressionManager).parse(eq(DYNAMIC_NON_EXISTANT), any(CoreEvent.class),
-                                                    any(ComponentLocation.class));
+    doReturn(new TypedValue<>("other", STRING)).when(expressionManager).evaluate(eq(DYNAMIC_NON_EXISTANT), eq(DataType.STRING),
+                                                                                 eq(NULL_BINDING_CONTEXT), any(CoreEvent.class),
+                                                                                 any(ComponentLocation.class), eq(true));
 
     expectedException.expect(instanceOf(RoutePathNotFoundException.class));
     getFlowRefProcessor(createFlowRefFactoryBean(DYNAMIC_NON_EXISTANT)).process(testEvent());
   }
 
-  private FlowRefFactoryBean createFlowRefFactoryBean(String name) throws InitialisationException {
+  private FlowRefFactoryBean createFlowRefFactoryBean(String name) throws Exception {
     FlowRefFactoryBean flowRefFactoryBean = new FlowRefFactoryBean();
     flowRefFactoryBean.setName(name);
     flowRefFactoryBean.setAnnotations(singletonMap(LOCATION_KEY, fromSingleComponent("flow")));
     flowRefFactoryBean.setApplicationContext(applicationContext);
-    flowRefFactoryBean.setMuleContext(mockMuleContext);
+    mockMuleContext.getInjector().inject(flowRefFactoryBean);
     return flowRefFactoryBean;
   }
 
   private FlowRefFactoryBean createStaticFlowRefFactoryBean(Processor target, Object targetBuilder)
-      throws InitialisationException {
+      throws Exception {
     doReturn(false).when(expressionManager).isExpression(anyString());
     if (targetBuilder != null) {
       when(applicationContext.getBean(eq(STATIC_REFERENCED_FLOW))).thenReturn(targetBuilder);
@@ -260,10 +288,12 @@ public class FlowRefFactoryBeanTestCase extends AbstractMuleTestCase {
   }
 
   private FlowRefFactoryBean createDynamicFlowRefFactoryBean(Processor target, Object targetBuilder)
-      throws InitialisationException {
+      throws Exception {
     doReturn(true).when(expressionManager).isExpression(anyString());
-    doReturn(PARSED_DYNAMIC_REFERENCED_FLOW).when(expressionManager).parse(eq(DYNAMIC_REFERENCED_FLOW), any(CoreEvent.class),
-                                                                           any(ComponentLocation.class));
+    doReturn(new TypedValue<>(PARSED_DYNAMIC_REFERENCED_FLOW, STRING)).when(expressionManager)
+        .evaluate(eq(DYNAMIC_REFERENCED_FLOW), eq(DataType.STRING),
+                  eq(NULL_BINDING_CONTEXT), any(CoreEvent.class),
+                  any(ComponentLocation.class), eq(true));
     if (targetBuilder != null) {
       when(applicationContext.getBean(eq(PARSED_DYNAMIC_REFERENCED_FLOW))).thenReturn(targetBuilder);
     } else {
@@ -282,12 +312,15 @@ public class FlowRefFactoryBeanTestCase extends AbstractMuleTestCase {
 
   private Answer<?> successAnswer() {
     return invocation -> {
-      Mono<CoreEvent> mono = from(invocation.getArgumentAt(0, Publisher.class));
-      return mono.doOnNext(event -> ((BaseEventContext) event.getContext()).success(result)).map(event -> result);
+      return from(invocation.getArgument(0))
+          .cast(CoreEvent.class)
+          .doOnNext(event -> ((BaseEventContext) event.getContext())
+              .success(CoreEvent.builder(event).message(result.getMessage()).variables(result.getVariables()).build()))
+          .map(event -> CoreEvent.builder(event).message(result.getMessage()).variables(result.getVariables()).build());
     };
   }
 
-  private void verifyProcess(FlowRefFactoryBean flowRefFactoryBean, Processor target, int lifecycleRounds)
+  private void verifyProcess(FlowRefFactoryBean flowRefFactoryBean, Processor target)
       throws Exception {
     Processor flowRefProcessor = getFlowRefProcessor(flowRefFactoryBean);
     initialiseIfNeeded(flowRefProcessor);
@@ -312,6 +345,33 @@ public class FlowRefFactoryBeanTestCase extends AbstractMuleTestCase {
     verify(targetSubFlow, times(lifecycleRounds)).start();
     verify(targetSubFlow, times(lifecycleRounds)).stop();
     verify(targetSubFlow, times(lifecycleRounds)).dispose();
+  }
+
+  @Test
+  public void referencedSubFlowIsStartedWhenCallerFlowIsStartedAfterStop() throws Exception {
+    FlowRefFactoryBean flowRefFactoryBean = createStaticFlowRefFactoryBean(targetSubFlow, null);
+    Processor flowRefProcessor = flowRefFactoryBean.doGetObject();
+
+    flowRefProcessor.process(testEvent());
+
+    verify(targetSubFlow, times(1)).initialise();
+    verify(targetSubFlow, times(1)).start();
+    verify(targetSubFlow, times(0)).stop();
+    verify(targetSubFlow, times(0)).dispose();
+
+    stopIfNeeded(flowRefProcessor);
+
+    verify(targetSubFlow, times(1)).initialise();
+    verify(targetSubFlow, times(1)).start();
+    verify(targetSubFlow, times(1)).stop();
+    verify(targetSubFlow, times(0)).dispose();
+
+    startIfNeeded(flowRefProcessor);
+
+    verify(targetSubFlow, times(1)).initialise();
+    verify(targetSubFlow, times(2)).start();
+    verify(targetSubFlow, times(1)).stop();
+    verify(targetSubFlow, times(0)).dispose();
   }
 
 }

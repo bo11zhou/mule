@@ -43,13 +43,13 @@ import org.mule.runtime.api.notification.PolicyNotificationListener;
 import org.mule.runtime.api.security.Authentication;
 import org.mule.runtime.api.security.SecurityException;
 import org.mule.runtime.core.api.policy.PolicyParametrization;
-import org.mule.runtime.core.api.policy.PolicyPointcut;
 import org.mule.runtime.core.api.security.AbstractSecurityProvider;
 import org.mule.runtime.deployment.model.api.policy.PolicyRegistrationException;
 import org.mule.runtime.module.deployment.impl.internal.builder.ApplicationFileBuilder;
 import org.mule.runtime.module.deployment.impl.internal.builder.ArtifactPluginFileBuilder;
 import org.mule.runtime.module.deployment.impl.internal.builder.JarFileBuilder;
 import org.mule.runtime.module.deployment.impl.internal.builder.PolicyFileBuilder;
+import org.mule.runtime.policy.api.PolicyPointcut;
 import org.mule.tck.probe.JUnitProbe;
 import org.mule.tck.probe.PollingProber;
 import org.mule.tck.util.CompilerUtils;
@@ -62,6 +62,8 @@ import java.util.List;
 import org.junit.BeforeClass;
 import org.junit.Ignore;
 import org.junit.Test;
+
+import io.qameta.allure.Issue;
 
 /**
  * Contains test for application deployment with policies on the default domain
@@ -77,6 +79,7 @@ public class ApplicationPolicyDeploymentTestCase extends AbstractDeploymentTestC
   private static final String POLICY_PROPERTY_VALUE = "policyPropertyValue";
   private static final String POLICY_PROPERTY_KEY = "policyPropertyKey";
   private static final String FOO_POLICY_NAME = "fooPolicy";
+
   private static File simpleExtensionJarFile;
   // Policy artifact file builders
   private final PolicyFileBuilder fooPolicyFileBuilder =
@@ -84,9 +87,12 @@ public class ApplicationPolicyDeploymentTestCase extends AbstractDeploymentTestC
           .setMinMuleVersion(MIN_MULE_VERSION)
           .setName(FOO_POLICY_NAME)
           .setRequiredProduct(MULE)
-          .withBundleDescriptorLoader(createBundleDescriptorLoader(FOO_POLICY_NAME, MULE_POLICY_CLASSIFIER,
+          .withBundleDescriptorLoader(
+                                      createBundleDescriptorLoader(FOO_POLICY_NAME,
+                                                                   MULE_POLICY_CLASSIFIER,
                                                                    PROPERTIES_BUNDLE_DESCRIPTOR_LOADER_ID))
-          .withClassLoaderModelDescriptorLoader(new MuleArtifactLoaderDescriptor(MULE_LOADER_ID, emptyMap()))
+          .withClassLoaderModelDescriptorLoader(
+                                                new MuleArtifactLoaderDescriptor(MULE_LOADER_ID, emptyMap()))
           .build());
 
   public ApplicationPolicyDeploymentTestCase(boolean parallelDeployment) {
@@ -126,8 +132,7 @@ public class ApplicationPolicyDeploymentTestCase extends AbstractDeploymentTestC
                             new PolicyParametrization(BAR_POLICY_ID, poinparameters -> true, 2, emptyMap(),
                                                       getResourceFile("/barPolicy.xml"), emptyList()));
 
-    executeApplicationFlow("main");
-    assertThat(invocationCount, equalTo(2));
+    assertManualExecutionsCount(2);
   }
 
   @Test
@@ -142,16 +147,18 @@ public class ApplicationPolicyDeploymentTestCase extends AbstractDeploymentTestC
     assertApplicationDeploymentSuccess(applicationDeploymentListener, applicationFileBuilder.getId());
 
     List<Integer> notificationListenerActionIds = new ArrayList<>();
-    PolicyNotificationListener<PolicyNotification> notificationListener =
-        notification -> notificationListenerActionIds.add(notification.getAction().getActionId());
+    PolicyNotificationListener<PolicyNotification> notificationListener = notification -> {
+      if (MANUAL_EXECUTION_CORRELATION_ID.equals(notification.getInfo().getEvent().getCorrelationId())) {
+        notificationListenerActionIds.add(notification.getAction().getActionId());
+      }
+    };
 
     policyManager.addPolicy(applicationFileBuilder.getId(), fooPolicyFileBuilder.getArtifactId(),
                             new PolicyParametrization(FOO_POLICY_ID, pointparameters -> true, 1,
                                                       singletonMap(POLICY_PROPERTY_KEY, POLICY_PROPERTY_VALUE),
                                                       getResourceFile("/fooPolicy.xml"), singletonList(notificationListener)));
 
-    executeApplicationFlow("main");
-    assertThat(invocationCount, equalTo(1));
+    assertManualExecutionsCount(1);
     new PollingProber(POLICY_NOTIFICATION_TIMEOUT, 100).check(new JUnitProbe() {
 
       @Override
@@ -168,10 +175,14 @@ public class ApplicationPolicyDeploymentTestCase extends AbstractDeploymentTestC
   public void failsToApplyBrokenApplicationPolicy() throws Exception {
     PolicyFileBuilder brokenPolicyFileBuilder =
         new PolicyFileBuilder(BAR_POLICY_NAME).describedBy(new MulePolicyModel.MulePolicyModelBuilder()
-            .setMinMuleVersion(MIN_MULE_VERSION).setName(BAR_POLICY_NAME).setRequiredProduct(MULE)
-            .withBundleDescriptorLoader(createBundleDescriptorLoader(BAR_POLICY_NAME, MULE_POLICY_CLASSIFIER,
+            .setMinMuleVersion(MIN_MULE_VERSION).setName(BAR_POLICY_NAME)
+            .setRequiredProduct(MULE)
+            .withBundleDescriptorLoader(
+                                        createBundleDescriptorLoader(BAR_POLICY_NAME,
+                                                                     MULE_POLICY_CLASSIFIER,
                                                                      PROPERTIES_BUNDLE_DESCRIPTOR_LOADER_ID))
-            .withClassLoaderModelDescriptorLoader(new MuleArtifactLoaderDescriptor(MULE_LOADER_ID, emptyMap()))
+            .withClassLoaderModelDescriptorLoader(
+                                                  new MuleArtifactLoaderDescriptor(MULE_LOADER_ID, emptyMap()))
             .build());
 
     policyManager.registerPolicyTemplate(brokenPolicyFileBuilder.getArtifactFile());
@@ -197,27 +208,9 @@ public class ApplicationPolicyDeploymentTestCase extends AbstractDeploymentTestC
     doApplicationPolicyExecutionTest(parameters -> false, 0, "");
   }
 
-  private void doApplicationPolicyExecutionTest(PolicyPointcut pointcut, int expectedPolicyInvocations,
-                                                Object expectedPolicyParametrization)
-      throws Exception {
-    policyManager.registerPolicyTemplate(fooPolicyFileBuilder.getArtifactFile());
-
-    ApplicationFileBuilder applicationFileBuilder = createExtensionApplicationWithServices(APP_WITH_EXTENSION_PLUGIN_CONFIG,
-                                                                                           helloExtensionV1Plugin);
-    addPackedAppFromBuilder(applicationFileBuilder);
-
-    startDeployment();
-    assertApplicationDeploymentSuccess(applicationDeploymentListener, applicationFileBuilder.getId());
-
-    policyManager.addPolicy(applicationFileBuilder.getId(), fooPolicyFileBuilder.getArtifactId(),
-                            new PolicyParametrization(FOO_POLICY_ID, pointcut, 1,
-                                                      singletonMap(POLICY_PROPERTY_KEY, POLICY_PROPERTY_VALUE),
-                                                      getResourceFile("/fooPolicy.xml"), emptyList()));
-
-
-    executeApplicationFlow("main");
-    assertThat(invocationCount, equalTo(expectedPolicyInvocations));
-    assertThat(policyParametrization, equalTo(expectedPolicyParametrization));
+  @Test
+  public void appliesApplicationPolicyUsingAsyncScope() throws Exception {
+    doApplicationPolicyExecutionTest(parameters -> true, 1, POLICY_PROPERTY_VALUE, "/policy-using-async-scope.xml");
   }
 
   @Test
@@ -236,13 +229,11 @@ public class ApplicationPolicyDeploymentTestCase extends AbstractDeploymentTestC
                                                       singletonMap(POLICY_PROPERTY_KEY, POLICY_PROPERTY_VALUE),
                                                       getResourceFile("/fooPolicy.xml"), emptyList()));
 
-    executeApplicationFlow("main");
-    assertThat(invocationCount, equalTo(1));
+    assertManualExecutionsCount(1);
 
     policyManager.removePolicy(applicationFileBuilder.getId(), FOO_POLICY_ID);
 
-    executeApplicationFlow("main");
-    assertThat("Policy is still applied on the application", invocationCount, equalTo(1));
+    assertManualExecutionsCount(1);
   }
 
 
@@ -261,8 +252,7 @@ public class ApplicationPolicyDeploymentTestCase extends AbstractDeploymentTestC
                             new PolicyParametrization(BAR_POLICY_ID, s -> true, 1, emptyMap(),
                                                       getResourceFile("/appPluginPolicy.xml"), emptyList()));
 
-    executeApplicationFlow("main");
-    assertThat(invocationCount, equalTo(1));
+    assertManualExecutionsCount(1);
   }
 
   @Test
@@ -485,6 +475,30 @@ public class ApplicationPolicyDeploymentTestCase extends AbstractDeploymentTestC
   }
 
   @Test
+  @Issue("MULE-18196")
+  public void appliesPolicyAndAppWithCollidingErrorNamespace() throws Exception {
+    ArtifactPluginFileBuilder simpleExtensionPlugin = createSingleExtensionPlugin();
+
+    policyManager.registerPolicyTemplate(policyWithPluginAndResource().getArtifactFile());
+
+    ApplicationFileBuilder applicationFileBuilder = createExtensionApplicationWithServices("app-with-colliding-error.xml",
+                                                                                           simpleExtensionPlugin);
+
+    addPackedAppFromBuilder(applicationFileBuilder);
+
+    startDeployment();
+    assertApplicationDeploymentSuccess(applicationDeploymentListener, applicationFileBuilder.getId());
+
+    policyManager.addPolicy(applicationFileBuilder.getId(), policyIncludingPluginFileBuilder.getArtifactId(),
+                            new PolicyParametrization(BAR_POLICY_ID, s -> true, 1, emptyMap(),
+                                                      getResourceFile("/policy-with-colliding-error.xml"),
+                                                      emptyList()));
+
+    executeApplicationFlow("main");
+    assertThat(invocationCount, equalTo(1));
+  }
+
+  @Test
   public void redeployPolicyWithSecurityManagerDefined() throws Exception {
     ArtifactPluginFileBuilder simpleExtensionPlugin = createSingleExtensionPlugin();
 
@@ -514,6 +528,35 @@ public class ApplicationPolicyDeploymentTestCase extends AbstractDeploymentTestC
     assertThat(invocationCount, equalTo(2));
   }
 
+  private void doApplicationPolicyExecutionTest(PolicyPointcut pointcut, int expectedPolicyInvocations,
+                                                Object expectedPolicyParametrization)
+      throws Exception {
+    doApplicationPolicyExecutionTest(pointcut, expectedPolicyInvocations, expectedPolicyParametrization, "/fooPolicy.xml");
+  }
+
+  private void doApplicationPolicyExecutionTest(PolicyPointcut pointcut, int expectedPolicyInvocations,
+                                                Object expectedPolicyParametrization, String policyFile)
+      throws Exception {
+    policyManager.registerPolicyTemplate(fooPolicyFileBuilder.getArtifactFile());
+
+    ApplicationFileBuilder applicationFileBuilder = createExtensionApplicationWithServices(APP_WITH_EXTENSION_PLUGIN_CONFIG,
+                                                                                           helloExtensionV1Plugin);
+    addPackedAppFromBuilder(applicationFileBuilder);
+
+    startDeployment();
+    assertApplicationDeploymentSuccess(applicationDeploymentListener, applicationFileBuilder.getId());
+
+    policyManager.addPolicy(applicationFileBuilder.getId(), fooPolicyFileBuilder.getArtifactId(),
+                            new PolicyParametrization(FOO_POLICY_ID, pointcut, 1,
+                                                      singletonMap(POLICY_PROPERTY_KEY, POLICY_PROPERTY_VALUE),
+                                                      getResourceFile(policyFile), emptyList()));
+
+
+    executeApplicationFlow("main");
+    assertThat(invocationCount, equalTo(expectedPolicyInvocations));
+    assertThat(policyParametrization, equalTo(expectedPolicyParametrization));
+  }
+
   private PolicyFileBuilder policyWithPluginAndResource() {
     MulePolicyModel.MulePolicyModelBuilder mulePolicyModelBuilder = new MulePolicyModel.MulePolicyModelBuilder()
         .setMinMuleVersion(MIN_MULE_VERSION).setName(BAZ_POLICY_NAME)
@@ -534,9 +577,13 @@ public class ApplicationPolicyDeploymentTestCase extends AbstractDeploymentTestC
         .setMinMuleVersion(MIN_MULE_VERSION)
         .setName(FOO_POLICY_NAME)
         .setRequiredProduct(MULE)
-        .withBundleDescriptorLoader(createBundleDescriptorLoader(FOO_POLICY_NAME, MULE_POLICY_CLASSIFIER,
+        .withBundleDescriptorLoader(
+                                    createBundleDescriptorLoader(FOO_POLICY_NAME,
+                                                                 MULE_POLICY_CLASSIFIER,
                                                                  PROPERTIES_BUNDLE_DESCRIPTOR_LOADER_ID))
-        .withClassLoaderModelDescriptorLoader(new MuleArtifactLoaderDescriptor(MULE_LOADER_ID, emptyMap()))
+        .withClassLoaderModelDescriptorLoader(
+                                              new MuleArtifactLoaderDescriptor(MULE_LOADER_ID,
+                                                                               emptyMap()))
         .build())
         .dependingOn(injectedExtension);
   }
@@ -568,7 +615,9 @@ public class ApplicationPolicyDeploymentTestCase extends AbstractDeploymentTestC
                                                                  PROPERTIES_BUNDLE_DESCRIPTOR_LOADER_ID, "1.0.0"));
     mulePluginModelBuilder.withClassLoaderModelDescriptorLoader(new MuleArtifactLoaderDescriptorBuilder().setId(MULE_LOADER_ID)
         .addProperty(EXPORTED_RESOURCES,
-                     asList("/", "META-INF/mule-hello.xsd", "META-INF/spring.handlers", "META-INF/spring.schemas"))
+                     asList("/", "META-INF/mule-hello.xsd",
+                            "META-INF/spring.handlers",
+                            "META-INF/spring.schemas"))
         .build());
     mulePluginModelBuilder.withExtensionModelDescriber().setId(JAVA_LOADER_ID)
         .addProperty("type", "org.foo.injected.InjectedHelloExtension")

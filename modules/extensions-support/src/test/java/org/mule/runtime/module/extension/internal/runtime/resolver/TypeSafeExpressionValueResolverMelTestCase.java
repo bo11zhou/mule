@@ -11,8 +11,9 @@ import static org.hamcrest.CoreMatchers.equalTo;
 import static org.hamcrest.core.IsInstanceOf.instanceOf;
 import static org.junit.Assert.assertThat;
 import static org.junit.rules.ExpectedException.none;
-import static org.mockito.Matchers.any;
-import static org.mockito.Matchers.anyString;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.nullable;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.times;
@@ -69,32 +70,32 @@ public class TypeSafeExpressionValueResolverMelTestCase extends AbstractMuleCont
 
   @Test
   public void expressionLanguageWithoutTransformation() throws Exception {
-    assertResolved(getResolver("#[mel:'Hello ' + payload]", STRING)
-        .resolve(ValueResolvingContext.from(eventBuilder(muleContext).message(of("World!")).build())), HELLO_WORLD, never());
+    ValueResolvingContext context = buildContext(eventBuilder(muleContext).message(of("World!")).build());
+    assertResolved(getResolver("#[mel:'Hello ' + payload]", STRING).resolve(context), HELLO_WORLD, never());
   }
 
   @Test
   public void expressionTemplateWithoutTransformation() throws Exception {
     assertResolved(getResolver("Hello #[mel:payload]", STRING)
-        .resolve(ValueResolvingContext.from(eventBuilder(muleContext).message(of("World!")).build())), HELLO_WORLD, times(1));
+        .resolve(buildContext(eventBuilder(muleContext).message(of("World!")).build())), HELLO_WORLD, times(1));
   }
 
   @Test
   public void constant() throws Exception {
     assertResolved(getResolver("Hello World!", STRING)
-        .resolve(ValueResolvingContext.from(eventBuilder(muleContext).message(of(HELLO_WORLD)).build())), HELLO_WORLD, never());
+        .resolve(buildContext(eventBuilder(muleContext).message(of(HELLO_WORLD)).build())), HELLO_WORLD, never());
   }
 
   @Test
   public void expressionWithTransformation() throws Exception {
     assertResolved(getResolver("#[mel:true]", STRING)
-        .resolve(ValueResolvingContext.from(eventBuilder(muleContext).message(of(HELLO_WORLD)).build())), "true", never());
+        .resolve(buildContext(eventBuilder(muleContext).message(of(HELLO_WORLD)).build())), "true", never());
   }
 
   @Test
   public void templateWithTransformation() throws Exception {
     assertResolved(getResolver("tru#[mel:'e']", STRING)
-        .resolve(ValueResolvingContext.from(eventBuilder(muleContext).message(of(HELLO_WORLD)).build())), "true", times(1));
+        .resolve(buildContext(eventBuilder(muleContext).message(of(HELLO_WORLD)).build())), "true", times(1));
   }
 
   @Test
@@ -118,6 +119,10 @@ public class TypeSafeExpressionValueResolverMelTestCase extends AbstractMuleCont
     getResolver("#[mel:payload]", null);
   }
 
+  private ValueResolvingContext buildContext(CoreEvent event) {
+    return ValueResolvingContext.builder(event).withExpressionManager(expressionManager).build();
+  }
+
   private void assertResolved(Object resolvedValue, Object expected, VerificationMode expressionManagerVerificationMode) {
     assertThat(resolvedValue, instanceOf(String.class));
     assertThat(resolvedValue, equalTo(expected));
@@ -125,7 +130,7 @@ public class TypeSafeExpressionValueResolverMelTestCase extends AbstractMuleCont
   }
 
   private void verifyExpressionManager(VerificationMode mode) {
-    verify(expressionManager, mode).parse(anyString(), any(CoreEvent.class), any(ComponentLocation.class));
+    verify(expressionManager, mode).parse(anyString(), any(CoreEvent.class), nullable(ComponentLocation.class));
   }
 
   private <T> ValueResolver<T> getResolver(String expression, MetadataType expectedType) throws Exception {

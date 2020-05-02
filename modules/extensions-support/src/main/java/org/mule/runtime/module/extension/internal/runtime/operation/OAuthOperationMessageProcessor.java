@@ -6,34 +6,21 @@
  */
 package org.mule.runtime.module.extension.internal.runtime.operation;
 
-import static java.lang.String.format;
-import static org.mule.runtime.api.i18n.I18nMessageFactory.createStaticMessage;
-import static org.mule.runtime.core.api.connection.util.ConnectionProviderUtils.unwrapProviderWrapper;
-import static org.mule.runtime.core.api.util.ExceptionUtils.extractCauseOfType;
-import static org.slf4j.LoggerFactory.getLogger;
-import static reactor.core.publisher.Mono.error;
+import static org.mule.runtime.module.extension.internal.runtime.connectivity.oauth.ExtensionsOAuthUtils.refreshTokenIfNecessary;
 
 import org.mule.runtime.api.connection.ConnectionProvider;
-import org.mule.runtime.api.exception.MuleRuntimeException;
 import org.mule.runtime.api.meta.model.ExtensionModel;
 import org.mule.runtime.api.meta.model.operation.OperationModel;
-import org.mule.runtime.core.api.event.CoreEvent;
 import org.mule.runtime.core.api.extension.ExtensionManager;
 import org.mule.runtime.core.api.retry.policy.RetryPolicyTemplate;
 import org.mule.runtime.core.api.streaming.CursorProviderFactory;
 import org.mule.runtime.core.internal.policy.PolicyManager;
 import org.mule.runtime.extension.api.connectivity.oauth.AccessTokenExpiredException;
-import org.mule.runtime.extension.api.runtime.config.ConfigurationInstance;
 import org.mule.runtime.extension.api.runtime.config.ConfigurationProvider;
+import org.mule.runtime.extension.api.runtime.operation.CompletableComponentExecutor.ExecutorCallback;
 import org.mule.runtime.module.extension.api.runtime.privileged.ExecutionContextAdapter;
-import org.mule.runtime.module.extension.internal.runtime.connectivity.oauth.ExtensionsOAuthManager;
-import org.mule.runtime.module.extension.internal.runtime.connectivity.oauth.OAuthConnectionProviderWrapper;
 import org.mule.runtime.module.extension.internal.runtime.resolver.ResolverSet;
 import org.mule.runtime.module.extension.internal.util.ReflectionCache;
-
-import org.slf4j.Logger;
-
-import reactor.core.publisher.Mono;
 
 /**
  * A specialization of {@link OperationMessageProcessor} for operations which might be running
@@ -49,10 +36,6 @@ import reactor.core.publisher.Mono;
  */
 public class OAuthOperationMessageProcessor extends OperationMessageProcessor {
 
-  private static Logger LOGGER = getLogger(OAuthOperationMessageProcessor.class);
-
-  private final ExtensionsOAuthManager oauthManager;
-
   public OAuthOperationMessageProcessor(ExtensionModel extensionModel,
                                         OperationModel operationModel,
                                         ConfigurationProvider configurationProvider,
@@ -64,69 +47,37 @@ public class OAuthOperationMessageProcessor extends OperationMessageProcessor {
                                         ExtensionManager extensionManager,
                                         PolicyManager policyManager,
                                         ReflectionCache reflectionCache,
-                                        ExtensionsOAuthManager oauthManager) {
+                                        DefaultExecutionMediator.ResultTransformer resultTransformer,
+                                        long outerFluxTerminationTimeout) {
     super(extensionModel, operationModel, configurationProvider, target, targetValue, resolverSet, cursorProviderFactory,
-          retryPolicyTemplate, extensionManager, policyManager, reflectionCache);
-    this.oauthManager = oauthManager;
+          retryPolicyTemplate, extensionManager, policyManager, reflectionCache, resultTransformer, outerFluxTerminationTimeout);
   }
 
   @Override
-  protected Mono<CoreEvent> doProcess(CoreEvent event, ExecutionContextAdapter<OperationModel> operationContext) {
-    return super.doProcess(event, operationContext)
-        .onErrorResume(AccessTokenExpiredException.class, e -> {
-          OAuthConnectionProviderWrapper connectionProvider = getOAuthConnectionProvider(operationContext);
-          if (connectionProvider == null) {
-            return error(e);
-          }
+  protected void executeOperation(ExecutionContextAdapter<OperationModel> operationContext, ExecutorCallback callback) {
+    super.executeOperation(operationContext, refreshable(operationContext, callback));
+  }
 
-          AccessTokenExpiredException expiredException = getTokenExpirationException(e);
-          if (expiredException != null) {
-            if (LOGGER.isDebugEnabled()) {
-              LOGGER
-                  .debug(format("AccessToken for resourceOwner '%s' expired while executing operation '%s:%s' using config '%s'. "
-                      + "Will attempt to refresh token and retry operation", connectionProvider.getResourceOwnerId(),
-                                getExtensionModel().getName(), operationContext.getComponentModel().getName(),
-                                operationContext.getConfiguration().get().getName()));
-            }
+  private ExecutorCallback refreshable(ExecutionContextAdapter<OperationModel> operationContext, ExecutorCallback callback) {
+    return new ExecutorCallback() {
 
-            String ownerConfigName = operationContext.getConfiguration().get().getName();
-            try {
-              oauthManager.refreshToken(ownerConfigName, expiredException.getResourceOwnerId(),
-                                        getOAuthConnectionProvider(operationContext));
-            } catch (Exception refreshException) {
-              return error(new MuleRuntimeException(createStaticMessage(format(
-                                                                               "AccessToken for resourceOwner '%s' expired while executing operation '%s:%s' using config '%s'. Refresh token "
-                                                                                   + "workflow was attempted but failed with the following exception",
-                                                                               connectionProvider.getResourceOwnerId(),
-                                                                               getExtensionModel().getName(),
-                                                                               operationContext.getComponentModel().getName(),
-                                                                               operationContext.getConfiguration().get()
-                                                                                   .getName())),
-                                                    refreshException));
-            }
+      @Override
+      public void complete(Object value) {
+        callback.complete(value);
+      }
 
-            if (LOGGER.isDebugEnabled()) {
-              LOGGER.debug(format("Access Token successfully refreshed for resourceOwnerId '%s' on config '%s'",
-                                  connectionProvider.getResourceOwnerId(), operationContext.getConfiguration().get().getName()));
-            }
-
-            return super.doProcess(event, operationContext);
+      @Override
+      public void error(Throwable e) {
+        try {
+          if (refreshTokenIfNecessary(operationContext, e)) {
+            OAuthOperationMessageProcessor.super.executeOperation(operationContext, callback);
           } else {
-            return error(e);
+            callback.error(e);
           }
-        });
-  }
-
-  private AccessTokenExpiredException getTokenExpirationException(Exception e) {
-    return e instanceof AccessTokenExpiredException
-        ? (AccessTokenExpiredException) e
-        : (AccessTokenExpiredException) extractCauseOfType(e, AccessTokenExpiredException.class).orElse(null);
-  }
-
-  private OAuthConnectionProviderWrapper getOAuthConnectionProvider(ExecutionContextAdapter operationContext) {
-    ConfigurationInstance config = ((ConfigurationInstance) operationContext.getConfiguration().get());
-    ConnectionProvider provider =
-        unwrapProviderWrapper(config.getConnectionProvider().get(), OAuthConnectionProviderWrapper.class);
-    return provider instanceof OAuthConnectionProviderWrapper ? (OAuthConnectionProviderWrapper) provider : null;
+        } catch (Exception refreshException) {
+          callback.error(refreshException);
+        }
+      }
+    };
   }
 }

@@ -14,10 +14,12 @@ import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.CoreMatchers.not;
 import static org.junit.Assert.assertThat;
 import static org.junit.Assert.fail;
+import static org.mule.runtime.core.api.util.UUID.getUUID;
+import static org.mule.runtime.core.privileged.processor.MessageProcessors.map;
+import static org.mule.runtime.core.privileged.processor.MessageProcessors.transform;
 import static org.mule.tck.junit4.AbstractMuleContextTestCase.RECEIVE_TIMEOUT;
 import static org.mule.tck.processor.FlowAssert.addAssertion;
 import static reactor.core.Exceptions.propagate;
-import static reactor.core.publisher.Flux.from;
 
 import org.mule.runtime.api.el.ValidationResult;
 import org.mule.runtime.api.exception.MuleException;
@@ -30,11 +32,7 @@ import org.mule.runtime.core.api.processor.Processor;
 
 import org.reactivestreams.Publisher;
 
-import com.eaio.uuid.UUID;
-
 import java.util.concurrent.CountDownLatch;
-
-import reactor.core.publisher.Flux;
 
 public class ResponseAssertionMessageProcessor extends AssertionMessageProcessor
     implements InterceptingMessageProcessor, Startable {
@@ -74,15 +72,13 @@ public class ResponseAssertionMessageProcessor extends AssertionMessageProcessor
 
   @Override
   public Publisher<CoreEvent> apply(Publisher<CoreEvent> publisher) {
-    Flux<CoreEvent> flux = from(publisher).map(event -> {
+    return map(transform(map(publisher, event -> {
       try {
         return processRequest(event);
       } catch (MuleException e) {
         throw propagate(e);
       }
-    });
-    flux = from(flux.transform(next));
-    return flux.map(event -> {
+    }), next), event -> {
       try {
         return processResponse(event);
       } catch (MuleException e) {
@@ -120,7 +116,7 @@ public class ResponseAssertionMessageProcessor extends AssertionMessageProcessor
   }
 
   protected String generateTaskToken() {
-    return currentThread().getName() + " - " + new UUID().toString();
+    return currentThread().getName() + " - " + getUUID();
   }
 
   private CoreEvent processNext(CoreEvent event) throws MuleException {
@@ -142,7 +138,7 @@ public class ResponseAssertionMessageProcessor extends AssertionMessageProcessor
     } else if (responseCount > 0 && responseSameTask) {
       assertThat(failureMessagePrefix() + "Response task was not same as request task", responseTaskToken,
                  is(requestTaskToken));
-    } else if (responseCount > 0 && !responseSameTask) {
+    } else if (responseCount > 0) {
       assertThat(failureMessagePrefix() + "Response task was same as request task. Response stack trace is " + lineSeparator()
           + responseStackTrace, responseTaskToken, not(is(requestTaskToken)));
     }

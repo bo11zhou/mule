@@ -21,8 +21,6 @@ import org.mule.runtime.core.api.event.CoreEvent;
 import org.mule.runtime.core.internal.config.ExceptionHelper;
 import org.mule.runtime.core.privileged.exception.EventProcessingException;
 
-import org.apache.commons.lang3.StringUtils;
-
 import java.io.IOException;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
@@ -41,7 +39,7 @@ public class MessagingException extends EventProcessingException {
   /**
    * Serial version
    */
-  private static final long serialVersionUID = 6941498759267936649L;
+  private static final long serialVersionUID = 6941498759267936651L;
 
   /**
    * The Message being processed when the error occurred
@@ -51,13 +49,11 @@ public class MessagingException extends EventProcessingException {
   protected transient CoreEvent processedEvent;
 
   private boolean handled;
-  private boolean inErrorHandler;
   private transient Component failingComponent;
 
   public MessagingException(I18nMessage message, CoreEvent event) {
     super(message, event);
     extractMuleMessage(event);
-    storeErrorTypeInfo();
     setMessage(generateMessage(message, null));
   }
 
@@ -65,14 +61,12 @@ public class MessagingException extends EventProcessingException {
     super(message, event);
     extractMuleMessage(event);
     this.failingComponent = failingComponent;
-    storeErrorTypeInfo();
     setMessage(generateMessage(message, null));
   }
 
   public MessagingException(I18nMessage message, CoreEvent event, Throwable cause) {
     super(message, event, cause);
     extractMuleMessage(event);
-    storeErrorTypeInfo();
     setMessage(generateMessage(message, null));
   }
 
@@ -80,14 +74,12 @@ public class MessagingException extends EventProcessingException {
     super(message, event, cause);
     extractMuleMessage(event);
     this.failingComponent = failingComponent;
-    storeErrorTypeInfo();
     setMessage(generateMessage(message, null));
   }
 
   public MessagingException(CoreEvent event, Throwable cause) {
     super(event, cause);
     extractMuleMessage(event);
-    storeErrorTypeInfo();
     setMessage(generateMessage(getI18nMessage(), null));
   }
 
@@ -95,9 +87,8 @@ public class MessagingException extends EventProcessingException {
     super(original.getI18nMessage(), event, original.getCause());
     this.failingComponent = original.getFailingComponent();
     this.handled = original.handled();
-    original.getInfo().forEach((key, value) -> addInfo(key, value));
+    original.getInfo().forEach(this::addInfo);
     extractMuleMessage(event);
-    storeErrorTypeInfo();
     setMessage(original.getMessage());
   }
 
@@ -105,27 +96,10 @@ public class MessagingException extends EventProcessingException {
     super(event, cause);
     extractMuleMessage(event);
     this.failingComponent = failingComponent;
-    storeErrorTypeInfo();
     setMessage(generateMessage(getI18nMessage(), null));
   }
 
-  private void storeErrorTypeInfo() {
-    if (event != null) {
-      addInfo(INFO_ERROR_TYPE_KEY, getEvent().getError().map(e -> e.getErrorType().toString()).orElse(MISSING_DEFAULT_VALUE));
-    }
-  }
-
   protected String generateMessage(I18nMessage message, MuleContext muleContext) {
-    StringBuilder buf = new StringBuilder(80);
-
-    if (message != null) {
-      buf.append(message.getMessage());
-      String trimmedMessage = message.getMessage().trim();
-      if (StringUtils.isNotBlank(trimmedMessage) && trimmedMessage.charAt(trimmedMessage.length() - 1) != '.') {
-        buf.append(".");
-      }
-    }
-
     if (muleMessage != null) {
       if (MuleException.isVerboseExceptions()) {
         Object payload = muleMessage.getPayload().getValue();
@@ -153,11 +127,10 @@ public class MessagingException extends EventProcessingException {
         }
       }
     } else {
-      buf.append("The current Message is null!");
       addInfo(PAYLOAD_INFO_KEY, Objects.toString(null));
     }
 
-    return buf.toString();
+    return message.getMessage();
   }
 
   /**
@@ -176,7 +149,7 @@ public class MessagingException extends EventProcessingException {
    */
   @Override
   public CoreEvent getEvent() {
-    return processedEvent != null ? processedEvent : event;
+    return processedEvent != null ? processedEvent : super.getEvent();
   }
 
   /**
@@ -188,6 +161,7 @@ public class MessagingException extends EventProcessingException {
     if (processedEvent != null) {
       this.processedEvent = processedEvent;
       extractMuleMessage(processedEvent);
+      processedEvent.getError().ifPresent(e -> getExceptionInfo().setErrorType(e.getErrorType()));
     } else {
       this.processedEvent = null;
       this.muleMessage = null;
@@ -272,24 +246,6 @@ public class MessagingException extends EventProcessingException {
    */
   public boolean handled() {
     return handled;
-  }
-
-  /**
-   * Marks the exception so that onTerminate is called on the source instead of onError if not handled
-   *
-   * @param inErrorHandler true if the exception has occurred in an error handler, false otherwise
-   */
-  public void setInErrorHandler(boolean inErrorHandler) {
-    this.inErrorHandler = inErrorHandler;
-  }
-
-  /**
-   * Signals if the exception occurred in an error handler
-   *
-   * @return true if happened inside error handler
-   */
-  public boolean inErrorHandler() {
-    return inErrorHandler;
   }
 
   /**

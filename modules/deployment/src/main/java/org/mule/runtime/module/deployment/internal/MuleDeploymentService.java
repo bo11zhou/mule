@@ -6,6 +6,7 @@
  */
 package org.mule.runtime.module.deployment.internal;
 
+import static java.lang.String.format;
 import static java.lang.System.getProperties;
 import static java.util.Optional.empty;
 import static java.util.Optional.ofNullable;
@@ -105,8 +106,8 @@ public class MuleDeploymentService implements DeploymentService {
 
     if (useParallelDeployment()) {
       if (isDeployingSelectedAppsInOrder()) {
-        throw new IllegalArgumentException("Deployment parameters 'app' and '" + PARALLEL_DEPLOYMENT_PROPERTY
-            + "' cannot be used together");
+        throw new IllegalArgumentException(format("Deployment parameters '%s' and '%s' cannot be used together",
+                                                  DEPLOYMENT_APPLICATION_PROPERTY, PARALLEL_DEPLOYMENT_PROPERTY));
       }
       logger.info("Using parallel deployment");
       this.deploymentDirectoryWatcher =
@@ -233,6 +234,15 @@ public class MuleDeploymentService implements DeploymentService {
     redeploy(artifactName, ofNullable(appProperties));
   }
 
+  @Override
+  public void redeploy(URI archiveUri, Properties appProperties) throws IOException {
+    deployTemplateMethod(archiveUri, ofNullable(appProperties), getAppsFolder(), applicationDeployer);
+  }
+
+  @Override
+  public void redeploy(URI archiveUri) throws IOException {
+    redeploy(archiveUri, null);
+  }
 
   @Override
   public void undeployDomain(String domainName) {

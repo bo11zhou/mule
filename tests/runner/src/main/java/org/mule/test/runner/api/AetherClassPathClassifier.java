@@ -32,12 +32,12 @@ import static org.mule.runtime.api.util.Preconditions.checkNotNull;
 import static org.mule.test.runner.api.ArtifactClassificationType.APPLICATION;
 import static org.mule.test.runner.api.ArtifactClassificationType.MODULE;
 import static org.mule.test.runner.api.ArtifactClassificationType.PLUGIN;
+import static org.mule.test.runner.api.ArtifactClassificationType.SERVICE;
+
 import org.mule.runtime.api.util.Reference;
 import org.mule.runtime.extension.api.annotation.Extension;
 import org.mule.test.runner.classification.PatternExclusionsDependencyFilter;
 import org.mule.test.runner.classification.PatternInclusionsDependencyFilter;
-
-import com.google.common.collect.Lists;
 
 import java.io.File;
 import java.io.FileFilter;
@@ -55,8 +55,11 @@ import java.util.Set;
 import java.util.TreeSet;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Predicate;
+import java.util.jar.JarEntry;
+import java.util.jar.JarFile;
 import java.util.stream.Collectors;
 
+import com.google.common.collect.Lists;
 import org.apache.commons.io.filefilter.WildcardFileFilter;
 import org.eclipse.aether.artifact.Artifact;
 import org.eclipse.aether.artifact.DefaultArtifact;
@@ -106,6 +109,8 @@ public class AetherClassPathClassifier implements ClassPathClassifier {
 
   private static final String RUNTIME_GROUP_ID = "org.mule.runtime";
   private static final String LOGGING_ARTIFACT_ID = "mule-module-logging";
+
+  private static final String MULE_ARTIFACT_JSON_PATH = "META-INF/mule-artifact/mule-artifact.json";
 
   private final Logger logger = LoggerFactory.getLogger(this.getClass());
 
@@ -198,7 +203,7 @@ public class AetherClassPathClassifier implements ClassPathClassifier {
     }
 
     List<ArtifactUrlClassification> serviceUrlClassifications =
-        buildServicesUrlClassification(context, directDependencies, remoteRepositories);
+        buildServicesUrlClassification(context, directDependencies, rootArtifactType, remoteRepositories);
     if (logger.isDebugEnabled()) {
       logger.debug("Resolved services: {}", serviceUrlClassifications.stream()
           .map(serviceUrlClassification -> serviceUrlClassification.getArtifactId()).collect(toList()));
@@ -234,6 +239,7 @@ public class AetherClassPathClassifier implements ClassPathClassifier {
    */
   private List<ArtifactUrlClassification> buildServicesUrlClassification(final ClassPathClassifierContext context,
                                                                          final List<Dependency> directDependencies,
+                                                                         ArtifactClassificationType rootArtifactType,
                                                                          final List<RemoteRepository> rootArtifactRemoteRepositories) {
     List<ArtifactClassificationNode> servicesClassified = newArrayList();
 
@@ -242,6 +248,12 @@ public class AetherClassPathClassifier implements ClassPathClassifier {
     List<Artifact> serviceArtifactsDeclared = filterArtifacts(directDependencies,
                                                               muleServiceClassifiedDependencyFilter);
     logger.debug("{} services defined to be classified", serviceArtifactsDeclared.size());
+
+    if (SERVICE.equals(rootArtifactType)) {
+      logger.debug("rootArtifact '{}' identified as Mule service", rootArtifactType);
+      buildPluginUrlClassification(context.getRootArtifact(), context, muleServiceClassifiedDependencyFilter, servicesClassified,
+                                   rootArtifactRemoteRepositories);
+    }
 
     serviceArtifactsDeclared.stream()
         .forEach(serviceArtifact -> buildPluginUrlClassification(serviceArtifact, context,
@@ -584,12 +596,27 @@ public class AetherClassPathClassifier implements ClassPathClassifier {
 
 
       for (ArtifactClassificationNode pluginClassifiedNode : resolvedPluginsClassified) {
-        List<URL> urls = generateExtensionMetadata(pluginClassifiedNode.getArtifact(), context, extensionPluginMetadataGenerator,
-                                                   pluginClassifiedNode.getUrls(), rootArtifactRemoteRepositories);
-        pluginClassifiedNode.setUrls(urls);
+        File pluginClassifiedFile = toFile(pluginClassifiedNode.getUrls().get(0));
+        if (pluginClassifiedFile.isDirectory() || !jarContainsMuleArtifactJson(pluginClassifiedFile)) {
+          List<URL> urls =
+              generateExtensionMetadata(pluginClassifiedNode.getArtifact(), context, extensionPluginMetadataGenerator,
+                                        pluginClassifiedNode.getUrls(), rootArtifactRemoteRepositories);
+          pluginClassifiedNode.setUrls(urls);
+        }
       }
     }
     return toPluginUrlClassification(resolvedPluginsClassified);
+  }
+
+  private boolean jarContainsMuleArtifactJson(File pluginClassifiedFile) {
+    JarEntry muleArtifactJsonEntry;
+    try (JarFile pluginClassifiedJar = new JarFile(pluginClassifiedFile)) {
+      muleArtifactJsonEntry = pluginClassifiedJar.getJarEntry(MULE_ARTIFACT_JSON_PATH);
+    } catch (IOException e) {
+      throw new IllegalStateException("Error trying to check if JarFile '" + pluginClassifiedFile.getPath()
+          + "' has the mule-artifact.json inside the folder " + MULE_ARTIFACT_JSON_PATH);
+    }
+    return muleArtifactJsonEntry != null;
   }
 
   private List<ArtifactClassificationNode> resolveArtifactsUsingSemanticVersioning(List<ArtifactClassificationNode> artifactClassificationNodes) {

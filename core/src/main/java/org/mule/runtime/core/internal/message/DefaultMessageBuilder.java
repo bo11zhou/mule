@@ -17,6 +17,7 @@ import static org.mule.runtime.api.metadata.DataType.OBJECT;
 import static org.mule.runtime.api.metadata.DataType.builder;
 import static org.mule.runtime.api.metadata.DataType.fromObject;
 import static org.mule.runtime.api.metadata.TypedValue.of;
+import static org.mule.runtime.api.util.collection.SmallMap.forSize;
 import static org.mule.runtime.core.api.config.i18n.CoreMessages.noTransformerFoundForMessage;
 import static org.mule.runtime.core.api.config.i18n.CoreMessages.objectNotOfCorrectType;
 import static org.mule.runtime.core.api.util.ObjectUtils.getBoolean;
@@ -28,6 +29,7 @@ import static org.mule.runtime.core.api.util.ObjectUtils.getLong;
 import static org.mule.runtime.core.api.util.ObjectUtils.getShort;
 import static org.mule.runtime.core.api.util.ObjectUtils.getString;
 import static org.mule.runtime.core.internal.context.DefaultMuleContext.currentMuleContext;
+
 import org.mule.runtime.api.exception.MuleException;
 import org.mule.runtime.api.message.Message;
 import org.mule.runtime.api.metadata.DataType;
@@ -36,6 +38,7 @@ import org.mule.runtime.api.metadata.MapDataType;
 import org.mule.runtime.api.metadata.MediaType;
 import org.mule.runtime.api.metadata.TypedValue;
 import org.mule.runtime.api.util.CaseInsensitiveMapWrapper;
+import org.mule.runtime.api.util.collection.SmallMap;
 import org.mule.runtime.core.api.MuleContext;
 import org.mule.runtime.core.api.message.ExceptionPayload;
 import org.mule.runtime.core.api.transformer.Transformer;
@@ -53,7 +56,6 @@ import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.io.Serializable;
 import java.util.Collection;
-import java.util.HashMap;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -78,8 +80,6 @@ public final class DefaultMessageBuilder
   private TypedValue payload = of(NULL_TYPED_VALUE);
   private TypedValue attributes = of(NULL_TYPED_VALUE);
 
-  private ExceptionPayload exceptionPayload;
-
   private Map<String, TypedValue<Serializable>> inboundProperties = new CaseInsensitiveMapWrapper<>();
   private Map<String, TypedValue<Serializable>> outboundProperties = new CaseInsensitiveMapWrapper<>();
   private Map<String, DataHandler> inboundAttachments = new LinkedHashMap<>();
@@ -88,7 +88,6 @@ public final class DefaultMessageBuilder
   public DefaultMessageBuilder() {}
 
   private void copyMessageAttributes(InternalMessage message) {
-    this.exceptionPayload = message.getExceptionPayload();
     message.getInboundPropertyNames().forEach(key -> {
       if (message.getInboundPropertyDataType(key) != null) {
         addInboundProperty(key, message.getInboundProperty(key), message.getInboundPropertyDataType(key));
@@ -233,9 +232,10 @@ public final class DefaultMessageBuilder
     return this;
   }
 
+  @Deprecated
   @Override
   public InternalMessage.CollectionBuilder exceptionPayload(ExceptionPayload exceptionPayload) {
-    this.exceptionPayload = exceptionPayload;
+    // Nothing to do
     return this;
   }
 
@@ -346,7 +346,7 @@ public final class DefaultMessageBuilder
   public InternalMessage build() {
     return new MessageImplementation(payload, attributes,
                                      inboundProperties, outboundProperties, inboundAttachments,
-                                     outboundAttachments, exceptionPayload);
+                                     outboundAttachments);
   }
 
   private DataType resolveDataType(Object value) {
@@ -389,11 +389,6 @@ public final class DefaultMessageBuilder
     private static final Logger logger = LoggerFactory.getLogger(MessageImplementation.class);
 
     /**
-     * If an exception occurs while processing this message an exception payload will be attached here
-     */
-    private ExceptionPayload exceptionPayload;
-
-    /**
      * Collection of attachments that were attached to the incoming message
      */
     private transient Map<String, DataHandler> inboundAttachments = new LinkedHashMap<>();
@@ -412,15 +407,13 @@ public final class DefaultMessageBuilder
     private MessageImplementation(TypedValue typedValue, TypedValue typedAttributes,
                                   Map<String, TypedValue<Serializable>> inboundProperties,
                                   Map<String, TypedValue<Serializable>> outboundProperties,
-                                  Map<String, DataHandler> inboundAttachments, Map<String, DataHandler> outboundAttachments,
-                                  ExceptionPayload exceptionPayload) {
+                                  Map<String, DataHandler> inboundAttachments, Map<String, DataHandler> outboundAttachments) {
       this.typedValue = typedValue;
       this.typedAttributes = typedAttributes;
       this.inboundMap.putAll(inboundProperties);
       this.outboundMap.putAll(outboundProperties);
       this.inboundAttachments = inboundAttachments;
       this.outboundAttachments = outboundAttachments;
-      this.exceptionPayload = exceptionPayload;
     }
 
     /**
@@ -428,7 +421,7 @@ public final class DefaultMessageBuilder
      */
     @Override
     public ExceptionPayload getExceptionPayload() {
-      return exceptionPayload;
+      return null;
     }
 
     @Override
@@ -449,14 +442,6 @@ public final class DefaultMessageBuilder
       buf.append(lineSeparator());
       buf.append("  attributesMediaType=").append(getAttributes().getDataType().getMediaType());
       buf.append(lineSeparator());
-      if (exceptionPayload != null) {
-        buf.append("  exceptionPayload:");
-        buf.append(lineSeparator());
-        buf.append("    message=").append(exceptionPayload.getMessage());
-        buf.append(lineSeparator());
-        buf.append("    exception=").append(exceptionPayload.getException());
-        buf.append(lineSeparator());
-      }
       if (!getInboundPropertyNames().isEmpty() || !getOutboundPropertyNames().isEmpty()) {
         headersToStringBuilder(this, buf);
       }
@@ -580,7 +565,7 @@ public final class DefaultMessageBuilder
       if (attachments == null) {
         toWrite = null;
       } else {
-        toWrite = new HashMap<>(attachments.size());
+        toWrite = forSize(attachments.size());
         for (Map.Entry<String, DataHandler> entry : attachments.entrySet()) {
           String name = entry.getKey();
           // TODO MULE-10013 remove this logic from here
@@ -629,7 +614,7 @@ public final class DefaultMessageBuilder
       if (attachments == null) {
         toReturn = emptyMap();
       } else {
-        toReturn = new HashMap<>(attachments.size());
+        toReturn = forSize(attachments.size());
         for (Map.Entry<String, SerializedDataHandler> entry : attachments.entrySet()) {
           toReturn.put(entry.getKey(), entry.getValue().getHandler());
         }
@@ -654,11 +639,11 @@ public final class DefaultMessageBuilder
      */
     public void initAfterDeserialisation(MuleContext context) throws MuleException {
       if (this.inboundAttachments == null) {
-        this.inboundAttachments = new HashMap<>();
+        this.inboundAttachments = new SmallMap<>();
       }
 
       if (this.outboundAttachments == null) {
-        this.outboundAttachments = new HashMap<>();
+        this.outboundAttachments = new SmallMap<>();
       }
     }
 

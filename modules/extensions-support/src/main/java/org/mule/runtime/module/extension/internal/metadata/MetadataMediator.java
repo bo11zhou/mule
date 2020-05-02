@@ -6,6 +6,9 @@
  */
 package org.mule.runtime.module.extension.internal.metadata;
 
+import static java.util.Collections.emptyList;
+import static java.util.Collections.emptyMap;
+import static java.util.Optional.empty;
 import static java.util.Optional.ofNullable;
 import static java.util.stream.Collectors.toList;
 import static org.mule.runtime.api.metadata.resolving.FailureCode.INVALID_METADATA_KEY;
@@ -54,12 +57,12 @@ import org.mule.runtime.extension.api.property.MetadataKeyPartModelProperty;
 import org.mule.runtime.module.extension.internal.runtime.resolver.ParameterValueResolver;
 import org.mule.runtime.module.extension.internal.util.ReflectionCache;
 
-import com.google.common.collect.ImmutableList;
-
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+
+import com.google.common.collect.ImmutableList;
 
 /**
  * Resolves a Component's Metadata by coordinating the several moving parts that are affected by the Metadata fetching process, so
@@ -79,6 +82,8 @@ public final class MetadataMediator<T extends ComponentModel> {
   private final MetadataOutputDelegate outputDelegate;
   private final MetadataInputDelegate inputDelegate;
   private final MetadataKeyIdObjectResolver keyIdObjectResolver;
+  private final Optional<MetadataInputDelegate> successCallbackInputDelegate;
+  private final Optional<MetadataInputDelegate> errorCallbackInputDelegate;
   private String keyContainerName = null;
 
   public MetadataMediator(T componentModel) {
@@ -88,6 +93,15 @@ public final class MetadataMediator<T extends ComponentModel> {
     this.keyIdObjectResolver = new MetadataKeyIdObjectResolver(component);
     this.outputDelegate = new MetadataOutputDelegate(componentModel);
     this.inputDelegate = new MetadataInputDelegate(componentModel);
+    if (componentModel instanceof SourceModel) {
+      successCallbackInputDelegate = ((SourceModel) componentModel).getSuccessCallback()
+          .map(successCallbackModel -> new MetadataInputDelegate(successCallbackModel));
+      errorCallbackInputDelegate = ((SourceModel) componentModel).getErrorCallback()
+          .map(errorCallbackModel -> new MetadataInputDelegate(errorCallbackModel));
+    } else {
+      successCallbackInputDelegate = empty();
+      errorCallbackInputDelegate = empty();
+    }
 
     componentModel.getModelProperty(MetadataKeyIdModelProperty.class)
         .ifPresent(keyIdMP -> keyContainerName = keyIdMP.getParameterName());
@@ -157,7 +171,7 @@ public final class MetadataMediator<T extends ComponentModel> {
       }
 
       keyValue = keyValueResult.get();
-      if (keyValue == null && !keyIdObjectResolver.isKeyLess()) {
+      if (keyValue == null && keyIdObjectResolver.isKeyRequired()) {
         return failure(newFailure().withFailureCode(INVALID_METADATA_KEY).withMessage("MetadataKey resolved to null")
             .onComponent());
       }
@@ -189,20 +203,28 @@ public final class MetadataMediator<T extends ComponentModel> {
 
     MetadataResult<OutputMetadataDescriptor> output = outputDelegate.getOutputMetadataDescriptor(context, keyValue);
     MetadataResult<InputMetadataDescriptor> input = inputDelegate.getInputMetadataDescriptors(context, keyValue);
-
-    if (output.isSuccess() && input.isSuccess()) {
+    Optional<MetadataResult<InputMetadataDescriptor>> successCallbackInput = successCallbackInputDelegate
+        .map(successCallbackInputDelegate -> successCallbackInputDelegate.getInputMetadataDescriptors(context, keyValue));
+    Optional<MetadataResult<InputMetadataDescriptor>> errorCallbackInput = errorCallbackInputDelegate
+        .map(errorCallbackInputDelegate -> errorCallbackInputDelegate.getInputMetadataDescriptors(context, keyValue));
+    if (output.isSuccess() && input.isSuccess() && (!successCallbackInput.isPresent() || successCallbackInput.get().isSuccess())
+        && (!errorCallbackInput.isPresent() || errorCallbackInput.get().isSuccess())) {
       MetadataAttributes metadataAttributes = getMetadataAttributes(attributesBuilder, outputDelegate, input.get());
-      T model = getTypedModel(input.get(), output.get());
+      T model = getTypedModel(input.get(), output.get(), successCallbackInput.map(MetadataResult::get),
+                              errorCallbackInput.map(MetadataResult::get));
       return success(ComponentMetadataDescriptor.builder(model).withAttributes(metadataAttributes).build());
     }
 
     List<MetadataFailure> failures = ImmutableList.<MetadataFailure>builder()
         .addAll(output.getFailures())
         .addAll(input.getFailures())
+        .addAll(successCallbackInput.map(MetadataResult::getFailures).orElse(emptyList()))
+        .addAll(errorCallbackInput.map(MetadataResult::getFailures).orElse(emptyList()))
         .build();
 
     return failure(ComponentMetadataDescriptor.builder(component).build(), failures);
   }
+
 
   /**
    * Returns a {@link ComponentModel} with its types resolved.
@@ -212,7 +234,9 @@ public final class MetadataMediator<T extends ComponentModel> {
    * @return model with its types resolved by the metadata resolution process
    */
   private T getTypedModel(InputMetadataDescriptor inputMetadataDescriptor,
-                          OutputMetadataDescriptor outputMetadataDescriptor) {
+                          OutputMetadataDescriptor outputMetadataDescriptor,
+                          Optional<InputMetadataDescriptor> successSourceCallbackInputMetadataDescriptor,
+                          Optional<InputMetadataDescriptor> errorSourceCallbackInputMetadataDescriptor) {
 
     Reference<T> typedModel = new Reference<>();
     component.accept(new ComponentModelVisitor() {
@@ -229,7 +253,8 @@ public final class MetadataMediator<T extends ComponentModel> {
                                                        constructModel.getDisplayModel().orElse(null),
                                                        constructModel.getErrorModels(),
                                                        constructModel.getStereotype(),
-                                                       constructModel.getModelProperties()));
+                                                       constructModel.getModelProperties(),
+                                                       constructModel.getDeprecationModel().orElse(null)));
       }
 
       @Override
@@ -253,7 +278,8 @@ public final class MetadataMediator<T extends ComponentModel> {
                                                        operationModel.getErrorModels(),
                                                        operationModel.getStereotype(),
                                                        operationModel.getModelProperties(),
-                                                       operationModel.getNotificationModels()));
+                                                       operationModel.getNotificationModels(),
+                                                       operationModel.getDeprecationModel().orElse(null)));
       }
 
       @Override
@@ -271,9 +297,13 @@ public final class MetadataMediator<T extends ComponentModel> {
                                                     sourceModel.getNestedComponents(),
                                                     typedOutputModel, typedAttributesModel,
                                                     resolveSourceCallbackType(sourceModel.getSuccessCallback(),
-                                                                              inputMetadataDescriptor.getAllParameters()),
+                                                                              successSourceCallbackInputMetadataDescriptor
+                                                                                  .map(InputMetadataDescriptor::getAllParameters)
+                                                                                  .orElse(emptyMap())),
                                                     resolveSourceCallbackType(sourceModel.getErrorCallback(),
-                                                                              inputMetadataDescriptor.getAllParameters()),
+                                                                              errorSourceCallbackInputMetadataDescriptor
+                                                                                  .map(InputMetadataDescriptor::getAllParameters)
+                                                                                  .orElse(emptyMap())),
                                                     resolveSourceCallbackType(sourceModel.getTerminateCallback(),
                                                                               inputMetadataDescriptor.getAllParameters()),
                                                     sourceModel.requiresConnection(),
@@ -282,7 +312,8 @@ public final class MetadataMediator<T extends ComponentModel> {
                                                     sourceModel.getDisplayModel().orElse(null),
                                                     sourceModel.getStereotype(),
                                                     sourceModel.getErrorModels(), sourceModel.getModelProperties(),
-                                                    sourceModel.getNotificationModels()));
+                                                    sourceModel.getNotificationModels(),
+                                                    sourceModel.getDeprecationModel().orElse(null)));
       }
     });
 
@@ -346,7 +377,8 @@ public final class MetadataMediator<T extends ComponentModel> {
                                         parameterModel.getLayoutModel().orElse(null),
                                         parameterModel.getValueProviderModel().orElse(null),
                                         parameterModel.getAllowedStereotypes(),
-                                        parameterModel.getModelProperties());
+                                        parameterModel.getModelProperties(),
+                                        parameterModel.getDeprecationModel().orElse(null));
         parameters.add(typedParameterModel);
       });
 

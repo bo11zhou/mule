@@ -10,17 +10,17 @@ import org.mule.runtime.api.lifecycle.Initialisable;
 import org.mule.runtime.api.lifecycle.Startable;
 import org.mule.runtime.api.lifecycle.Stoppable;
 import org.mule.runtime.api.service.Service;
+import org.mule.runtime.api.store.ObjectStore;
 import org.mule.runtime.core.api.MuleContext;
 import org.mule.runtime.core.api.component.Component;
 import org.mule.runtime.core.api.config.Config;
 import org.mule.runtime.core.api.construct.FlowConstruct;
+import org.mule.runtime.core.api.exception.FlowExceptionHandler;
 import org.mule.runtime.core.api.lifecycle.LifecycleUtils;
 import org.mule.runtime.core.api.processor.InterceptingMessageProcessor;
-import org.mule.runtime.core.api.source.MessageSource;
 import org.mule.runtime.core.api.util.queue.QueueManager;
 import org.mule.runtime.core.internal.registry.Registry;
 import org.mule.runtime.core.privileged.routing.OutboundRouter;
-import org.mule.runtime.core.privileged.transport.LegacyConnector;
 import org.mule.runtime.extension.api.runtime.config.ConfigurationProvider;
 
 /**
@@ -42,8 +42,16 @@ import org.mule.runtime.extension.api.runtime.config.ConfigurationProvider;
 public class MuleContextStartPhase extends DefaultLifecyclePhase {
 
   public MuleContextStartPhase() {
-    this(new Class[] {Registry.class, MuleContext.class, MessageSource.class, InterceptingMessageProcessor.class, Component.class,
-        OutboundRouter.class, MuleContext.class, Service.class});
+    this(new Class[] {
+        Registry.class,
+        MuleContext.class,
+        InterceptingMessageProcessor.class,
+        Component.class,
+        OutboundRouter.class,
+        MuleContext.class,
+        Service.class,
+        FlowExceptionHandler.class
+    });
   }
 
   public MuleContextStartPhase(Class<?>[] ignoredObjects) {
@@ -52,9 +60,9 @@ public class MuleContextStartPhase extends DefaultLifecyclePhase {
     setIgnoredObjectTypes(ignoredObjects);
     setOrderedLifecycleTypes(new Class<?>[] {
         QueueManager.class,
+        ObjectStore.class,
         ConfigurationProvider.class,
         Config.class,
-        LegacyConnector.class,
         FlowConstruct.class,
         Startable.class
     });

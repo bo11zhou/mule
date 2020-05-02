@@ -14,6 +14,7 @@ import static org.hamcrest.Matchers.containsInAnyOrder;
 import static org.hamcrest.collection.IsCollectionWithSize.hasSize;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.withSettings;
 import static org.mule.runtime.api.util.ExtensionModelTestUtils.visitableMock;
 import static org.mule.runtime.module.extension.internal.util.IntrospectionUtils.getApiMethods;
 import static org.mule.test.module.extension.internal.util.ExtensionsTestUtils.mockParameters;
@@ -29,6 +30,7 @@ import org.mule.runtime.extension.api.runtime.operation.Result;
 import org.mule.runtime.module.extension.internal.loader.java.property.ImplementingMethodModelProperty;
 import org.mule.runtime.module.extension.internal.loader.java.type.property.ExtensionOperationDescriptorModelProperty;
 import org.mule.runtime.module.extension.internal.loader.java.type.runtime.OperationWrapper;
+import org.mule.tck.junit4.AbstractMuleTestCase;
 import org.mule.tck.testmodels.fruit.Apple;
 import org.mule.test.heisenberg.extension.HeisenbergOperations;
 import org.mule.test.metadata.extension.model.shapes.Shape;
@@ -40,15 +42,16 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 
-import com.google.common.reflect.TypeToken;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
-import org.mockito.runners.MockitoJUnitRunner;
+import org.mockito.junit.MockitoJUnitRunner;
+
+import com.google.common.reflect.TypeToken;
 
 @RunWith(MockitoJUnitRunner.class)
-public class ExportedArtifactsCollectorTestCase {
+public class ExportedArtifactsCollectorTestCase extends AbstractMuleTestCase {
 
   private final ClassTypeLoader loader = ExtensionsTypeLoaderFactory.getDefault().createTypeLoader();
 
@@ -59,7 +62,7 @@ public class ExportedArtifactsCollectorTestCase {
   private static final String SHAPE_PACKAGE = "org.mule.test.metadata.extension.model.shapes";
   private static final String EXCEPTION_PACKAGE = "org.mule.test.heisenberg.extension.exception";
 
-  @Mock
+  @Mock(lenient = true)
   private ExtensionModel extensionModel;
 
   private ExportedArtifactsCollector collector;
@@ -101,7 +104,7 @@ public class ExportedArtifactsCollectorTestCase {
   }
 
   private OutputModel mockOutputModel(Type type) {
-    OutputModel om = mock(OutputModel.class);
+    OutputModel om = mock(OutputModel.class, withSettings().lenient());
     when(om.getType()).thenReturn(loader.load(type));
     return om;
   }
@@ -113,7 +116,7 @@ public class ExportedArtifactsCollectorTestCase {
   }
 
   private OperationModel mockOperationModel(OutputModel output, OutputModel attributes, ParameterModel... params) {
-    OperationModel op = mock(OperationModel.class);
+    OperationModel op = mock(OperationModel.class, withSettings().lenient());
     when(op.getOutput()).thenReturn(output);
     when(op.getOutputAttributes()).thenReturn(attributes);
     if (params != null) {

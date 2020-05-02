@@ -9,6 +9,8 @@ package org.mule.runtime.core.api.config;
 
 import static java.lang.Boolean.valueOf;
 import static java.lang.System.getProperty;
+
+import org.mule.api.annotation.Experimental;
 import org.mule.runtime.api.deployment.management.ComponentInitialStateManager;
 import org.mule.runtime.api.util.MuleSystemProperties;
 
@@ -151,7 +153,37 @@ public class MuleProperties {
   public static final String OBJECT_POLLING_CONTROLLER = "_mulePollingController";
   public static final String OBJECT_CLUSTER_CONFIGURATION = "_muleClusterConfiguration";
   public static final String OBJECT_EXTENSION_MANAGER = "_muleExtensionManager";
+
+  /**
+   * @deprecated since 4.2.1. This key doesn't exist anymore. Use {@link #OBJECT_EXTENSION_AUTH_CODE_HANDLER} or
+   * {@link #OBJECT_EXTENSION_CLIENT_CREDENTIALS_HANDLER} instead
+   */
+  @Deprecated
   public static final String OBJECT_EXTENSION_OAUTH_MANAGER = "extensions.oauth.manager";
+
+  /**
+   * Registry key for the {@code AuthorizationCodeOAuthHandler}
+   * @since 4.2.1
+   */
+  public static final String OBJECT_EXTENSION_AUTH_CODE_HANDLER = "extensions.authCode.handler";
+
+  /**
+   * Registry key for the {@code ClientCredentialsOAuthHandler}
+   * @since 4.2.1
+   */
+  public static final String OBJECT_EXTENSION_CLIENT_CREDENTIALS_HANDLER = "extensions.clientCredentials.handler";
+
+  /**
+   * Registry key for the {@code PlatformManagedOAuthHandler}
+   * <p>
+   * Platform Managed OAuth is an experimental feature. It will only be enabled on selected environments and scenarios.
+   * Backwards compatibility is not guaranteed.
+   *
+   * @since 4.3.0
+   */
+  @Experimental
+  public static final String OBJECT_EXTENSION_PLATFORM_MANAGED_HANDLER = "extensions.ocs.handler";
+
   public static final String OBJECT_TIME_SUPPLIER = "_muleTimeSupplier";
   public static final String OBJECT_CONNECTION_MANAGER = "_muleConnectionManager";
   public static final String OBJECT_EXCEPTION_LOCATION_PROVIDER = "_muleExceptionLocationProvider";
@@ -159,10 +191,10 @@ public class MuleProperties {
   public static final String OBJECT_CONFIGURATION_PROPERTIES = "_muleConfigurationAttributesResolver";
   public static final String OBJECT_POLICY_MANAGER = "_mulePolicyManager";
   public static final String OBJECT_POLICY_PROVIDER = "_mulePolicyProvider";
-  public static final String OBJECT_POLICY_MANAGER_STATE_HANDLER = "_mulePolicyStateHandler";
+  public static final String OBJECT_POLICY_POINTCUT_FACTORY = "_mulePolicyPointcutFactory";
   public static final String OBJECT_STREAMING_MANAGER = "_muleStreamingManager";
+  public static final String OBJECT_STREAMING_GHOST_BUSTER = "_muleStreamingGhostBuster";
   public static final String OBJECT_REGISTRY = "_muleRegistry";
-  public static final String OBJECT_CURSOR_MANAGER = "_muleStreamingManager";
   public static final String OBJECT_TRANSFORMATION_SERVICE = "_muleTransformationService";
   public static final String OBJECT_COMPONENT_INITIAL_STATE_MANAGER = ComponentInitialStateManager.SERVICE_ID;
   public static final String DEFAULT_TLS_CONTEXT_FACTORY_REGISTRY_KEY = "_muleDefaultTlsContextFactory";

@@ -9,11 +9,14 @@ package org.mule.runtime.module.artifact.api.classloader;
 import static java.lang.Integer.toHexString;
 import static java.lang.String.format;
 import static java.lang.System.identityHashCode;
+import static java.lang.reflect.Modifier.isAbstract;
 import static org.apache.commons.io.FilenameUtils.normalize;
 import static org.apache.commons.lang3.StringUtils.isEmpty;
 import static org.mule.runtime.api.util.Preconditions.checkArgument;
 import static org.mule.runtime.core.api.util.IOUtils.closeQuietly;
 import static org.slf4j.LoggerFactory.getLogger;
+
+import org.mule.module.artifact.classloader.ClassLoaderResourceReleaser;
 import org.mule.runtime.core.api.util.IOUtils;
 import org.mule.runtime.module.artifact.api.descriptor.ArtifactDescriptor;
 import org.mule.runtime.module.artifact.api.descriptor.BundleDescriptor;
@@ -22,6 +25,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.net.URL;
 import java.net.URLClassLoader;
+import java.sql.Driver;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -44,14 +48,16 @@ public class MuleArtifactClassLoader extends FineGrainedControlClassLoader imple
   }
 
   private static final Logger LOGGER = getLogger(MuleArtifactClassLoader.class);
+
   private static final String DEFAULT_RESOURCE_RELEASER_CLASS_LOCATION =
-      "/org/mule/module/artifact/classloader/DefaultResourceReleaser.class";
+      "/org/mule/module/artifact/classloader/JdbcResourceReleaser.class";
 
   static final Pattern DOT_REPLACEMENT_PATTERN = Pattern.compile("\\.");
   static final String PATH_SEPARATOR = "/";
   static final String RESOURCE_PREFIX = "resource::";
   static final String WILDCARD = "*";
 
+  private static final String NO_WILDCARD = "([^\\" + WILDCARD + "]+)";
   private static final String NO_WILDCARD_NO_SPACES = "([^\\" + WILDCARD + "|\\s]+)";
   private static final String NO_SPACES = "(\\S+)";
 
@@ -68,7 +74,7 @@ public class MuleArtifactClassLoader extends FineGrainedControlClassLoader imple
                                                                   // type
                                                                   + NO_WILDCARD_NO_SPACES + ":"
                                                                   // resource
-                                                                  + NO_WILDCARD_NO_SPACES);
+                                                                  + NO_WILDCARD);
 
   private static final Pattern MAVEN_ARTIFACT_PATTERN = Pattern.compile(
                                                                         PATH_SEPARATOR
@@ -89,7 +95,9 @@ public class MuleArtifactClassLoader extends FineGrainedControlClassLoader imple
   private final Object localResourceLocatorLock = new Object();
   private volatile LocalResourceLocator localResourceLocator;
   private String resourceReleaserClassLocation = DEFAULT_RESOURCE_RELEASER_CLASS_LOCATION;
-  private ResourceReleaser resourceReleaserInstance;
+  private ResourceReleaser classLoaderReferenceReleaser;
+  private volatile boolean shouldReleaseJdbcReferences = false;
+  private ResourceReleaser jdbcResourceReleaserInstance;
   private ArtifactDescriptor artifactDescriptor;
   private final Object descriptorMappingLock = new Object();
   private Map<BundleDescriptor, URLClassLoader> descriptorMapping = new HashMap<>();
@@ -110,6 +118,8 @@ public class MuleArtifactClassLoader extends FineGrainedControlClassLoader imple
     checkArgument(artifactDescriptor != null, "artifactDescriptor cannot be null");
     this.artifactId = artifactId;
     this.artifactDescriptor = artifactDescriptor;
+
+    this.classLoaderReferenceReleaser = new ClassLoaderResourceReleaser(this);
   }
 
   @Override
@@ -143,6 +153,8 @@ public class MuleArtifactClassLoader extends FineGrainedControlClassLoader imple
             .setGroupId(groupId)
             .setArtifactId(artifactId)
             .setVersion(version)
+            // As the requested version could be an SNAPSHOT we have to compare using baseVersion instead of version
+            .setBaseVersion(version)
             .setClassifier(classifier)
             .setType(type)
             .build();
@@ -174,7 +186,8 @@ public class MuleArtifactClassLoader extends FineGrainedControlClassLoader imple
             // We don't want class loaders in limbo
             synchronized (descriptorMappingLock) {
               if (descriptorMapping.get(matchDescriptor) == null) {
-                URLClassLoader urlClassLoader = new URLClassLoader(new URL[] {url});
+                URLClassLoader urlClassLoader =
+                    new URLClassLoader(new URL[] {url}, getSystemClassLoader(), new NonCachingURLStreamHandlerFactory());
                 descriptorMapping.put(matchDescriptor, urlClassLoader);
               }
             }
@@ -205,7 +218,9 @@ public class MuleArtifactClassLoader extends FineGrainedControlClassLoader imple
     return new BundleDescriptor.Builder()
         .setGroupId(groupId)
         .setArtifactId(urlMatcher.group(1))
+        // This should be modified if we would need to work with timestamped SNAPSHOT versions
         .setVersion(urlMatcher.group(2))
+        .setBaseVersion(urlMatcher.group(2))
         .setClassifier(urlMatcher.group(3))
         .setType(urlMatcher.group(4))
         .build();
@@ -216,14 +231,14 @@ public class MuleArtifactClassLoader extends FineGrainedControlClassLoader imple
   }
 
   boolean isRequestedArtifact(BundleDescriptor descriptor, BundleDescriptor artifact, Supplier<Boolean> onVersionMismatch) {
-    return isRequestedArtifact(descriptor, artifact.getGroupId(), artifact.getArtifactId(), artifact.getVersion(),
+    return isRequestedArtifact(descriptor, artifact.getGroupId(), artifact.getArtifactId(), artifact.getBaseVersion(),
                                artifact.getClassifier(), artifact.getType(), onVersionMismatch);
   }
 
   boolean isRequestedArtifact(BundleDescriptor descriptor, String groupId, String artifactId, String version,
                               Optional<String> classifier, String type, Supplier<Boolean> onVersionMismatch) {
     boolean versionResult = true;
-    if (!descriptor.getVersion().equals(version) && !WILDCARD.equals(version)) {
+    if (!descriptor.getBaseVersion().equals(version) && !WILDCARD.equals(version)) {
       versionResult = onVersionMismatch.get();
     }
     return descriptor.getGroupId().equals(groupId) && descriptor.getArtifactId().equals(artifactId) && versionResult
@@ -233,6 +248,16 @@ public class MuleArtifactClassLoader extends FineGrainedControlClassLoader imple
   @Override
   public URL findInternalResource(String resource) {
     return findResource(resource);
+  }
+
+  @Override
+  protected Class<?> loadClass(String name, boolean resolve) throws ClassNotFoundException {
+    Class<?> clazz = super.loadClass(name, resolve);
+    if (!shouldReleaseJdbcReferences && Driver.class.isAssignableFrom(clazz) &&
+        !(clazz.equals(Driver.class) || clazz.isInterface() || isAbstract(clazz.getModifiers()))) {
+      shouldReleaseJdbcReferences = true;
+    }
+    return clazz;
   }
 
   @Override
@@ -264,13 +289,26 @@ public class MuleArtifactClassLoader extends FineGrainedControlClassLoader imple
       }
     });
     descriptorMapping.clear();
+
     try {
-      createResourceReleaserInstance().release();
+      clearReferences();
     } catch (Exception e) {
-      LOGGER.error("Cannot create resource releaser instance", e);
+      reportPossibleLeak(e, artifactId);
+    }
+
+    try {
+      if (shouldReleaseJdbcReferences) {
+        createResourceReleaserInstance().release();
+      }
+    } catch (Exception e) {
+      reportPossibleLeak(e, artifactId);
     }
     super.dispose();
     shutdownListeners();
+  }
+
+  private void clearReferences() {
+    classLoaderReferenceReleaser.release();
   }
 
   void reportPossibleLeak(Exception e, String artifactId) {
@@ -295,18 +333,12 @@ public class MuleArtifactClassLoader extends FineGrainedControlClassLoader imple
     shutdownListeners.clear();
   }
 
-  private <T> T createCustomInstance(String classLocation) {
-    InputStream classStream = null;
+  private <T> T createInstance(String classLocation) {
     try {
-      classStream = this.getClass().getResourceAsStream(classLocation);
-      byte[] classBytes = IOUtils.toByteArray(classStream);
-      classStream.close();
-      Class clazz = this.defineClass(null, classBytes, 0, classBytes.length);
+      Class clazz = createClass(classLocation);
       return (T) clazz.newInstance();
     } catch (Exception e) {
       throw new RuntimeException("Can not create instance from resource: " + classLocation, e);
-    } finally {
-      closeQuietly(classStream);
     }
   }
 
@@ -314,14 +346,28 @@ public class MuleArtifactClassLoader extends FineGrainedControlClassLoader imple
    * Creates a {@link ResourceReleaser} using this classloader, only used outside in unit tests.
    */
   protected ResourceReleaser createResourceReleaserInstance() {
-    if (resourceReleaserInstance == null) {
-      resourceReleaserInstance = createCustomInstance(resourceReleaserClassLocation);
+    if (jdbcResourceReleaserInstance == null) {
+      jdbcResourceReleaserInstance = createInstance(resourceReleaserClassLocation);
     }
-    return resourceReleaserInstance;
+    return jdbcResourceReleaserInstance;
   }
 
   public void setResourceReleaserClassLocation(String resourceReleaserClassLocation) {
     this.resourceReleaserClassLocation = resourceReleaserClassLocation;
+  }
+
+  private Class createClass(String classLocation) {
+    InputStream classStream = null;
+    try {
+      classStream = this.getClass().getResourceAsStream(classLocation);
+      byte[] classBytes = IOUtils.toByteArray(classStream);
+      classStream.close();
+      return this.defineClass(null, classBytes, 0, classBytes.length);
+    } catch (Exception e) {
+      throw new RuntimeException("Can not create class from resource: " + classLocation, e);
+    } finally {
+      closeQuietly(classStream);
+    }
   }
 
   @Override

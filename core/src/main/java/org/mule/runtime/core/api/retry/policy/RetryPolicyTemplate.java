@@ -9,27 +9,27 @@ package org.mule.runtime.core.api.retry.policy;
 
 import static java.util.function.Function.identity;
 import static org.mule.runtime.core.internal.util.rx.ImmediateScheduler.IMMEDIATE_SCHEDULER;
-
 import org.mule.api.annotation.NoImplement;
 import org.mule.runtime.api.scheduler.Scheduler;
 import org.mule.runtime.core.api.retry.RetryCallback;
 import org.mule.runtime.core.api.retry.RetryContext;
 import org.mule.runtime.core.api.retry.RetryNotifier;
 
-import org.reactivestreams.Publisher;
-
 import java.util.Map;
-import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Predicate;
+import java.util.function.Supplier;
+
+import org.reactivestreams.Publisher;
 
 
 /**
  * A RetryPolicyTemplate creates a new {@link RetryPolicy} instance each time the retry goes into effect, thereby resetting any
  * state the policy may have (counters, etc.)
- *
+ * <p>
  * A {@link RetryNotifier} may be set in order to take action upon each retry attempt.
  */
 @NoImplement
@@ -62,12 +62,21 @@ public interface RetryPolicyTemplate {
    * @param <T> the generic type of the publisher's content
    * @return a {@link Publisher} configured with the retry policy.
    * @since 4.0
-   *
-   * @deprecated Use {@link #applyPolicy(Publisher, Optional)} instead
+   * @deprecated Use {@link #applyPolicy(Publisher, Scheduler)} instead
    */
   @Deprecated
   default <T> Publisher<T> applyPolicy(Publisher<T> publisher) {
     return applyPolicy(publisher, IMMEDIATE_SCHEDULER);
+  }
+
+  /**
+   * Indicates if this policy is currently enabled or not.
+   *
+   * @return Whether {@code this} policy is enabled or not
+   * @since 4.3.0
+   */
+  default boolean isEnabled() {
+    return true;
   }
 
   /**
@@ -96,8 +105,7 @@ public interface RetryPolicyTemplate {
    * @param <T> the generic type of the publisher's content
    * @return a {@link Publisher} configured with the retry policy.
    * @since 4.0
-   *
-   * @deprecated Use {@link #applyPolicy(Publisher, Predicate, Consumer, Function, Optional)} instead
+   * @deprecated Use {@link #applyPolicy(Publisher, Predicate, Consumer, Function, Scheduler)} instead
    */
   @Deprecated
   default <T> Publisher<T> applyPolicy(Publisher<T> publisher,
@@ -125,6 +133,23 @@ public interface RetryPolicyTemplate {
                                        Consumer<Throwable> onExhausted, Function<Throwable, Throwable> errorFunction,
                                        Scheduler retryScheduler) {
     return createRetryInstance().applyPolicy(publisher, shouldRetry, onExhausted, errorFunction, retryScheduler);
+  }
 
+  default <T> CompletableFuture<T> applyPolicy(Supplier<CompletableFuture<T>> futureSupplier,
+                                               Predicate<Throwable> shouldRetry,
+                                               Consumer<Throwable> onRetry,
+                                               Consumer<Throwable> onExhausted,
+                                               Function<Throwable, Throwable> errorFunction,
+                                               Scheduler retryScheduler) {
+    return createRetryInstance().applyPolicy(futureSupplier, shouldRetry, onRetry, onExhausted, errorFunction, retryScheduler);
+  }
+
+  /**
+   * Indicates whether current retry policy will asynchronously trigger a reconnection policy.
+   * 
+   * @return true if the policy will be triggered asynchronously.
+   */
+  default boolean isAsync() {
+    return false;
   }
 }

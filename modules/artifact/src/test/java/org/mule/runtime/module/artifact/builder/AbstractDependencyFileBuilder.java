@@ -13,6 +13,7 @@ import static org.apache.commons.lang3.StringUtils.isEmpty;
 import static org.apache.commons.lang3.SystemUtils.JAVA_IO_TMPDIR;
 import static org.mule.runtime.module.artifact.api.classloader.MuleMavenPlugin.MULE_MAVEN_PLUGIN_ARTIFACT_ID;
 import static org.mule.runtime.module.artifact.api.classloader.MuleMavenPlugin.MULE_MAVEN_PLUGIN_GROUP_ID;
+
 import org.mule.runtime.api.exception.MuleRuntimeException;
 
 import java.io.File;
@@ -22,6 +23,7 @@ import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Properties;
 import java.util.Set;
 
 import org.apache.maven.model.Build;
@@ -47,9 +49,10 @@ public abstract class AbstractDependencyFileBuilder<T extends AbstractDependency
   private final List<AbstractDependencyFileBuilder> sharedLibraries = new ArrayList<>();
   private String groupId = "org.mule.test";
   private String version = "1.0.0";
-  private String type = "jar";
+  private final String type = "jar";
   private String classifier;
   private File artifactPomFile;
+  private File artifactPomPropertiesFile;
   private File tempFolder;
 
   /**
@@ -117,6 +120,27 @@ public abstract class AbstractDependencyFileBuilder<T extends AbstractDependency
       }
     }
     return artifactPomFile;
+  }
+
+  public File getArtifactPomPropertiesFile() {
+    if (artifactPomPropertiesFile == null) {
+      checkArgument(!isEmpty(artifactId), "Filename cannot be empty");
+
+      final File tempFile = new File(getTempFolder(), "pom.properties");
+      tempFile.deleteOnExit();
+
+      artifactPomPropertiesFile = new File(tempFile.getAbsolutePath());
+      Properties pomProperties = new Properties();
+      pomProperties.setProperty("groupId", getGroupId());
+      pomProperties.setProperty("artifactId", getArtifactId());
+      pomProperties.setProperty("version", getVersion());
+      try (FileOutputStream fileOutputStream = new FileOutputStream(artifactPomPropertiesFile)) {
+        pomProperties.store(fileOutputStream, null);
+      } catch (IOException e) {
+        throw new MuleRuntimeException(e);
+      }
+    }
+    return artifactPomPropertiesFile;
   }
 
   private Plugin createMuleMavenPlugin() {
@@ -258,6 +282,13 @@ public abstract class AbstractDependencyFileBuilder<T extends AbstractDependency
   }
 
   /**
+   * @return the path within the artifact file where the pom properties file is bundled
+   */
+  public String getArtifactFileBundledPomPropertiesPartialUrl() {
+    return "META-INF/maven/" + getGroupId() + "/" + getArtifactId() + "/pom.properties";
+  }
+
+  /**
    * Creates a {@link Dependency} object from this artifact with scope compile.
    *
    * @return a maven
@@ -298,4 +329,9 @@ public abstract class AbstractDependencyFileBuilder<T extends AbstractDependency
     }
     return new ArrayList<>(allCompileDependencies);
   }
+
+  protected boolean isShared(AbstractDependencyFileBuilder dependencyFileBuilder) {
+    return this.sharedLibraries.contains(dependencyFileBuilder);
+  }
+
 }

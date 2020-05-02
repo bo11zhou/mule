@@ -33,9 +33,11 @@ import static org.mule.runtime.internal.dsl.DslConstants.RECONNECT_FOREVER_ELEME
 import static org.mule.runtime.internal.dsl.DslConstants.REDELIVERY_POLICY_ELEMENT_IDENTIFIER;
 import static org.mule.runtime.internal.dsl.DslConstants.TLS_CONTEXT_ELEMENT_IDENTIFIER;
 import static org.mule.runtime.internal.dsl.DslConstants.TLS_PREFIX;
+
 import org.mule.metadata.api.model.MetadataType;
 import org.mule.runtime.api.meta.model.ComponentModel;
 import org.mule.runtime.api.meta.model.config.ConfigurationModel;
+import org.mule.runtime.api.meta.model.connection.ConnectionProviderModel;
 import org.mule.runtime.api.meta.model.parameter.ParameterModel;
 import org.mule.runtime.api.util.Reference;
 import org.mule.runtime.config.api.dsl.model.DslElementModel;
@@ -105,6 +107,9 @@ public class DefaultXmlDslElementModelConverter implements XmlDslElementModelCon
   }
 
   private void writeApplicationElement(Element element, DslElementModel<?> elementModel, Element parentNode) {
+    if (elementModel.getModel() instanceof ConfigurationModel) {
+      populateConnectionProviderConfiguration(element, elementModel);
+    }
     populateInfrastructureConfiguration(element, elementModel);
 
     if (elementModel.getContainedElements().isEmpty() && elementModel.getValue().isPresent()) {
@@ -113,6 +118,7 @@ public class DefaultXmlDslElementModelConverter implements XmlDslElementModelCon
     }
 
     elementModel.getContainedElements().stream()
+        .filter(c -> !(isInfrastructure(c) || isConnectionProvider(c)))
         .filter(c -> !isInfrastructure(c))
         .forEach(inner -> {
           DslElementSyntax innerDsl = inner.getDsl();
@@ -210,6 +216,10 @@ public class DefaultXmlDslElementModelConverter implements XmlDslElementModelCon
     }
   }
 
+  private boolean isConnectionProvider(DslElementModel elementModel) {
+    return elementModel.getModel() instanceof ConnectionProviderModel;
+  }
+
   private boolean isInfrastructure(DslElementModel elementModel) {
     Object model = elementModel.getModel();
     if (model instanceof ParameterModel) {
@@ -250,6 +260,17 @@ public class DefaultXmlDslElementModelConverter implements XmlDslElementModelCon
             }));
   }
 
+  private void populateConnectionProviderConfiguration(Element element, DslElementModel<?> elementModel) {
+    elementModel.getContainedElements().stream()
+        .filter(this::isConnectionProvider)
+        .findFirst()
+        .ifPresent(e -> {
+          DslElementSyntax innerDsl = e.getDsl();
+          Element childElement = createElement(innerDsl, e.getConfiguration());
+          writeApplicationElement(childElement, e, element);
+        });
+  }
+
   private Element populateEETransform(DslElementModel<?> elementModel) {
     Element transform = createElement(elementModel.getDsl());
     elementModel.getConfiguration()
@@ -275,7 +296,7 @@ public class DefaultXmlDslElementModelConverter implements XmlDslElementModelCon
         });
 
     // write set-variable
-    elementModel.findElement(buildFromStringRepresentation("ee:set-variables"))
+    elementModel.findElement(buildFromStringRepresentation("ee:variables"))
         .ifPresent(variables -> {
           Element variablesList = createElement(elementModel.getDsl(), "variables");
           transform.appendChild(variablesList);

@@ -6,22 +6,29 @@
  */
 package org.mule.runtime.module.launcher;
 
+import static java.nio.charset.Charset.defaultCharset;
 import static java.util.Arrays.asList;
 import static java.util.Arrays.sort;
 import static java.util.stream.Collectors.toMap;
+import static org.apache.commons.io.IOUtils.lineIterator;
 import static org.apache.commons.lang3.StringUtils.defaultString;
+import static org.mule.runtime.container.api.MuleFoldersUtil.ARTIFACT_PATCHES_FOLDER;
+import static org.mule.runtime.container.api.MuleFoldersUtil.getArtifactPatchesLibFolder;
 import static org.mule.runtime.container.api.MuleFoldersUtil.getPatchesLibFolder;
 import static org.mule.runtime.container.api.MuleFoldersUtil.getServerPluginsFolder;
 import static org.mule.runtime.container.api.MuleFoldersUtil.getServicesFolder;
 import static org.mule.runtime.core.api.config.MuleProperties.SYSTEM_PROPERTY_PREFIX;
+import static org.mule.runtime.module.reboot.MuleContainerBootstrap.getJavaPID;
+import static org.mule.runtime.module.reboot.MuleContainerBootstrap.getWrapperPID;
+
 import org.mule.runtime.core.api.config.MuleManifest;
 import org.mule.runtime.core.api.config.i18n.CoreMessages;
-import org.mule.runtime.core.api.util.IOUtils;
 import org.mule.runtime.core.api.util.NetworkUtils;
 import org.mule.runtime.core.internal.util.SecurityUtils;
 import org.mule.runtime.core.internal.util.splash.SplashScreen;
 
 import java.io.File;
+import java.io.FilenameFilter;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.InetAddress;
@@ -32,6 +39,7 @@ import java.util.jar.Attributes;
 import java.util.jar.Manifest;
 import java.util.stream.Stream;
 
+import org.apache.commons.io.LineIterator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -42,7 +50,10 @@ public class MuleContainerStartupSplashScreen extends SplashScreen {
   public void doBody() {
 
     try (InputStream resourceAsStream = this.getClass().getClassLoader().getResourceAsStream("banner.txt")) {
-      doBody(IOUtils.toString(resourceAsStream));
+      LineIterator lineIterator = lineIterator(resourceAsStream, defaultCharset());
+      while (lineIterator.hasNext()) {
+        doBody(lineIterator.nextLine());
+      }
     } catch (IOException e) {
       LOGGER.warn("Could not create banner");
     }
@@ -75,6 +86,10 @@ public class MuleContainerStartupSplashScreen extends SplashScreen {
     doBody(String.format("OS: %s%s (%s, %s)", System.getProperty("os.name"),
                          (patch != null && !"unknown".equalsIgnoreCase(patch) ? " - " + patch : ""),
                          System.getProperty("os.version"), System.getProperty("os.arch")));
+
+    doBody(String.format("Wrapper PID: %d", getWrapperPID()));
+    doBody(String.format("Java PID: %d", getJavaPID()));
+
     try {
       InetAddress host = NetworkUtils.getLocalHost();
       doBody(String.format("Host: %s (%s)", host.getHostName(), host.getHostAddress()));
@@ -107,11 +122,15 @@ public class MuleContainerStartupSplashScreen extends SplashScreen {
   }
 
   private void listPatchesIfPresent() {
-    File patchesDirectory = getPatchesLibFolder();
+    listPatchesIn(getPatchesLibFolder(), "Applied patches:", (dir, name) -> !ARTIFACT_PATCHES_FOLDER.equals(name));
+    listPatchesIn(getArtifactPatchesLibFolder(), "Applied artifact patches:", (dir, name) -> true);
+  }
+
+  private void listPatchesIn(File patchesDirectory, String description, FilenameFilter filenameFilter) {
     if (patchesDirectory != null && patchesDirectory.exists()) {
-      String[] patches = patchesDirectory.list();
+      String[] patches = patchesDirectory.list(filenameFilter);
       sort(patches);
-      listItems(asList(patches), "Applied patches:");
+      listItems(asList(patches), description);
     }
   }
 

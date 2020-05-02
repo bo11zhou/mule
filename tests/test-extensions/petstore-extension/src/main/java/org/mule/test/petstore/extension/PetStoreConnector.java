@@ -19,6 +19,7 @@ import org.mule.runtime.extension.api.annotation.param.Parameter;
 import org.mule.runtime.extension.api.annotation.param.ParameterGroup;
 
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 
 @Extension(name = "petstore")
 @Operations({PetStoreOperations.class, PetStoreOperationsWithFailures.class, PetStoreFailingOperations.class})
@@ -28,14 +29,14 @@ import java.util.List;
 @ErrorTypes(PetstoreErrorTypeDefinition.class)
 @Sources({PetStoreSource.class, FailingPetStoreSource.class, SentientSource.class, PetAdoptionSource.class,
     PetStoreStreamSource.class, PetStoreListSource.class, PartialPetAdoptionSource.class, NumberPetAdoptionSource.class,
-    ConnectedPetAdoptionSource.class})
+    ConnectedPetAdoptionSource.class, PetFailingPollingSource.class})
 @Xml(namespace = "http://www.mulesoft.org/schema/mule/petstore", prefix = "petstore")
 public class PetStoreConnector {
 
   /**
    * Indicates how many times a {@link PetStoreConnector} was started.
    */
-  public static int timesStarted;
+  private static AtomicInteger timesStarted = new AtomicInteger();
 
   @Parameter
   private List<String> pets;
@@ -83,7 +84,15 @@ public class PetStoreConnector {
   }
 
   public static int getTimesStarted() {
-    return timesStarted;
+    return timesStarted.get();
+  }
+
+  public static int incTimesStarted() {
+    return timesStarted.incrementAndGet();
+  }
+
+  public static void clearTimesStarted() {
+    timesStarted.set(0);
   }
 
   public TlsContextFactory getTls() {

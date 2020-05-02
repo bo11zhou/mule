@@ -6,12 +6,21 @@
  */
 package org.mule.runtime.module.launcher.log4j2;
 
+import static com.github.benmanes.caffeine.cache.Caffeine.newBuilder;
 import static java.lang.Thread.currentThread;
 import static org.mule.runtime.module.launcher.log4j2.ArtifactAwareContextSelector.resolveLoggerContextClassLoader;
 import static org.reflections.ReflectionUtils.getAllMethods;
 import static org.reflections.ReflectionUtils.withName;
 import static org.reflections.ReflectionUtils.withParameters;
 
+import org.mule.runtime.api.util.Reference;
+
+import java.lang.reflect.Method;
+import java.util.Collection;
+import java.util.Iterator;
+import java.util.Map;
+
+import com.github.benmanes.caffeine.cache.LoadingCache;
 import org.apache.logging.log4j.Level;
 import org.apache.logging.log4j.Marker;
 import org.apache.logging.log4j.core.Appender;
@@ -24,22 +33,19 @@ import org.apache.logging.log4j.message.Message;
 import org.apache.logging.log4j.message.MessageFactory;
 import org.apache.logging.log4j.spi.AbstractLogger;
 import org.apache.logging.log4j.spi.ExtendedLogger;
-
-import java.lang.reflect.Method;
-import java.util.Collection;
-import java.util.Iterator;
-import java.util.Map;
+import org.apache.logging.log4j.util.MessageSupplier;
+import org.apache.logging.log4j.util.Supplier;
 
 /**
  * Suppose that class X is used in applications Y and Z. If X holds a static reference to a logger L, then all the log events are
- * going to be added into the context {@link org.apache.logging.log4j.core.LoggerContext} on which L fast first initialized,
+ * going to be added into the context {@link LoggerContext} on which L fast first initialized,
  * regardless of which application generated the event.
  * <p/>
- * This class is a wrapper for {@link org.apache.logging.log4j.core.Logger} class which is capable of detecting that the log event
- * is being generated from an application which {@link org.apache.logging.log4j.core.LoggerContext} is different than L's, and
+ * This class is a wrapper for {@link Logger} class which is capable of detecting that the log event
+ * is being generated from an application which {@link LoggerContext} is different than L's, and
  * thus forward the event to the correct context.
  * <p/>
- * Because this class is a fix for issues in static loggers, it must not hold any reference to any {@link java.lang.ClassLoader}
+ * Because this class is a fix for issues in static loggers, it must not hold any reference to any {@link ClassLoader}
  * since otherwise that class loader would be GC unreachable. For that reason, it uses {@link #ownerClassLoaderHash} instead of
  * the real reference
  *
@@ -48,9 +54,14 @@ import java.util.Map;
 abstract class DispatchingLogger extends Logger {
 
   private final Logger originalLogger;
-  private Method updateConfigurationMethod = null;
   private final ContextSelector contextSelector;
   private final int ownerClassLoaderHash;
+  private final LoadingCache<ClassLoader, Reference<Logger>> loggerCache = newBuilder()
+      .weakKeys()
+      .weakValues()
+      .build(key -> new Reference<>());
+
+  private Method updateConfigurationMethod = null;
 
   DispatchingLogger(Logger originalLogger, int ownerClassLoaderHash, LoggerContext loggerContext, ContextSelector contextSelector,
                     MessageFactory messageFactory) {
@@ -60,28 +71,58 @@ abstract class DispatchingLogger extends Logger {
     this.ownerClassLoaderHash = ownerClassLoaderHash;
   }
 
-
   private Logger getLogger() {
-    final ClassLoader currentClassLoader = resolveLoggerContextClassLoader(currentThread().getContextClassLoader());
-    if (useThisLoggerContextClassLoader(currentClassLoader)) {
+    return getLogger(resolveLoggerContextClassLoader(currentThread().getContextClassLoader()));
+  }
+
+  private Logger getLogger(final ClassLoader resolvedCtxClassLoader) {
+    if (useThisLoggerContextClassLoader(resolvedCtxClassLoader)) {
       return originalLogger;
     }
+    // we need to cache reference objects and do this double lookup to avoid cyclic resolutions of the same classloader
+    // key which would result in an exception or a deadlock, depending on the cache implementation
+    Reference<Logger> loggerReference = loggerCache.get(resolvedCtxClassLoader);
+    Logger logger = loggerReference.get();
+    if (logger == null) {
+      synchronized (loggerReference) {
+        logger = loggerReference.get();
+        if (logger == null) {
+          try {
+            logger = resolveLogger(resolvedCtxClassLoader);
+          } catch (RecursiveLoggerContextInstantiationException rle) {
+            // The required Logger is already under construction by a previous resolveLogger call. Falling back to container classloader.
+            return resolveLogger(this.getClass().getClassLoader());
+          }
+          loggerReference.set(logger);
+        }
+      }
+    }
+    return logger;
+  }
 
+  private Logger resolveLogger(ClassLoader resolvedCtxClassLoader) {
+    Logger logger;
     // trick - this is probably a logger declared in a static field
     // the classloader used to create it and the TCCL can be different
     // ask contextSelector for the correct context
     if (contextSelector instanceof ArtifactAwareContextSelector) {
-      return ((ArtifactAwareContextSelector) contextSelector).getContextWithResolvedContextClassLoader(currentClassLoader)
+      logger = ((ArtifactAwareContextSelector) contextSelector).getContextWithResolvedContextClassLoader(resolvedCtxClassLoader)
           .getLogger(getName(), getMessageFactory());
     } else {
-      return contextSelector.getContext(getName(), currentClassLoader, true).getLogger(getName(), getMessageFactory());
+      logger = contextSelector.getContext(getName(), resolvedCtxClassLoader, true).getLogger(getName(), getMessageFactory());
+    }
+
+    if (logger instanceof DispatchingLogger) {
+      return ((DispatchingLogger) logger).getLogger(resolvedCtxClassLoader);
+    } else {
+      return logger;
     }
   }
 
   /**
    * @param currentClassLoader execution classloader of the logging operation
    * @return true if the logger context associated with this instance must be used for logging, false if we still need to continue
-   *         searching for the right logger context
+   * searching for the right logger context
    */
   private boolean useThisLoggerContextClassLoader(ClassLoader currentClassLoader) {
     return currentClassLoader.hashCode() == ownerClassLoaderHash;
@@ -90,7 +131,7 @@ abstract class DispatchingLogger extends Logger {
   /**
    * This is workaround for the low visibility of the {@link Logger#updateConfiguration(Configuration)} method, which invokes it
    * on the {@code originalLogger}.
-   *
+   * <p>
    * Using a wrapper in the log4j package causes an {@link IllegalAccessError}.
    *
    * @param config
@@ -702,6 +743,82 @@ abstract class DispatchingLogger extends Logger {
   @Override
   public void logIfEnabled(String fqcn, Level level, Marker marker, String message, Throwable t) {
     getLogger().logIfEnabled(fqcn, level, marker, message, t);
+  }
+
+  @Override
+  public void logIfEnabled(String fqcn, Level level, Marker marker, String message, Object p0) {
+    getLogger().logIfEnabled(fqcn, level, marker, message, p0);
+  }
+
+  @Override
+  public void logIfEnabled(String fqcn, Level level, Marker marker, MessageSupplier msgSupplier, Throwable t) {
+    getLogger().logIfEnabled(fqcn, level, marker, msgSupplier, t);
+  }
+
+  @Override
+  public void logIfEnabled(String fqcn, Level level, Marker marker, CharSequence message, Throwable t) {
+    getLogger().logIfEnabled(fqcn, level, marker, message, t);
+  }
+
+  @Override
+  public void logIfEnabled(String fqcn, Level level, Marker marker, Supplier<?> msgSupplier, Throwable t) {
+    getLogger().logIfEnabled(fqcn, level, marker, msgSupplier, t);
+  }
+
+  @Override
+  public void logIfEnabled(String fqcn, Level level, Marker marker, String message, Supplier<?>... paramSuppliers) {
+    getLogger().logIfEnabled(fqcn, level, marker, message, paramSuppliers);
+  }
+
+  @Override
+  public void logIfEnabled(String fqcn, Level level, Marker marker, String message, Object p0, Object p1) {
+    getLogger().logIfEnabled(fqcn, level, marker, message, p0, p1);
+  }
+
+  @Override
+  public void logIfEnabled(String fqcn, Level level, Marker marker, String message, Object p0, Object p1, Object p2) {
+    super.logIfEnabled(fqcn, level, marker, message, p0, p1, p2);
+  }
+
+  @Override
+  public void logIfEnabled(String fqcn, Level level, Marker marker, String message, Object p0, Object p1, Object p2, Object p3) {
+    getLogger().logIfEnabled(fqcn, level, marker, message, p0, p1, p2, p3);
+  }
+
+  @Override
+  public void logIfEnabled(String fqcn, Level level, Marker marker, String message, Object p0, Object p1, Object p2, Object p3,
+                           Object p4) {
+    getLogger().logIfEnabled(fqcn, level, marker, message, p0, p1, p2, p3, p4);
+  }
+
+  @Override
+  public void logIfEnabled(String fqcn, Level level, Marker marker, String message, Object p0, Object p1, Object p2, Object p3,
+                           Object p4, Object p5) {
+    getLogger().logIfEnabled(fqcn, level, marker, message, p0, p1, p2, p3, p4, p5);
+  }
+
+  @Override
+  public void logIfEnabled(String fqcn, Level level, Marker marker, String message, Object p0, Object p1, Object p2, Object p3,
+                           Object p4, Object p5, Object p6) {
+    getLogger().logIfEnabled(fqcn, level, marker, message, p0, p1, p2, p3, p4, p5, p6);
+  }
+
+  @Override
+  public void logIfEnabled(String fqcn, Level level, Marker marker, String message, Object p0, Object p1, Object p2, Object p3,
+                           Object p4, Object p5, Object p6, Object p7) {
+    getLogger().logIfEnabled(fqcn, level, marker, message, p0, p1, p2, p3, p4, p5, p6, p7);
+  }
+
+  @Override
+  public void logIfEnabled(String fqcn, Level level, Marker marker, String message, Object p0, Object p1, Object p2, Object p3,
+                           Object p4, Object p5, Object p6, Object p7, Object p8) {
+    getLogger().logIfEnabled(fqcn, level, marker, message, p0, p1, p2, p3, p4, p5, p6, p7, p8);
+  }
+
+  @Override
+  public void logIfEnabled(String fqcn, Level level, Marker marker, String message, Object p0, Object p1, Object p2, Object p3,
+                           Object p4, Object p5, Object p6, Object p7, Object p8, Object p9) {
+    getLogger().logIfEnabled(fqcn, level, marker, message, p0, p1, p2, p3, p4, p5, p6, p7, p8, p9);
   }
 
   @Override

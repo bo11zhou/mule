@@ -7,21 +7,23 @@
 package org.mule.runtime.core.privileged.security.tls;
 
 import static java.lang.String.format;
+import static java.security.KeyStore.getInstance;
+import static java.util.Collections.list;
 import static org.mule.runtime.api.i18n.I18nMessageFactory.createStaticMessage;
 import static org.mule.runtime.api.util.Preconditions.checkArgument;
 import static org.mule.runtime.core.api.config.i18n.CoreMessages.cannotLoadFromClasspath;
 import static org.mule.runtime.core.api.config.i18n.CoreMessages.failedToLoad;
+import static org.mule.runtime.core.api.util.IOUtils.getResourceAsStream;
 import static org.mule.runtime.core.api.util.StringUtils.isBlank;
 
 import org.mule.runtime.api.component.AbstractComponent;
 import org.mule.runtime.api.lifecycle.CreateException;
 import org.mule.runtime.core.api.util.FileUtils;
-import org.mule.runtime.core.api.util.IOUtils;
-import org.mule.runtime.core.internal.secutiry.tls.RestrictedSSLServerSocketFactory;
-import org.mule.runtime.core.internal.secutiry.tls.RestrictedSSLSocketFactory;
-import org.mule.runtime.core.internal.secutiry.tls.TlsProperties;
-import org.mule.runtime.core.internal.secutiry.tls.TlsPropertiesMapper;
-import org.mule.runtime.core.internal.secutiry.tls.TlsPropertiesSocketFactory;
+import org.mule.runtime.core.internal.security.tls.RestrictedSSLServerSocketFactory;
+import org.mule.runtime.core.internal.security.tls.RestrictedSSLSocketFactory;
+import org.mule.runtime.core.internal.security.tls.TlsProperties;
+import org.mule.runtime.core.internal.security.tls.TlsPropertiesMapper;
+import org.mule.runtime.core.internal.security.tls.TlsPropertiesSocketFactory;
 import org.mule.runtime.core.internal.util.ArrayUtils;
 import org.mule.runtime.core.internal.util.SecurityUtils;
 import org.mule.runtime.core.privileged.security.RevocationCheck;
@@ -255,15 +257,16 @@ public final class TlsConfiguration extends AbstractComponent
   }
 
   private KeyStore loadKeyStore() throws GeneralSecurityException, IOException {
-    KeyStore tempKeyStore = KeyStore.getInstance(keystoreType);
+    KeyStore tempKeyStore = getInstance(keystoreType);
 
-    InputStream is = IOUtils.getResourceAsStream(keyStoreName, getClass());
-    if (null == is) {
-      throw new FileNotFoundException(cannotLoadFromClasspath("Keystore: " + keyStoreName).getMessage());
+    try (InputStream is = getResourceAsStream(keyStoreName, getClass())) {
+      if (null == is) {
+        throw new FileNotFoundException(cannotLoadFromClasspath("Keystore: " + keyStoreName).getMessage());
+      }
+
+      tempKeyStore.load(is, keyStorePassword.toCharArray());
+      return tempKeyStore;
     }
-
-    tempKeyStore.load(is, keyStorePassword.toCharArray());
-    return tempKeyStore;
   }
 
   /**
@@ -273,8 +276,9 @@ public final class TlsConfiguration extends AbstractComponent
     Enumeration<String> aliases = keyStore.aliases();
     if (!isBlank(keyAlias)) {
       boolean aliasFound = false;
-      while (aliases.hasMoreElements()) {
-        String alias = aliases.nextElement();
+      // Transform alias Enumeration into List because PKCS12KeyStore wrap 'alias' using 'Collections.enumeration'
+      // to avoid java.util.ConcurrentModificationException when trying to remove an entry
+      for (String alias : list(aliases)) {
         if (alias.equals(keyAlias)) {
           // if alias is found all is valid but continue processing to strip out all
           // other (unwanted) keys
@@ -345,22 +349,16 @@ public final class TlsConfiguration extends AbstractComponent
   private KeyStore createTrustStore() throws CreateException {
     trustStorePassword = null == trustStorePassword ? "" : trustStorePassword;
 
-    KeyStore trustStore;
-
-    try {
-      trustStore = KeyStore.getInstance(trustStoreType);
-      InputStream is = IOUtils.getResourceAsStream(trustStoreName, getClass());
+    try (InputStream is = getResourceAsStream(trustStoreName, getClass())) {
+      KeyStore trustStore = getInstance(trustStoreType);
       if (null == is) {
-        throw new FileNotFoundException(
-                                        "Failed to load truststore from classpath or local file: " + trustStoreName);
+        throw new FileNotFoundException("Failed to load truststore from classpath or local file: " + trustStoreName);
       }
       trustStore.load(is, trustStorePassword.toCharArray());
+      return trustStore;
     } catch (Exception e) {
-      throw new CreateException(
-                                failedToLoad("TrustStore: " + trustStoreName), e, this);
+      throw new CreateException(failedToLoad("TrustStore: " + trustStoreName), e, this);
     }
-
-    return trustStore;
   }
 
   public static Set<TrustAnchor> getDefaultCaCerts() throws GeneralSecurityException {

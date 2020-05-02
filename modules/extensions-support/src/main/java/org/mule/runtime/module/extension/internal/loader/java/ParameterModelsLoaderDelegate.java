@@ -12,6 +12,7 @@ import static java.util.stream.Collectors.joining;
 import static java.util.stream.Collectors.toList;
 import static java.util.stream.Collectors.toSet;
 import static org.mule.metadata.java.api.utils.JavaTypeUtils.getType;
+import static org.mule.runtime.api.meta.ExpressionSupport.NOT_SUPPORTED;
 import static org.mule.runtime.api.meta.model.parameter.ParameterGroupModel.DEFAULT_GROUP_NAME;
 import static org.mule.runtime.extension.api.util.ExtensionMetadataTypeUtils.isMap;
 import static org.mule.runtime.extension.api.util.ExtensionModelUtils.roleOf;
@@ -51,6 +52,7 @@ import org.mule.runtime.extension.api.annotation.param.Parameter;
 import org.mule.runtime.extension.api.annotation.param.ParameterGroup;
 import org.mule.runtime.extension.api.annotation.param.display.DisplayName;
 import org.mule.runtime.extension.api.annotation.param.stereotype.ComponentId;
+import org.mule.runtime.extension.api.declaration.type.annotation.StereotypeTypeAnnotation;
 import org.mule.runtime.extension.api.exception.IllegalModelDefinitionException;
 import org.mule.runtime.extension.api.exception.IllegalParameterModelDefinitionException;
 import org.mule.runtime.extension.api.model.parameter.ImmutableExclusiveParametersModel;
@@ -78,8 +80,8 @@ import java.util.Set;
 
 public final class ParameterModelsLoaderDelegate {
 
-  private List<ParameterDeclarerContributor> contributors;
-  private ClassTypeLoader typeLoader;
+  private final List<ParameterDeclarerContributor> contributors;
+  private final ClassTypeLoader typeLoader;
 
   public ParameterModelsLoaderDelegate(List<ParameterDeclarerContributor> contributors, ClassTypeLoader loader) {
     this.contributors = contributors;
@@ -130,7 +132,11 @@ public final class ParameterModelsLoaderDelegate {
             .defaultingTo(extensionParameter.defaultValue().isPresent() ? extensionParameter.defaultValue().get() : null);
       }
 
-      parameter.ofType(extensionParameter.getType().asMetadataType()).describedAs(extensionParameter.getDescription());
+      final MetadataType metadataType = extensionParameter.getType().asMetadataType();
+      parameter.ofType(metadataType).describedAs(extensionParameter.getDescription());
+      metadataType.getAnnotation(StereotypeTypeAnnotation.class).ifPresent(st -> {
+        parameter.withAllowedStereotypes(st.getAllowedStereotypes());
+      });
       parseParameterRole(extensionParameter, parameter);
       parseExpressionSupport(extensionParameter, parameter);
       parseConfigOverride(extensionParameter, parameter);
@@ -143,6 +149,16 @@ public final class ParameterModelsLoaderDelegate {
       parseParameterDsl(extensionParameter, parameter);
       contributors.forEach(contributor -> contributor.contribute(extensionParameter, parameter, declarationContext));
       declarerList.add(parameter);
+    }
+
+    if (declarerList.stream().noneMatch(p -> p.getDeclaration().isComponentId())) {
+      declarerList.stream()
+          .filter(p -> p.getDeclaration().getName().equals("name")
+              && p.getDeclaration().isRequired()
+              && p.getDeclaration().getExpressionSupport() == NOT_SUPPORTED
+              && p.getDeclaration().getType().equals(typeLoader.load(String.class))
+              && p.getDeclaration().getAllowedStereotypeModels().isEmpty())
+          .forEach(p -> p.asComponentId());
     }
 
     return declarerList;

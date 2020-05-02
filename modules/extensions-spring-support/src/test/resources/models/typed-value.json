@@ -40,6 +40,158 @@
         }
       },
       "fields": []
+    },
+    {
+      "format": "java",
+      "type": "Object",
+      "annotations": {
+        "typeId": "org.mule.test.heisenberg.extension.model.DifferedKnockableDoor",
+        "classInformation": {
+          "classname": "org.mule.test.heisenberg.extension.model.DifferedKnockableDoor",
+          "hasDefaultConstructor": true,
+          "isInterface": false,
+          "isInstantiable": true,
+          "isAbstract": false,
+          "isFinal": false,
+          "implementedInterfaces": [],
+          "parent": "",
+          "genericTypes": [],
+          "isMap": false
+        },
+        "typeDsl": {
+          "allowInlineDefinition": true,
+          "allowTopLevelDefinition": true
+        },
+        "typeAlias": {
+          "value": "DifferedKnockableDoor"
+        },
+        "stereotype": {
+          "allowedStereotypes": [
+            {
+              "type": "DIFFERED_KNOCKABLE_DOOR",
+              "namespace": "HEISENBERG"
+            }
+          ]
+        }
+      },
+      "fields": [
+        {
+          "key": {
+            "name": "victim"
+          },
+          "model": {
+            "type": "String"
+          },
+          "annotations": {
+            "expressionSupport": {
+              "value": "SUPPORTED"
+            }
+          }
+        },
+        {
+          "key": {
+            "name": "address"
+          },
+          "model": {
+            "type": "String"
+          },
+          "annotations": {
+            "expressionSupport": {
+              "value": "SUPPORTED"
+            }
+          }
+        },
+        {
+          "key": {
+            "name": "encodedPasssword"
+          },
+          "model": {
+            "type": "String"
+          },
+          "annotations": {
+            "expressionSupport": {
+              "value": "SUPPORTED"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "format": "java",
+      "type": "Object",
+      "annotations": {
+        "typeId": "org.mule.test.heisenberg.extension.model.KnockeableDoor",
+        "classInformation": {
+          "classname": "org.mule.test.heisenberg.extension.model.KnockeableDoor",
+          "hasDefaultConstructor": true,
+          "isInterface": false,
+          "isInstantiable": true,
+          "isAbstract": false,
+          "isFinal": false,
+          "implementedInterfaces": [
+            "java.io.Serializable"
+          ],
+          "parent": "",
+          "genericTypes": [],
+          "isMap": false
+        },
+        "typeDsl": {
+          "allowInlineDefinition": true,
+          "allowTopLevelDefinition": true
+        },
+        "typeAlias": {
+          "value": "door"
+        },
+        "stereotype": {
+          "allowedStereotypes": [
+            {
+              "type": "KNOCKEABLE_DOOR",
+              "namespace": "HEISENBERG"
+            }
+          ]
+        }
+      },
+      "fields": [
+        {
+          "key": {
+            "name": "victim",
+            "required": "true"
+          },
+          "model": {
+            "type": "String"
+          },
+          "annotations": {
+            "expressionSupport": {
+              "value": "SUPPORTED"
+            }
+          }
+        },
+        {
+          "key": {
+            "name": "address",
+            "required": "true"
+          },
+          "model": {
+            "type": "String"
+          },
+          "annotations": {
+            "expressionSupport": {
+              "value": "SUPPORTED"
+            }
+          }
+        },
+        {
+          "key": {
+            "name": "previous"
+          },
+          "model": "#..",
+          "annotations": {
+            "expressionSupport": {
+              "value": "SUPPORTED"
+            }
+          }
+        }
+      ]
     }
   ],
   "configurations": [
@@ -104,9 +256,41 @@
                 "query": false,
                 "order": 2
               },
-              "allowedStereotypeModels": [],
+              "allowedStereotypeModels": [
+                {
+                  "type": "DIFFERED_KNOCKABLE_DOOR",
+                  "namespace": "HEISENBERG"
+                }
+              ],
               "name": "differedDoor",
               "description": "",
+              "modelProperties": {}
+            },
+            {
+              "type": {
+                "format": "java",
+                "type": "String"
+              },
+              "hasDynamicType": false,
+              "required": true,
+              "isConfigOverride": false,
+              "isComponentId": true,
+              "expressionSupport": "NOT_SUPPORTED",
+              "role": "BEHAVIOUR",
+              "dslConfiguration": {
+                "allowsInlineDefinition": false,
+                "allowsReferences": false,
+                "allowTopLevelDefinition": false
+              },
+              "layoutModel": {
+                "password": false,
+                "text": false,
+                "query": false,
+                "order": 4
+              },
+              "allowedStereotypeModels": [],
+              "name": "name",
+              "description": "The identifier of this element used to reference it in other components",
               "modelProperties": {}
             },
             {
@@ -286,6 +470,61 @@
                 {
                   "type": {
                     "format": "java",
+                    "type": "Object",
+                    "annotations": {
+                      "typeId": "org.mule.runtime.extension.api.runtime.config.ConfigurationProvider"
+                    },
+                    "fields": []
+                  },
+                  "hasDynamicType": false,
+                  "required": false,
+                  "isConfigOverride": false,
+                  "isComponentId": false,
+                  "expressionSupport": "NOT_SUPPORTED",
+                  "role": "BEHAVIOUR",
+                  "dslConfiguration": {
+                    "allowsInlineDefinition": false,
+                    "allowsReferences": true,
+                    "allowTopLevelDefinition": false
+                  },
+                  "layoutModel": {
+                    "password": false,
+                    "text": false,
+                    "query": false,
+                    "order": 3
+                  },
+                  "allowedStereotypeModels": [
+                    {
+                      "type": "CONFIG",
+                      "namespace": "TYPED-VALUE",
+                      "parent": {
+                        "type": "MODULE_CONFIG",
+                        "namespace": "MULE"
+                      }
+                    }
+                  ],
+                  "name": "config-ref",
+                  "description": "The name of the configuration to be used to execute this component",
+                  "modelProperties": {}
+                }
+              ],
+              "exclusiveParametersModels": [],
+              "layoutModel": {
+                "password": false,
+                "text": false,
+                "query": false,
+                "order": 0
+              },
+              "showInDsl": false,
+              "name": "General",
+              "description": "",
+              "modelProperties": {}
+            },
+            {
+              "parameters": [
+                {
+                  "type": {
+                    "format": "java",
                     "type": "String"
                   },
                   "hasDynamicType": false,
@@ -440,6 +679,46 @@
                   "name": "stringValue",
                   "description": "",
                   "modelProperties": {}
+                },
+                {
+                  "type": {
+                    "format": "java",
+                    "type": "Object",
+                    "annotations": {
+                      "typeId": "org.mule.runtime.extension.api.runtime.config.ConfigurationProvider"
+                    },
+                    "fields": []
+                  },
+                  "hasDynamicType": false,
+                  "required": false,
+                  "isConfigOverride": false,
+                  "isComponentId": false,
+                  "expressionSupport": "NOT_SUPPORTED",
+                  "role": "BEHAVIOUR",
+                  "dslConfiguration": {
+                    "allowsInlineDefinition": false,
+                    "allowsReferences": true,
+                    "allowTopLevelDefinition": false
+                  },
+                  "layoutModel": {
+                    "password": false,
+                    "text": false,
+                    "query": false,
+                    "order": 2
+                  },
+                  "allowedStereotypeModels": [
+                    {
+                      "type": "CONFIG",
+                      "namespace": "TYPED-VALUE",
+                      "parent": {
+                        "type": "MODULE_CONFIG",
+                        "namespace": "MULE"
+                      }
+                    }
+                  ],
+                  "name": "config-ref",
+                  "description": "The name of the configuration to be used to execute this component",
+                  "modelProperties": {}
                 }
               ],
               "exclusiveParametersModels": [],
@@ -476,7 +755,7 @@
                     "password": false,
                     "text": false,
                     "query": false,
-                    "order": 2,
+                    "order": 3,
                     "tabName": "Advanced"
                   },
                   "allowedStereotypeModels": [],
@@ -508,7 +787,7 @@
                     "password": false,
                     "text": false,
                     "query": false,
-                    "order": 3,
+                    "order": 4,
                     "tabName": "Advanced"
                   },
                   "allowedStereotypeModels": [],
@@ -543,7 +822,15 @@
       "messageSources": [],
       "name": "config",
       "description": "Default configuration",
-      "modelProperties": {}
+      "modelProperties": {
+        "requiredForMetadata": {
+          "requiredParameters": [
+            "stringTypedValue",
+            "differedDoor",
+            "name"
+          ]
+        }
+      }
     }
   ],
   "operations": [
@@ -1035,9 +1322,13 @@
       "name": "mixedTypedValues",
       "description": "",
       "modelProperties": {
-        "org.mule.runtime.extension.api.property.TypeResolversInformationModelProperty": {
+        "typeResolversInformation": {
           "category": "typed-value",
-          "outputResolver": "OUTPUT_PAYLOAD"
+          "outputResolver": {
+            "resolverName": "OUTPUT_PAYLOAD",
+            "requiresConnection": false,
+            "requiresConfiguration": false
+          }
         }
       },
       "kind": "operation"
@@ -1638,9 +1929,13 @@
       "name": "typedValueForObject",
       "description": "",
       "modelProperties": {
-        "org.mule.runtime.extension.api.property.TypeResolversInformationModelProperty": {
+        "typeResolversInformation": {
           "category": "typed-value",
-          "outputResolver": "OUTPUT_PAYLOAD"
+          "outputResolver": {
+            "resolverName": "OUTPUT_PAYLOAD",
+            "requiresConnection": false,
+            "requiresConfiguration": false
+          }
         }
       },
       "kind": "operation"
@@ -1709,7 +2004,12 @@
                 "query": false,
                 "order": 1
               },
-              "allowedStereotypeModels": [],
+              "allowedStereotypeModels": [
+                {
+                  "type": "DIFFERED_KNOCKABLE_DOOR",
+                  "namespace": "HEISENBERG"
+                }
+              ],
               "name": "differedDoor",
               "description": "",
               "modelProperties": {}
@@ -2768,7 +3068,11 @@
               "allowedStereotypeModels": [],
               "name": "outputMimeType",
               "description": "The mime type of the payload that this operation outputs.",
-              "modelProperties": {}
+              "modelProperties": {
+                "sinceMuleVersion": {
+                  "version": "4.2.0"
+                }
+              }
             }
           ],
           "exclusiveParametersModels": [],
@@ -3850,140 +4154,6 @@
       "format": "java",
       "type": "Object",
       "annotations": {
-        "typeId": "org.mule.test.heisenberg.extension.model.DifferedKnockableDoor",
-        "classInformation": {
-          "classname": "org.mule.test.heisenberg.extension.model.DifferedKnockableDoor",
-          "hasDefaultConstructor": true,
-          "isInterface": false,
-          "isInstantiable": true,
-          "isAbstract": false,
-          "isFinal": false,
-          "implementedInterfaces": [],
-          "parent": "",
-          "genericTypes": [],
-          "isMap": false
-        },
-        "typeDsl": {
-          "allowInlineDefinition": true,
-          "allowTopLevelDefinition": true
-        },
-        "typeAlias": {
-          "value": "DifferedKnockableDoor"
-        }
-      },
-      "fields": [
-        {
-          "key": {
-            "name": "victim"
-          },
-          "model": {
-            "type": "String"
-          },
-          "annotations": {
-            "expressionSupport": {
-              "value": "SUPPORTED"
-            }
-          }
-        },
-        {
-          "key": {
-            "name": "address"
-          },
-          "model": {
-            "type": "String"
-          },
-          "annotations": {
-            "expressionSupport": {
-              "value": "SUPPORTED"
-            }
-          }
-        },
-        {
-          "key": {
-            "name": "encodedPasssword"
-          },
-          "model": {
-            "type": "String"
-          },
-          "annotations": {
-            "expressionSupport": {
-              "value": "SUPPORTED"
-            }
-          }
-        }
-      ]
-    },
-    {
-      "format": "java",
-      "type": "Object",
-      "annotations": {
-        "typeId": "org.mule.test.heisenberg.extension.model.KnockeableDoor",
-        "classInformation": {
-          "classname": "org.mule.test.heisenberg.extension.model.KnockeableDoor",
-          "hasDefaultConstructor": true,
-          "isInterface": false,
-          "isInstantiable": true,
-          "isAbstract": false,
-          "isFinal": false,
-          "implementedInterfaces": [],
-          "parent": "",
-          "genericTypes": [],
-          "isMap": false
-        },
-        "typeDsl": {
-          "allowInlineDefinition": true,
-          "allowTopLevelDefinition": true
-        },
-        "typeAlias": {
-          "value": "door"
-        }
-      },
-      "fields": [
-        {
-          "key": {
-            "name": "victim",
-            "required": "true"
-          },
-          "model": {
-            "type": "String"
-          },
-          "annotations": {
-            "expressionSupport": {
-              "value": "SUPPORTED"
-            }
-          }
-        },
-        {
-          "key": {
-            "name": "address",
-            "required": "true"
-          },
-          "model": {
-            "type": "String"
-          },
-          "annotations": {
-            "expressionSupport": {
-              "value": "SUPPORTED"
-            }
-          }
-        },
-        {
-          "key": {
-            "name": "previous"
-          },
-          "model": "#..",
-          "annotations": {
-            "expressionSupport": {
-              "value": "SUPPORTED"
-            }
-          }
-        }
-      ]
-    },
-    {
-      "format": "java",
-      "type": "Object",
-      "annotations": {
         "typeId": "org.mule.test.typed.value.extension.extension.SimplePojo",
         "classInformation": {
           "classname": "org.mule.test.typed.value.extension.extension.SimplePojo",
@@ -4091,6 +4261,14 @@
               },
               "typeAlias": {
                 "value": "DifferedKnockableDoor"
+              },
+              "stereotype": {
+                "allowedStereotypes": [
+                  {
+                    "type": "DIFFERED_KNOCKABLE_DOOR",
+                    "namespace": "HEISENBERG"
+                  }
+                ]
               }
             },
             "fields": [

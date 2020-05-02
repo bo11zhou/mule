@@ -32,8 +32,10 @@ import static org.mule.runtime.api.util.collection.Collectors.toImmutableList;
 import static org.mule.runtime.extension.api.util.ExtensionMetadataTypeUtils.getType;
 import static org.mule.runtime.module.extension.api.loader.java.type.PropertyElement.Accessibility.READ_ONLY;
 import static org.mule.runtime.module.extension.api.loader.java.type.PropertyElement.Accessibility.READ_WRITE;
+import static org.mule.runtime.module.extension.internal.util.MuleExtensionUtils.getImplementingType;
 import static org.reflections.ReflectionUtils.getAllFields;
 import static org.springframework.core.ResolvableType.NONE;
+import static org.springframework.util.ConcurrentReferenceHashMap.ReferenceType.WEAK;
 
 import org.mule.metadata.api.ClassTypeLoader;
 import org.mule.metadata.api.builder.BaseTypeBuilder;
@@ -71,8 +73,12 @@ import org.mule.runtime.api.meta.model.parameter.ParameterizedModel;
 import org.mule.runtime.api.meta.model.util.ExtensionWalker;
 import org.mule.runtime.api.metadata.DataType;
 import org.mule.runtime.api.metadata.TypedValue;
+import org.mule.runtime.api.streaming.CursorProvider;
+import org.mule.runtime.api.streaming.bytes.CursorStreamProvider;
+import org.mule.runtime.api.streaming.object.CursorIteratorProvider;
 import org.mule.runtime.api.util.Pair;
 import org.mule.runtime.api.util.Reference;
+import org.mule.runtime.api.util.collection.SmallMap;
 import org.mule.runtime.core.api.util.ClassUtils;
 import org.mule.runtime.extension.api.annotation.Alias;
 import org.mule.runtime.extension.api.annotation.Expression;
@@ -106,6 +112,7 @@ import org.mule.runtime.module.extension.internal.loader.java.property.Implement
 import org.mule.runtime.module.extension.internal.loader.java.property.InjectedFieldModelProperty;
 import org.mule.runtime.module.extension.internal.loader.java.property.ParameterGroupModelProperty;
 import org.mule.runtime.module.extension.internal.loader.java.property.RequireNameField;
+import org.mule.runtime.module.extension.internal.loader.java.type.property.ExtensionTypeDescriptorModelProperty;
 
 import java.beans.IntrospectionException;
 import java.beans.Introspector;
@@ -143,8 +150,12 @@ import javax.lang.model.type.DeclaredType;
 import javax.lang.model.type.TypeMirror;
 
 import com.google.common.collect.ImmutableList;
+import org.apache.commons.lang3.reflect.FieldUtils;
 import org.reflections.ReflectionUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.core.ResolvableType;
+import org.springframework.util.ConcurrentReferenceHashMap;
 
 /**
  * Set of utility operations to get insights about objects and their components
@@ -152,6 +163,34 @@ import org.springframework.core.ResolvableType;
  * @since 3.7.0
  */
 public final class IntrospectionUtils {
+
+  private static final AnyType ANY_TYPE = typeBuilder().anyType().build();
+  private static final ArrayType ANY_ARRAY_TYPE = typeBuilder().arrayType().of(ANY_TYPE).build();
+  private static final MetadataTypeEnricher enricher = new MetadataTypeEnricher();
+  private static final Logger LOGGER = LoggerFactory.getLogger(IntrospectionUtils.class);
+
+  static {
+    setWeakHashCaches();
+  }
+
+  /**
+   * Set caches in spring so that they are weakly (and not softly) referenced by default.
+   *
+   * For example, {@link ResolvableType} or {@link CachedIntrospectionResults} may retain classloaders when introspection is used.
+   */
+  private static void setWeakHashCaches() {
+    try {
+      Field field = FieldUtils.getField(ConcurrentReferenceHashMap.class, "DEFAULT_REFERENCE_TYPE", true);
+      Field modifiersField = Field.class.getDeclaredField("modifiers");
+      modifiersField.setAccessible(true);
+      modifiersField.setInt(field, field.getModifiers() & ~Modifier.FINAL);
+      field.set(null, WEAK);
+    } catch (Exception e) {
+      if (LOGGER.isDebugEnabled()) {
+        LOGGER.debug("Unable to set spring concurrent maps to WEAK default scopes.", e);
+      }
+    }
+  }
 
   private IntrospectionUtils() {}
 
@@ -169,14 +208,12 @@ public final class IntrospectionUtils {
   public static MetadataType getMetadataType(Type type) {
     MetadataType metadataType = type.asMetadataType();
 
-    if (type.isSameType(Object.class) ||
-        type.isAssignableTo(InputStream.class) ||
-        type.isAssignableTo(Byte[].class) ||
-        type.isAssignableTo(byte[].class)) {
+    if (isAnyType(type)) {
+      return enricher.enrich(ANY_TYPE, metadataType.getAnnotations());
+    }
 
-      MetadataTypeEnricher enricher = new MetadataTypeEnricher();
-
-      return enricher.enrich(typeBuilder().anyType().build(), metadataType.getAnnotations());
+    if (isArrayOfAny(type)) {
+      return enricher.enrich(typeBuilder().arrayType().of(typeBuilder().anyType()).build(), metadataType.getAnnotations());
     }
 
     return metadataType;
@@ -249,6 +286,28 @@ public final class IntrospectionUtils {
     return dataType.get();
   }
 
+  /**
+   * Based on a {@link ExtensionModel}, determines if this one has been created using the Java AST.
+   *
+   * @param model Extension model to introspect
+   * @return a boolean indicating whether the {@link ExtensionModel} was created using the Java AST or using compiled classes
+   */
+  public static boolean isASTMode(ExtensionModel model) {
+    Optional<ExtensionTypeDescriptorModelProperty> property = model.getModelProperty(ExtensionTypeDescriptorModelProperty.class);
+    return !(property.isPresent() && property.get().getType().getDeclaringClass().isPresent());
+  }
+
+  /**
+   * Based on a {@link BaseDeclaration}, determines if this one has been created using the Java AST.
+   *
+   * @param model Base Declaration to introspect
+   * @return a boolean indicating whether the {@link BaseDeclaration} was created using the Java AST or using compiled classes
+   */
+  public static boolean isASTMode(BaseDeclaration model) {
+    Optional<ExtensionTypeDescriptorModelProperty> property = model.getModelProperty(ExtensionTypeDescriptorModelProperty.class);
+    return !(property.isPresent() && property.get().getType().getDeclaringClass().isPresent());
+  }
+
   public static MetadataType getMethodReturnType(MethodElement method) {
     checkArgument(method != null, "Can't introspect a null method");
     return getReturnType(method.getReturnType());
@@ -273,7 +332,7 @@ public final class IntrospectionUtils {
     if (returnType.isAssignableTo(Result.class)) {
       List<TypeGeneric> generics = returnType.getGenerics();
       if (generics.isEmpty()) {
-        return typeBuilder().anyType().build();
+        return ANY_TYPE;
       }
       Type payloadType = generics.get(0).getConcreteType();
       if (!payloadType.isAnyType()) {
@@ -309,26 +368,21 @@ public final class IntrospectionUtils {
       }
     }
 
-    if ((returnType.isSameType(Object.class) ||
-        returnType.isSameType(Serializable.class) ||
-        returnType.isAssignableTo(InputStream.class) ||
-        returnType.isAssignableTo(Byte[].class) ||
-        returnType.isAssignableTo(byte[].class)) && type != null) {
-
-      MetadataType metadataType = typeBuilder().anyType().build();
-      MetadataTypeEnricher enricher = new MetadataTypeEnricher();
-
-      return enricher.enrich(metadataType, type.asMetadataType().getAnnotations());
+    if (isAnyType(returnType) && type != null) {
+      return enricher.enrich(ANY_TYPE, type.asMetadataType().getAnnotations());
     }
 
-    return type != null ? type.asMetadataType() : typeBuilder().anyType().build();
+    if (isArrayOfAny(returnType) && type != null) {
+      return enricher.enrich(ANY_ARRAY_TYPE, type.asMetadataType().getAnnotations());
+    }
+
+    return type != null ? type.asMetadataType() : ANY_TYPE;
   }
 
   private static MetadataType returnListOfMessagesType(Type returnType,
                                                        Type resultType) {
     if (resultType.getGenerics().isEmpty()) {
-      AnyType anyType = typeBuilder().anyType().build();
-      return getListOfMessageType(returnType, anyType, anyType);
+      return getListOfMessageType(returnType, ANY_TYPE, ANY_TYPE);
     } else {
       TypeGeneric genericType = resultType.getGenerics().get(0);
       Type payloadType = genericType.getConcreteType();
@@ -336,7 +390,7 @@ public final class IntrospectionUtils {
       MetadataType outputType;
 
       if (payloadType.isAnyType()) {
-        outputType = typeBuilder().anyType().build();
+        outputType = ANY_TYPE;
       } else {
         if (payloadType.isAssignableTo(TypedValue.class)) {
           payloadType = payloadType.getGenerics().get(0).getConcreteType();
@@ -348,7 +402,7 @@ public final class IntrospectionUtils {
           resultType.getGenerics().get(1).getConcreteType();
 
       MetadataType attributesOutputType = attributesType.isAnyType()
-          ? typeBuilder().anyType().build()
+          ? ANY_TYPE
           : attributesType.asMetadataType();
 
       return getListOfMessageType(returnType, outputType, attributesOutputType);
@@ -393,15 +447,15 @@ public final class IntrospectionUtils {
         Type genericType = generics.get(1).getConcreteType();
         if (genericType != null) {
           if (genericType.isAnyType()) {
-            return typeBuilder().anyType().build();
+            return ANY_TYPE;
           } else {
             attributesType = genericType;
           }
         } else {
-          return typeBuilder().anyType().build();
+          return ANY_TYPE;
         }
       } else {
-        return typeBuilder().anyType().build();
+        return ANY_TYPE;
       }
     }
 
@@ -566,45 +620,6 @@ public final class IntrospectionUtils {
     return enrichableModel.getModelProperty(DeclaringMemberModelProperty.class).map(p -> p.getDeclaringField());
   }
 
-  public static List<? extends TypeMirror> getInterfaceGenerics(TypeMirror type, TypeElement superTypeElement,
-                                                                ProcessingEnvironment processingEnvironment) {
-    TypeElement objectType = processingEnvironment.getElementUtils().getTypeElement(Object.class.getName());
-    TypeMirror superClassTypeMirror = processingEnvironment.getTypeUtils().erasure(superTypeElement.asType());
-
-    if (!processingEnvironment.getTypeUtils().isAssignable(type, superClassTypeMirror)) {
-      throw new IllegalArgumentException(
-                                         format("Class '%s' does not extend the '%s' class", type.toString(),
-                                                superTypeElement.getSimpleName()));
-    }
-
-    if (processingEnvironment.getTypeUtils().isSameType(superClassTypeMirror,
-                                                        processingEnvironment.getTypeUtils().erasure(type))) {
-      return ((DeclaredType) type).getTypeArguments();
-    }
-
-    DeclaredType searchClass = (DeclaredType) type;
-    while (!processingEnvironment.getTypeUtils().isAssignable(objectType.asType(), searchClass)) {
-      for (TypeMirror typeMirror : processingEnvironment.getTypeUtils().directSupertypes(searchClass)) {
-        if (processingEnvironment.getTypeUtils().isSameType(superClassTypeMirror,
-                                                            processingEnvironment.getTypeUtils().erasure(typeMirror))) {
-          if (typeMirror instanceof DeclaredType) {
-            return ((DeclaredType) typeMirror).getTypeArguments();
-          } else {
-            return emptyList();
-          }
-        } else {
-          if (typeMirror instanceof DeclaredType
-              && processingEnvironment.getTypeUtils().isAssignable(typeMirror, superClassTypeMirror)) {
-            searchClass = (DeclaredType) typeMirror;
-          } else if (processingEnvironment.getTypeUtils().isAssignable(objectType.asType(), typeMirror)) {
-            searchClass = (DeclaredType) typeMirror;
-          }
-        }
-      }
-    }
-    return emptyList();
-  }
-
   public static List<java.lang.reflect.Type> getInterfaceGenerics(final java.lang.reflect.Type type,
                                                                   final Class<?> implementedInterface) {
 
@@ -615,7 +630,7 @@ public final class IntrospectionUtils {
       return stream(searchClass.getGenerics()).map(resolvableType -> resolvableType.getType()).collect(toList());
     }
 
-    Map<String, java.lang.reflect.Type> genericTypes = new HashMap<>();
+    Map<String, java.lang.reflect.Type> genericTypes = new SmallMap<>();
 
     addGenericsToMap(genericTypes, searchClass);
 
@@ -734,7 +749,7 @@ public final class IntrospectionUtils {
                                                 superClass.getName()));
     }
 
-    Map<String, java.lang.reflect.Type> genericTypes = new HashMap<>();
+    Map<String, java.lang.reflect.Type> genericTypes = new SmallMap<>();
 
     while (!Object.class.equals(searchType.getType())) {
 
@@ -913,8 +928,8 @@ public final class IntrospectionUtils {
     return methodStream.filter(method -> isPublic(method.getModifiers()));
   }
 
-  private static Stream<ExecutableElement> getMethodsStream(TypeElement typeElement, boolean superClasses,
-                                                            ProcessingEnvironment processingEnvironment) {
+  public static Stream<ExecutableElement> getMethodsStream(TypeElement typeElement, boolean superClasses,
+                                                           ProcessingEnvironment processingEnvironment) {
     Stream<ExecutableElement> methodStream;
 
     if (superClasses) {
@@ -1366,15 +1381,12 @@ public final class IntrospectionUtils {
                                                                              Class<? extends ConnectionProvider> connectionProvider,
                                                                              List<ConnectionProviderModel> allConnectionProviders) {
     for (ConnectionProviderModel providerModel : allConnectionProviders) {
-      Optional<ImplementingTypeModelProperty> modelProperty = providerModel.getModelProperty(ImplementingTypeModelProperty.class);
+      Optional<Class> providerImplementingType = getImplementingType(providerModel);
 
-      if (modelProperty.isPresent()) {
-        ImplementingTypeModelProperty property = modelProperty.get();
-
-        if (property.getType().equals(connectionProvider)) {
-          return of(providerModel);
-        }
+      if (providerImplementingType.map(type -> type.equals(connectionProvider)).orElse(false)) {
+        return of(providerModel);
       }
+
     }
     return empty();
   }
@@ -1583,5 +1595,25 @@ public final class IntrospectionUtils {
                                                getGroupModelContainerName(groupModel))));
 
     return showInDslMap;
+  }
+
+  /**
+   * @return a boolean indicating if the given type should be considered as a {@link AnyType Any type}
+   */
+  private static boolean isAnyType(Type type) {
+    return type.isSameType(Object.class) ||
+        type.isSameType(Serializable.class) ||
+        type.isAssignableTo(InputStream.class) ||
+        type.isAssignableTo(Byte[].class) ||
+        type.isAssignableTo(byte[].class) ||
+        type.isSameType(CursorProvider.class) ||
+        type.isAssignableTo(CursorStreamProvider.class);
+  }
+
+  /**
+   * @return a boolean indicating if the given type should be considered as a {@link ArrayType array} of {@link AnyType Any type}
+   */
+  private static boolean isArrayOfAny(Type type) {
+    return type.isAssignableTo(CursorIteratorProvider.class);
   }
 }

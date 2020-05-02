@@ -14,7 +14,6 @@ import static java.util.stream.Stream.of;
 import static org.apache.commons.lang3.StringUtils.isNotBlank;
 import static org.mule.runtime.api.component.ComponentIdentifier.builder;
 import static org.mule.runtime.api.util.Preconditions.checkArgument;
-import static org.mule.runtime.app.declaration.api.fluent.ElementDeclarer.newObjectValue;
 import static org.mule.runtime.dsl.internal.xml.parser.XmlApplicationParser.IS_CDATA;
 import static org.mule.runtime.extension.api.util.ExtensionMetadataTypeUtils.getAlias;
 import static org.mule.runtime.extension.api.util.ExtensionMetadataTypeUtils.getId;
@@ -28,6 +27,7 @@ import static org.mule.runtime.internal.dsl.DslConstants.CONFIG_ATTRIBUTE_NAME;
 import static org.mule.runtime.internal.dsl.DslConstants.KEY_ATTRIBUTE_NAME;
 import static org.mule.runtime.internal.dsl.DslConstants.NAME_ATTRIBUTE_NAME;
 import static org.mule.runtime.internal.dsl.DslConstants.VALUE_ATTRIBUTE_NAME;
+
 import org.mule.metadata.api.ClassTypeLoader;
 import org.mule.metadata.api.model.ArrayType;
 import org.mule.metadata.api.model.MetadataType;
@@ -42,8 +42,10 @@ import org.mule.runtime.api.meta.model.ComposableModel;
 import org.mule.runtime.api.meta.model.ExtensionModel;
 import org.mule.runtime.api.meta.model.config.ConfigurationModel;
 import org.mule.runtime.api.meta.model.connection.ConnectionProviderModel;
+import org.mule.runtime.api.meta.model.connection.HasConnectionProviderModels;
 import org.mule.runtime.api.meta.model.construct.ConstructModel;
 import org.mule.runtime.api.meta.model.construct.HasConstructModels;
+import org.mule.runtime.api.meta.model.declaration.fluent.ConnectionProviderDeclaration;
 import org.mule.runtime.api.meta.model.display.LayoutModel;
 import org.mule.runtime.api.meta.model.nested.NestedRouteModel;
 import org.mule.runtime.api.meta.model.operation.HasOperationModels;
@@ -103,7 +105,7 @@ class DeclarationBasedElementModelFactory {
   private final DslResolvingContext context;
   private final InfrastructureElementModelDelegate infrastructureDelegate;
   private final ClassTypeLoader typeLoader = ExtensionsTypeLoaderFactory.getDefault().createTypeLoader();
-  private Map<ExtensionModel, DslSyntaxResolver> resolvers;
+  private final Map<ExtensionModel, DslSyntaxResolver> resolvers;
   private ExtensionModel currentExtension;
   private DslSyntaxResolver dsl;
 
@@ -129,6 +131,14 @@ class DeclarationBasedElementModelFactory {
       protected void onConfiguration(ConfigurationModel model) {
         if (equalsName.apply(model) && declaration instanceof ConfigurationElementDeclaration) {
           elementModel.set(createConfigurationElement(model, (ConfigurationElementDeclaration) declaration));
+          stop();
+        }
+      }
+
+      @Override
+      protected void onConnectionProvider(HasConnectionProviderModels owner, ConnectionProviderModel model) {
+        if (equalsName.apply(model) && declaration instanceof ConnectionElementDeclaration) {
+          elementModel.set(createConnectionProviderModel(model, (ConnectionElementDeclaration) declaration));
           stop();
         }
       }
@@ -290,6 +300,20 @@ class DeclarationBasedElementModelFactory {
     this.dsl = resolvers.get(currentExtension);
   }
 
+  private DslElementModel<ConnectionProviderModel> createConnectionProviderModel(ConnectionProviderModel providerModel,
+                                                                                 ConnectionElementDeclaration connection) {
+    DslElementSyntax providerDsl = dsl.resolve(providerModel);
+
+    InternalComponentConfiguration.Builder builder = InternalComponentConfiguration.builder()
+        .withIdentifier(asIdentifier(providerDsl));
+
+    DslElementModel.Builder<ConnectionProviderModel> element =
+        createParameterizedElementModel(providerModel, providerDsl, connection, builder);
+
+    ComponentConfiguration providerConfig = builder.build();
+    return element.withConfig(providerConfig).build();
+  }
+
   private void addConnectionProvider(ConnectionElementDeclaration connection,
                                      ConfigurationModel model,
                                      InternalComponentConfiguration.Builder configuration,
@@ -300,18 +324,10 @@ class DeclarationBasedElementModelFactory {
             .filter(c -> c.getName().equals(connection.getName()))
             .findFirst()
             .ifPresent(provider -> {
-              DslElementSyntax providerDsl = dsl.resolve(provider);
-
-              InternalComponentConfiguration.Builder builder = InternalComponentConfiguration.builder()
-                  .withIdentifier(asIdentifier(providerDsl));
-
-              DslElementModel.Builder<ConnectionProviderModel> element =
-                  createParameterizedElementModel(provider, providerDsl, connection, builder);
-
-              ComponentConfiguration providerConfig = builder.build();
-
-              configuration.withNestedComponent(providerConfig);
-              configElement.containing(element.withConfig(providerConfig).build());
+              DslElementModel<ConnectionProviderModel> connectionProviderModel =
+                  createConnectionProviderModel(provider, connection);
+              connectionProviderModel.getConfiguration().ifPresent(configuration::withNestedComponent);
+              configElement.containing(connectionProviderModel);
             });
   }
 
@@ -389,23 +405,6 @@ class DeclarationBasedElementModelFactory {
           }
         }
       }
-
-      // TODO Remove in EE-5855
-      group.getParameter("schedulingStrategy")
-          .ifPresent(param -> {
-            if (!parameterizedDeclaration.getParameterGroup(group.getName())
-                .map(g -> g.getParameter("schedulingStrategy").orElse(null))
-                .isPresent()) {
-
-              addParameter("schedulingStrategy", newObjectValue()
-                  .ofType("org.mule.runtime.core.api.source.scheduler.FixedFrequencyScheduler")
-                  .withParameter("frequency", "1")
-                  .withParameter("timeUnit", "MINUTES")
-                  .build(),
-                           group.getParameter("schedulingStrategy").get(),
-                           parentDsl.getContainedElement("schedulingStrategy").get(), parentConfig, parentElement);
-            }
-          });
     });
   }
 
@@ -645,6 +644,12 @@ class DeclarationBasedElementModelFactory {
                                      InternalComponentConfiguration.Builder parentConfig,
                                      DslElementModel.Builder parentElement, ParameterModel parameterModel, boolean explicit) {
     if (paramDsl.supportsAttributeDeclaration()) {
+      // skip the name attribute for the case where it was already added
+      if (parameterModel.isComponentId()
+          && "name".equals(parameterModel.getName())) {
+        return;
+      }
+
       // attribute parameters imply no further nesting in the configs
       parentConfig.withParameter(paramDsl.getAttributeName(), value.getValue());
       parentElement.containing(DslElementModel.<ParameterModel>builder()

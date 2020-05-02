@@ -4,7 +4,7 @@
     <parent>
         <groupId>org.mule.runtime</groupId>
         <artifactId>mule-modules</artifactId>
-        <version>4.2.0-SNAPSHOT</version>
+        <version>4.4.0-SNAPSHOT</version>
     </parent>
     <artifactId>mule-module-tls</artifactId>
     <packaging>jar</packaging>
@@ -35,6 +35,11 @@
             <artifactId>mule-service-weave</artifactId>
             <classifier>mule-service</classifier>
             <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.mule.runtime</groupId>
+            <artifactId>mule-dwb-api</artifactId> 
+            <scope>provided</scope>               
         </dependency>
         <dependency>
             <groupId>org.mule.runtime</groupId>

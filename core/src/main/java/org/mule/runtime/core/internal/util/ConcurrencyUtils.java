@@ -9,6 +9,7 @@ package org.mule.runtime.core.internal.util;
 import org.mule.runtime.core.api.util.func.CheckedRunnable;
 import org.mule.runtime.core.api.util.func.CheckedSupplier;
 
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.locks.Lock;
 
 /**
@@ -39,7 +40,9 @@ public class ConcurrencyUtils {
    * @param supplier a {@link CheckedSupplier}
    * @param <T>      the generic type of the returned value
    * @return the supplied value
+   * @deprecated since 4.3.0 on grounds of performance overhead. Handle this manually instead
    */
+  @Deprecated
   public static <T> T withLock(Lock lock, CheckedSupplier<T> supplier) {
     lock.lock();
     try {
@@ -55,7 +58,9 @@ public class ConcurrencyUtils {
    *
    * @param lock     a {@link Lock}
    * @param delegate a {@link CheckedRunnable}
+   * @deprecated since 4.3.0 on grounds of performance overhead. Handle this manually instead
    */
+  @Deprecated
   public static void withLock(Lock lock, CheckedRunnable delegate) {
     lock.lock();
     try {
@@ -63,6 +68,21 @@ public class ConcurrencyUtils {
     } finally {
       safeUnlock(lock);
     }
+  }
+
+  /**
+   * Returns a {@link CompletableFuture} already exceptionally completed with the given {@code throwable}
+   *
+   * @param throwable the {@link Throwable} that completed the future
+   * @param <T>       the future's generic type
+   * @return an exceptionally completed future
+   * @since 4.3.0
+   */
+  public static <T> CompletableFuture<T> exceptionallyCompleted(Throwable throwable) {
+    CompletableFuture<T> f = new CompletableFuture<>();
+    f.completeExceptionally(throwable);
+
+    return f;
   }
 
   private ConcurrencyUtils() {}

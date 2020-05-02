@@ -7,6 +7,7 @@
 package org.mule.runtime.module.extension.internal.config.dsl;
 
 import static org.apache.commons.lang3.StringUtils.EMPTY;
+import static org.mule.runtime.core.api.lifecycle.LifecycleUtils.isLazyInitMode;
 import static org.mule.runtime.extension.api.annotation.param.Optional.PAYLOAD;
 
 import org.mule.runtime.api.artifact.Registry;
@@ -58,7 +59,7 @@ public abstract class ComponentMessageProcessorObjectFactory<M extends Component
   }
 
   @Override
-  public P doGetObject() throws Exception {
+  public P doGetObject() {
     if (nestedProcessors != null) {
       componentModel.getNestedComponents().stream()
           .filter(component -> component instanceof NestedChainModel)
@@ -72,7 +73,7 @@ public abstract class ComponentMessageProcessorObjectFactory<M extends Component
         .setParameters(parameters)
         .setTarget(target)
         .setTargetValue(targetValue)
-        .setLazyMode(isLazyModeEnabled())
+        .setLazyMode(isLazyInitMode(properties))
         .setCursorProviderFactory(cursorProviderFactory)
         .setRetryPolicyTemplate(retryPolicyTemplate)
         .build();

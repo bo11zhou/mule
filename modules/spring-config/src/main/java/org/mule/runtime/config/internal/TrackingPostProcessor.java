@@ -8,11 +8,11 @@ package org.mule.runtime.config.internal;
 
 import static org.mule.runtime.core.api.util.StringUtils.ifNotBlank;
 
-import com.google.common.collect.ImmutableList;
-
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 
+import com.google.common.collect.ImmutableList;
 import org.springframework.beans.BeansException;
 import org.springframework.beans.factory.config.BeanPostProcessor;
 
@@ -48,14 +48,18 @@ public class TrackingPostProcessor implements BeanPostProcessor {
 
   public void startTracking() {
     tracking = true;
-    trackingList.clear();
   }
 
   public void stopTracking() {
     tracking = false;
   }
 
-  public void intersection(List<String> beanNames) {
+  public void intersection(Collection<String> beanNames) {
     trackingList.removeIf(name -> !beanNames.contains(name));
   }
+
+  public void reset() {
+    trackingList.clear();
+  }
+
 }

@@ -33,9 +33,59 @@ public interface InternalEvent extends PrivilegedEvent {
 
   /**
    * Internal parameters used by the runtime to pass information around.
-   *
+   * @deprecated since 4.3.0. Replace with {@link EventInternalContext} attributes
    */
+  @Deprecated
   Map<String, ?> getInternalParameters();
+
+  /**
+   * Internal parameters used by the runtime to pass information around.
+   * @deprecated since 4.3.0. Replace with {@link EventInternalContext} attributes
+   */
+  @Deprecated
+  <T> T getInternalParameter(String key);
+
+  /**
+   * @return a {@link EventInternalContext} with state from the SDK
+   * @since 4.3.0
+   */
+  <T extends EventInternalContext> EventInternalContext<T> getSdkInternalContext();
+
+
+  /**
+   * Sets context related to the SDK
+   * @param context an {@link EventInternalContext}
+   * @since 4.3.0
+   */
+  <T extends EventInternalContext> void setSdkInternalContext(EventInternalContext<T> context);
+
+  /**
+   * @return a {@link EventInternalContext} with state from the policy infrastructure relative to sources
+   * @since 4.3.0
+   */
+  <T extends EventInternalContext> EventInternalContext<T> getSourcePolicyContext();
+
+  /**
+   * Sets context related to the policy infrastructure relative to sources
+   *
+   * @param context an {@link EventInternalContext}
+   * @since 4.3.0
+   */
+  <T extends EventInternalContext> void setSourcePolicyContext(EventInternalContext<T> context);
+
+  /**
+   * @return a {@link EventInternalContext} with state from the policy infrastructure relative to operations
+   * @since 4.3.0
+   */
+  <T extends EventInternalContext> EventInternalContext<T> getOperationPolicyContext();
+
+  /**
+   * Sets context related to the policy infrastructure relative to operations
+   *
+   * @param context an {@link EventInternalContext}
+   * @since 4.3.0
+   */
+  <T extends EventInternalContext> void setOperationPolicyContext(EventInternalContext<T> context);
 
   /**
    * Create new {@link Builder} based on an existing {@link CoreEvent} instance. The existing {@link EventContext} is conserved.
@@ -161,6 +211,9 @@ public interface InternalEvent extends PrivilegedEvent {
 
     @Override
     Builder removeVariable(String key);
+
+    @Override
+    Builder clearVariables();
 
     @Override
     @Deprecated

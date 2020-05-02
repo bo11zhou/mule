@@ -15,6 +15,7 @@ import static org.apache.commons.lang3.math.NumberUtils.toLong;
 import static org.mule.runtime.api.util.MuleSystemProperties.SYSTEM_PROPERTY_PREFIX;
 import static org.mule.runtime.core.api.config.MuleProperties.OBJECT_STORE_MANAGER;
 import static org.mule.runtime.core.api.util.StringUtils.isBlank;
+
 import org.mule.runtime.api.lifecycle.Startable;
 import org.mule.runtime.api.lock.LockFactory;
 import org.mule.runtime.api.metadata.MetadataCache;
@@ -52,12 +53,26 @@ public class DefaultPersistentMetadataCacheManager implements MetadataCacheManag
   public static final String MULE_METADATA_CACHE_EXPIRATION_INTERVAL =
       SYSTEM_PROPERTY_PREFIX + "metadata.cache.expirationInterval.millis";
 
+  /**
+   * Default implementation should use an {@link ObjectStoreManager} that is tied to the deployable artifact lifecyle.
+   */
   @Inject
   @Named(OBJECT_STORE_MANAGER)
   private ObjectStoreManager objectStoreManager;
 
+  /**
+   * Default implementation should a {@link LockFactory} that comes from the deployable artifact context.
+   */
   @Inject
   private LockFactory lockFactory;
+
+  public void setLockFactory(LockFactory lockFactory) {
+    this.lockFactory = lockFactory;
+  }
+
+  public void setObjectStoreManager(ObjectStoreManager objectStoreManager) {
+    this.objectStoreManager = objectStoreManager;
+  }
 
   private LazyValue<ObjectStore<MetadataCache>> metadataStore;
 

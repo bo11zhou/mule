@@ -15,7 +15,9 @@ import static org.apache.commons.io.FileUtils.copyInputStreamToFile;
 import static org.apache.commons.io.FileUtils.forceDelete;
 import static org.apache.commons.io.FileUtils.touch;
 import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.equalTo;
+import static org.hamcrest.Matchers.instanceOf;
 import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.sameInstance;
 import static org.hamcrest.core.Is.is;
@@ -36,8 +38,8 @@ import static org.mule.runtime.deployment.model.api.artifact.ArtifactDescriptorC
 import static org.mule.runtime.deployment.model.api.artifact.ArtifactDescriptorConstants.EXPORTED_RESOURCES;
 import static org.mule.runtime.deployment.model.api.domain.DomainDescriptor.DEFAULT_CONFIGURATION_RESOURCE;
 import static org.mule.runtime.deployment.model.api.domain.DomainDescriptor.DEFAULT_DOMAIN_NAME;
-import static org.mule.runtime.module.deployment.internal.TestPolicyProcessor.invocationCount;
 
+import org.mule.runtime.api.exception.MuleFatalException;
 import org.mule.runtime.api.exception.MuleRuntimeException;
 import org.mule.runtime.core.api.policy.PolicyParametrization;
 import org.mule.runtime.core.api.util.IOUtils;
@@ -54,9 +56,6 @@ import org.mule.runtime.module.deployment.impl.internal.builder.DomainFileBuilde
 import org.mule.runtime.module.deployment.impl.internal.builder.JarFileBuilder;
 import org.mule.tck.util.CompilerUtils;
 
-import org.junit.Ignore;
-import org.junit.Test;
-
 import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.FileInputStream;
@@ -68,10 +67,20 @@ import java.nio.file.Paths;
 import java.util.Collection;
 import java.util.Properties;
 
+import io.qameta.allure.Description;
+import io.qameta.allure.Issue;
+import org.junit.BeforeClass;
+import org.junit.Ignore;
+import org.junit.Test;
+
 /**
  * Contains test for domain deployment
  */
 public class DomainDeploymentTestCase extends AbstractDeploymentTestCase {
+
+  private static File pluginForbiddenJavaEchoTestClassFile;
+  private static File pluginForbiddenMuleContainerEchoTestClassFile;
+  private static File pluginForbiddenMuleThirdPartyEchoTestClassFile;
 
   // Domain artifacts builders
   private final DomainFileBuilder brokenDomainFileBuilder = new DomainFileBuilder("brokenDomain").corrupted();
@@ -92,6 +101,11 @@ public class DomainDeploymentTestCase extends AbstractDeploymentTestCase {
   private final DomainFileBuilder domainWithPropsFileBuilder =
       new DomainFileBuilder("domain-with-props").definedBy("domain-with-props-config.xml");
 
+  private final DomainFileBuilder emptyDomain100FileBuilder =
+      new DomainFileBuilder("empty-domain").definedBy("empty-domain-config.xml").withVersion("1.0.0");
+  private final DomainFileBuilder emptyDomain101FileBuilder =
+      new DomainFileBuilder("empty-domain").definedBy("empty-domain-config.xml").withVersion("1.0.1");
+
   // Application artifact builders
   private final ApplicationFileBuilder dummyDomainApp1FileBuilder =
       new ApplicationFileBuilder("dummy-domain-app1").definedBy("empty-config.xml").dependingOn(dummyDomainFileBuilder);
@@ -108,6 +122,18 @@ public class DomainDeploymentTestCase extends AbstractDeploymentTestCase {
     super(parallelDeployment);
   }
 
+  @BeforeClass
+  public static void compileTestClasses() throws Exception {
+    pluginForbiddenJavaEchoTestClassFile =
+        new CompilerUtils.SingleClassCompiler().dependingOn(barUtilsForbiddenJavaJarFile)
+            .compile(getResourceFile("/org/foo/echo/PluginForbiddenJavaEcho.java"));
+    pluginForbiddenMuleContainerEchoTestClassFile =
+        new CompilerUtils.SingleClassCompiler().dependingOn(barUtilsForbiddenMuleContainerJarFile)
+            .compile(getResourceFile("/org/foo/echo/PluginForbiddenMuleContainerEcho.java"));
+    pluginForbiddenMuleThirdPartyEchoTestClassFile =
+        new CompilerUtils.SingleClassCompiler().dependingOn(barUtilsForbiddenMuleThirdPartyJarFile)
+            .compile(getResourceFile("/org/foo/echo/PluginForbiddenMuleThirdPartyEcho.java"));
+  }
 
   @Test
   @Ignore("MULE-12255 Add the test plugin as a plugin of the domain")
@@ -140,6 +166,33 @@ public class DomainDeploymentTestCase extends AbstractDeploymentTestCase {
     assertDeploymentSuccess(domainDeploymentListener, sharedDomainFileBuilder.getId());
     assertDeploymentSuccess(applicationDeploymentListener, sharedAAppFileBuilder.getId());
     assertDeploymentSuccess(applicationDeploymentListener, sharedBAppFileBuilder.getId());
+  }
+
+  @Test
+  public void deploysTwoIdenticalDomainsWithDifferentNames() throws Exception {
+    String aDomainName = emptyDomainFileBuilder.getId() + "A";
+    String anotherDomainName = emptyDomainFileBuilder.getId() + "B";
+
+    startDeployment();
+
+    addExplodedDomainFromBuilder(emptyDomainFileBuilder, aDomainName);
+    assertDeploymentSuccess(domainDeploymentListener, aDomainName);
+
+    reset(domainDeploymentListener);
+
+    addExplodedDomainFromBuilder(emptyDomainFileBuilder, anotherDomainName);
+    assertDeploymentSuccess(domainDeploymentListener, anotherDomainName);
+  }
+
+  @Test
+  public void deployTwoCompatibleDomains() throws Exception {
+    startDeployment();
+
+    addExplodedDomainFromBuilder(emptyDomain100FileBuilder, emptyDomain100FileBuilder.getId());
+    assertDeploymentSuccess(domainDeploymentListener, emptyDomain100FileBuilder.getId());
+
+    addExplodedDomainFromBuilder(emptyDomain101FileBuilder, emptyDomain101FileBuilder.getId());
+    assertDeploymentSuccess(domainDeploymentListener, emptyDomain101FileBuilder.getId());
   }
 
   @Test
@@ -190,7 +243,7 @@ public class DomainDeploymentTestCase extends AbstractDeploymentTestCase {
   public void deploysDomainWithSharedLibPrecedenceOverApplicationPluginLib() throws Exception {
     final String domainId = "shared-lib";
     final ArtifactPluginFileBuilder pluginFileBuilder =
-        new ArtifactPluginFileBuilder("echoPlugin1").configuredWith(EXPORTED_CLASS_PACKAGES_PROPERTY, "org.foo")
+        new ArtifactPluginFileBuilder("echoPlugin1").configuredWith(EXPORTED_CLASS_PACKAGES_PROPERTY, "org.foo,org.bar")
             .containingClass(pluginEcho1TestClassFile, "org/foo/Plugin1Echo.class")
             .dependingOn(new JarFileBuilder("barUtils2_0", barUtils2_0JarFile));
 
@@ -210,6 +263,92 @@ public class DomainDeploymentTestCase extends AbstractDeploymentTestCase {
     assertApplicationDeploymentSuccess(applicationDeploymentListener, applicationFileBuilder.getId());
 
     executeApplicationFlow("main");
+  }
+
+  @Test
+  @Issue("MULE-17112")
+  @Description("If a plugin uses a library and the domain sets another version of that library as a sharedLib, the plugin internally uses its own version of the lib and not the domain's.")
+  public void pluginWithDependencyAndConflictingVersionSharedByApp() throws Exception {
+    ArtifactPluginFileBuilder echoPluginWithLib1 = new ArtifactPluginFileBuilder("echoPlugin1")
+        .configuredWith(EXPORTED_CLASS_PACKAGES_PROPERTY, "org.foo")
+        .dependingOn(new JarFileBuilder("barUtils1", barUtils1_0JarFile))
+        .containingClass(pluginEcho1TestClassFile, "org/foo/Plugin1Echo.class");
+
+    final String domainId = "shared-lib";
+    final DomainFileBuilder domainFileBuilder = new DomainFileBuilder(domainId)
+        .dependingOnSharedLibrary(new JarFileBuilder("barUtils2_0", barUtils2_0JarFile))
+        .definedBy("empty-domain-config.xml");
+
+    final ApplicationFileBuilder differentLibPluginAppFileBuilder =
+        new ApplicationFileBuilder("appInDomainWithLibDifferentThanPlugin")
+            .definedBy("app-plugin-different-lib-config.xml")
+            .dependingOn(echoPluginWithLib1)
+            .dependingOn(domainFileBuilder)
+            .containingClass(new CompilerUtils.SingleClassCompiler().dependingOn(barUtils2_0JarFile)
+                .compile(getResourceFile("/org/foo/echo/Plugin2Echo.java")), "org/foo/echo/Plugin2Echo.class");
+
+    addPackedDomainFromBuilder(domainFileBuilder);
+    addPackedAppFromBuilder(differentLibPluginAppFileBuilder);
+
+    startDeployment();
+
+    assertDeploymentSuccess(domainDeploymentListener, domainFileBuilder.getId());
+    assertApplicationDeploymentSuccess(applicationDeploymentListener, differentLibPluginAppFileBuilder.getId());
+
+    executeApplicationFlow("main");
+  }
+
+  @Test
+  @Issue("MULE-17593")
+  @Description("The IBM CTG connector must be prevented to use the fix in MULE-17112.")
+  public void blacklistedPluginWithDependencyAndConflictingVersionSharedByApp() throws Exception {
+    ArtifactPluginFileBuilder echoPluginWithLib1 = new ArtifactPluginFileBuilder("mule-ibm-ctg-connector")
+        .withGroupId("com.mulesoft.connectors").withVersion("2.3.1")
+        .configuredWith(EXPORTED_CLASS_PACKAGES_PROPERTY, "org.foo")
+        .dependingOn(new JarFileBuilder("barUtils1", barUtils1_0JarFile))
+        .containingClass(pluginEcho1TestClassFile, "org/foo/Plugin1Echo.class");
+
+    final String domainId = "shared-lib";
+    final DomainFileBuilder domainFileBuilder = new DomainFileBuilder(domainId)
+        .dependingOnSharedLibrary(new JarFileBuilder("barUtils2_0", barUtils2_0JarFile))
+        .definedBy("empty-domain-config.xml");
+
+    final ApplicationFileBuilder differentLibPluginAppFileBuilder =
+        new ApplicationFileBuilder("appInDomainWithLibDifferentThanPlugin")
+            .definedBy("app-plugin-different-lib-config.xml")
+            .dependingOn(echoPluginWithLib1)
+            .dependingOn(domainFileBuilder)
+            .containingClass(new CompilerUtils.SingleClassCompiler().dependingOn(barUtils2_0JarFile)
+                .compile(getResourceFile("/org/foo/echo/Plugin2Echo.java")), "org/foo/echo/Plugin2Echo.class");
+
+    addPackedDomainFromBuilder(domainFileBuilder);
+    addPackedAppFromBuilder(differentLibPluginAppFileBuilder);
+
+    startDeployment();
+
+    assertDeploymentSuccess(domainDeploymentListener, domainFileBuilder.getId());
+    assertApplicationDeploymentSuccess(applicationDeploymentListener, differentLibPluginAppFileBuilder.getId());
+
+    try {
+      executeApplicationFlow("main");
+      fail("Flow should throw an exception which original cause is a NoSuchMethodError");
+    } catch (Throwable caught) {
+      Throwable originalCause = getOriginalCause(caught);
+      assertThat(originalCause, instanceOf(NoSuchMethodError.class));
+      assertThat(originalCause.getMessage(), containsString("BarUtils.doStuff"));
+    }
+  }
+
+  private static Throwable getOriginalCause(Throwable exception) {
+    if (exception.getCause() == null) {
+      return exception;
+    }
+
+    if (exception.getCause() == exception) {
+      return exception;
+    }
+
+    return getOriginalCause(exception.getCause());
   }
 
   @Test
@@ -525,12 +664,12 @@ public class DomainDeploymentTestCase extends AbstractDeploymentTestCase {
         .dependingOn(loadsAppResourceCallbackPlugin);
 
     ApplicationFileBuilder nonExposingAppFileBuilder = new ApplicationFileBuilder("exposing-app")
-        .configuredWith(EXPORTED_PACKAGES, "org.bar1")
+        .configuredWith(EXPORTED_PACKAGES, "org.bar")
         .configuredWith(EXPORTED_RESOURCES, "test-resource.txt")
         .definedBy("app-with-loads-app-resource-plugin-config.xml")
         .containingClass(loadsAppResourceCallbackClassFile, "org/foo/LoadsAppResourceCallback.class")
-        .containingClass(barUtils1ClassFile, "org/bar1/BarUtils.class")
-        .containingClass(barUtils2ClassFile, "org/bar2/BarUtils.class")
+        .containingClass(barUtils1ClassFile, "org/bar/BarUtils.class")
+        .containingClass(echoTestClassFile, "org/foo/EchoTest.class")
         .containingResource("test-resource.txt", "test-resource.txt")
         .containingResource("test-resource.txt", "test-resource-not-exported.txt");
 
@@ -648,6 +787,19 @@ public class DomainDeploymentTestCase extends AbstractDeploymentTestCase {
   }
 
   @Test
+  public void failsToDeployDomainWithPluginThatUsesExtensionsClient() throws Exception {
+    DomainFileBuilder domainFileBuilder = new DomainFileBuilder("dummy-domain-bundle")
+        .definedBy("goodbye-domain-config.xml")
+        .dependingOn(goodbyeExtensionV1Plugin);
+
+    addPackedDomainFromBuilder(domainFileBuilder);
+
+    startDeployment();
+
+    assertDeploymentSuccess(domainDeploymentListener, domainFileBuilder.getId());
+  }
+
+  @Test
   public void appliesApplicationPolicyUsingDomainPlugin() throws Exception {
     installEchoService();
     installFooService();
@@ -673,8 +825,7 @@ public class DomainDeploymentTestCase extends AbstractDeploymentTestCase {
                             new PolicyParametrization(FOO_POLICY_ID, s -> true, 1, emptyMap(),
                                                       getResourceFile("/appPluginPolicy.xml"), emptyList()));
 
-    executeApplicationFlow("main");
-    assertThat(invocationCount, equalTo(1));
+    assertManualExecutionsCount(1);
   }
 
   @Test
@@ -702,8 +853,7 @@ public class DomainDeploymentTestCase extends AbstractDeploymentTestCase {
                             new PolicyParametrization(FOO_POLICY_ID, s -> true, 1, emptyMap(),
                                                       getResourceFile("/appPluginPolicy.xml"), emptyList()));
 
-    executeApplicationFlow("main");
-    assertThat(invocationCount, equalTo(1));
+    assertManualExecutionsCount(1);
   }
 
   @Test
@@ -732,8 +882,7 @@ public class DomainDeploymentTestCase extends AbstractDeploymentTestCase {
                             new PolicyParametrization(FOO_POLICY_ID, s -> true, 1, emptyMap(),
                                                       getResourceFile("/appPluginPolicy.xml"), emptyList()));
 
-    executeApplicationFlow("main");
-    assertThat(invocationCount, equalTo(1));
+    assertManualExecutionsCount(1);
   }
 
   @Ignore("MULE-15842: fix once we support declaring share objects plugins in policies")
@@ -1473,6 +1622,94 @@ public class DomainDeploymentTestCase extends AbstractDeploymentTestCase {
     deploysDomain();
 
     doRedeployBrokenDomainAfterFixedDomain();
+  }
+
+  @Test
+  public void domainIncludingForbiddenJavaClass() throws Exception {
+    DomainFileBuilder domainFileBuilder = new DomainFileBuilder("forbidden-domain")
+        .definedBy("empty-domain-config.xml")
+        .containingClass(pluginForbiddenJavaEchoTestClassFile, "org/foo/echo/PluginForbiddenJavaEcho.class")
+        .dependingOn(new JarFileBuilder("barUtilsForbiddenJavaJarFile", barUtilsForbiddenJavaJarFile));
+
+    final ApplicationFileBuilder forbidden = appFileBuilder("forbidden")
+        .definedBy("app-with-forbidden-java-echo-plugin-config.xml")
+        .dependingOn(domainFileBuilder);
+
+    addPackedDomainFromBuilder(domainFileBuilder);
+    addPackedAppFromBuilder(forbidden);
+
+    startDeployment();
+
+    assertDeploymentSuccess(applicationDeploymentListener, forbidden.getId());
+
+    try {
+      executeApplicationFlow("main");
+      fail("Expected to fail as there should be a missing class");
+    } catch (Exception e) {
+      assertThat(e.getCause().getCause(), instanceOf(MuleFatalException.class));
+      assertThat(e.getCause().getCause().getCause(), instanceOf(NoClassDefFoundError.class));
+      assertThat(e.getCause().getCause().getCause().getMessage(), containsString("java/lang/BarUtils"));
+    }
+  }
+
+  @Test
+  public void domainIncludingForbiddenMuleContainerClass() throws Exception {
+    DomainFileBuilder domainFileBuilder = new DomainFileBuilder("forbidden-domain")
+        .definedBy("empty-domain-config.xml")
+        .containingClass(pluginForbiddenMuleContainerEchoTestClassFile, "org/foo/echo/PluginForbiddenMuleContainerEcho.class")
+        .dependingOn(new JarFileBuilder("barUtilsForbiddenMuleContainerJarFile", barUtilsForbiddenMuleContainerJarFile));
+
+    final ApplicationFileBuilder forbidden = appFileBuilder("forbidden")
+        .definedBy("app-with-forbidden-mule-echo-plugin-config.xml")
+        .dependingOn(domainFileBuilder);
+
+    addPackedDomainFromBuilder(domainFileBuilder);
+    addPackedAppFromBuilder(forbidden);
+
+    startDeployment();
+
+    assertDeploymentSuccess(applicationDeploymentListener, forbidden.getId());
+
+    try {
+      executeApplicationFlow("main");
+      fail("Expected to fail as there should be a missing class");
+    } catch (Exception e) {
+      assertThat(e.getCause().getCause(), instanceOf(MuleFatalException.class));
+      assertThat(e.getCause().getCause().getCause(), instanceOf(NoClassDefFoundError.class));
+      assertThat(e.getCause().getCause().getCause().getMessage(), containsString("org/mule/runtime/api/util/BarUtils"));
+    }
+  }
+
+  @Test
+  public void domainIncludingForbiddenMuleContainerThirdParty() throws Exception {
+    DomainFileBuilder domainFileBuilder = new DomainFileBuilder("forbidden-domain")
+        .definedBy("empty-domain-config.xml")
+        .containingClass(pluginForbiddenMuleThirdPartyEchoTestClassFile, "org/foo/echo/PluginForbiddenMuleThirdPartyEcho.class")
+        .dependingOn(new JarFileBuilder("barUtilsForbiddenMuleThirdPartyJarFile", barUtilsForbiddenMuleThirdPartyJarFile));
+
+    final ApplicationFileBuilder forbidden = appFileBuilder("forbidden")
+        .definedBy("app-with-forbidden-mule3rd-echo-plugin-config.xml")
+        .dependingOn(domainFileBuilder);
+
+    addPackedDomainFromBuilder(domainFileBuilder);
+    addPackedAppFromBuilder(forbidden);
+
+    startDeployment();
+
+    assertDeploymentSuccess(applicationDeploymentListener, forbidden.getId());
+
+    try {
+      executeApplicationFlow("main");
+      fail("Expected to fail as there should be a missing class");
+    } catch (Exception e) {
+      assertThat(e.getCause().getCause(), instanceOf(MuleFatalException.class));
+      assertThat(e.getCause().getCause().getCause(), instanceOf(NoClassDefFoundError.class));
+      assertThat(e.getCause().getCause().getCause().getMessage(), containsString("org/slf4j/BarUtils"));
+    }
+  }
+
+  protected ApplicationFileBuilder appFileBuilder(final String artifactId) {
+    return new ApplicationFileBuilder(artifactId);
   }
 
   private void doSynchronizedDomainDeploymentActionTest(final Action deploymentAction, final Action assertAction)

@@ -8,6 +8,7 @@ package org.mule.runtime.config.internal.model;
 
 import static com.google.common.base.Joiner.on;
 import static java.lang.String.format;
+import static java.lang.Thread.currentThread;
 import static java.util.Arrays.asList;
 import static java.util.Collections.emptyMap;
 import static java.util.Collections.emptySet;
@@ -18,9 +19,12 @@ import static java.util.Optional.ofNullable;
 import static java.util.stream.Collectors.toList;
 import static org.apache.commons.collections.CollectionUtils.disjunction;
 import static org.apache.commons.lang3.StringUtils.isBlank;
+import static org.mule.runtime.api.component.AbstractComponent.LOCATION_KEY;
+import static org.mule.runtime.api.component.Component.ANNOTATIONS_PROPERTY_NAME;
 import static org.mule.runtime.api.component.ComponentIdentifier.builder;
 import static org.mule.runtime.api.component.TypedComponentIdentifier.ComponentType.UNKNOWN;
 import static org.mule.runtime.api.i18n.I18nMessageFactory.createStaticMessage;
+import static org.mule.runtime.api.util.NameUtils.hyphenize;
 import static org.mule.runtime.config.api.dsl.CoreDslConstants.ERROR_HANDLER;
 import static org.mule.runtime.config.api.dsl.CoreDslConstants.ERROR_HANDLER_IDENTIFIER;
 import static org.mule.runtime.config.api.dsl.CoreDslConstants.FLOW_IDENTIFIER;
@@ -30,17 +34,25 @@ import static org.mule.runtime.config.api.dsl.CoreDslConstants.MULE_EE_DOMAIN_ID
 import static org.mule.runtime.config.api.dsl.CoreDslConstants.MULE_IDENTIFIER;
 import static org.mule.runtime.config.api.dsl.CoreDslConstants.MULE_ROOT_ELEMENT;
 import static org.mule.runtime.config.internal.dsl.spring.BeanDefinitionFactory.SOURCE_TYPE;
-import static org.mule.runtime.config.internal.dsl.spring.ComponentModelHelper.resolveComponentType;
+import static org.mule.runtime.config.internal.model.MetadataTypeModelAdapter.createMetadataTypeModelAdapterWithSterotype;
+import static org.mule.runtime.config.internal.model.MetadataTypeModelAdapter.createParameterizedTypeModelAdapter;
 import static org.mule.runtime.core.api.el.ExpressionManager.DEFAULT_EXPRESSION_PREFIX;
 import static org.mule.runtime.core.api.exception.Errors.Identifiers.ANY_IDENTIFIER;
 import static org.mule.runtime.core.api.lifecycle.LifecycleUtils.disposeIfNeeded;
 import static org.mule.runtime.core.api.lifecycle.LifecycleUtils.initialiseIfNeeded;
-import static org.mule.runtime.extension.api.util.NameUtils.hyphenize;
+import static org.mule.runtime.extension.api.util.ExtensionMetadataTypeUtils.getSubstitutionGroup;
 import static org.mule.runtime.extension.api.util.NameUtils.pluralize;
+import static org.mule.runtime.internal.dsl.DslConstants.CORE_NAMESPACE;
 import static org.mule.runtime.internal.dsl.DslConstants.CORE_PREFIX;
 import static org.mule.runtime.internal.util.NameValidationUtil.verifyStringDoesNotContainsReservedCharacters;
+import static org.mule.runtime.module.extension.internal.util.IntrospectionUtils.isInstantiable;
 import static org.slf4j.LoggerFactory.getLogger;
-import org.mule.runtime.api.component.AbstractComponent;
+
+import org.mule.metadata.api.model.ArrayType;
+import org.mule.metadata.api.model.MetadataType;
+import org.mule.metadata.api.model.ObjectType;
+import org.mule.metadata.api.model.UnionType;
+import org.mule.metadata.api.visitor.MetadataTypeVisitor;
 import org.mule.runtime.api.component.Component;
 import org.mule.runtime.api.component.ComponentIdentifier;
 import org.mule.runtime.api.component.ConfigurationProperties;
@@ -49,8 +61,11 @@ import org.mule.runtime.api.dsl.DslResolvingContext;
 import org.mule.runtime.api.exception.MuleRuntimeException;
 import org.mule.runtime.api.lifecycle.InitialisationException;
 import org.mule.runtime.api.meta.model.ExtensionModel;
+import org.mule.runtime.api.util.Pair;
 import org.mule.runtime.app.declaration.api.ArtifactDeclaration;
 import org.mule.runtime.app.declaration.api.ElementDeclaration;
+import org.mule.runtime.ast.api.ArtifactAst;
+import org.mule.runtime.ast.api.ComponentAst;
 import org.mule.runtime.config.api.dsl.model.ComponentBuildingDefinitionRegistry;
 import org.mule.runtime.config.api.dsl.model.ConfigurationParameters;
 import org.mule.runtime.config.api.dsl.model.DslElementModelFactory;
@@ -83,9 +98,8 @@ import org.mule.runtime.dsl.api.component.config.ComponentConfiguration;
 import org.mule.runtime.dsl.api.component.config.DefaultComponentLocation;
 import org.mule.runtime.dsl.api.xml.parser.ConfigFile;
 import org.mule.runtime.dsl.api.xml.parser.ConfigLine;
-
-import com.google.common.collect.ImmutableMap;
-import com.google.common.collect.ImmutableSet;
+import org.mule.runtime.extension.api.dsl.syntax.DslElementSyntax;
+import org.mule.runtime.module.extension.internal.util.ReflectionCache;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -94,14 +108,19 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.ServiceLoader;
 import java.util.Set;
+import java.util.Spliterator;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
+import java.util.stream.Stream;
 
 import javax.xml.namespace.QName;
 
+import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.ImmutableSet;
 import org.slf4j.Logger;
 
 /**
@@ -116,7 +135,7 @@ import org.slf4j.Logger;
  *
  * @since 4.0
  */
-public class ApplicationModel {
+public class ApplicationModel implements ArtifactAst {
 
   private static final Logger LOGGER = getLogger(ApplicationModel.class);
 
@@ -133,15 +152,13 @@ public class ApplicationModel {
   public static final String REFERENCE_ATTRIBUTE = "ref";
   public static final String VALUE_ATTRIBUTE = "value";
   public static final String TRANSFORMER_REFERENCE_ELEMENT = "transformer";
-  public static final String ANNOTATION_ELEMENT = "annotations";
-  public static final String DATA_WEAVE = "weave";
   public static final String CUSTOM_TRANSFORMER = "custom-transformer";
   public static final String DESCRIPTION_ELEMENT = "description";
   public static final String PROPERTIES_ELEMENT = "properties";
   private static final String MODULE_OPERATION_CHAIN_ELEMENT = "module-operation-chain";
 
   public static final String REDELIVERY_POLICY_ELEMENT = "redelivery-policy";
-  // TODO MULE-9638 Remove once all bean definitions parsers where migrated
+  // TODO MULE-9638 Remove once all bean definitions parsers have been migrated
   public static final String TEST_NAMESPACE = "test";
   public static final String DOC_NAMESPACE = "doc";
   public static final String SPRING_SECURITY_NAMESPACE = "ss";
@@ -149,10 +166,6 @@ public class ApplicationModel {
   public static final String MULE_XML_NAMESPACE = "mulexml";
   public static final String PGP_NAMESPACE = "pgp";
   public static final String XSL_NAMESPACE = "xsl";
-  public static final String TRANSPORT_NAMESPACE = "transports";
-  public static final String JMS_NAMESPACE = "jms";
-  public static final String VM_NAMESPACE = "vm";
-  public static final String HTTP_TRANSPORT_NAMESPACE = "http-transport";
   public static final String BATCH_NAMESPACE = "batch";
   public static final String PARSER_TEST_NAMESPACE = "parsers-test";
   public static final String GLOBAL_PROPERTY = "global-property";
@@ -172,7 +185,7 @@ public class ApplicationModel {
   public static final ComponentIdentifier MULE_PROPERTIES_IDENTIFIER =
       builder().namespace(CORE_PREFIX).name(PROPERTIES_ELEMENT).build();
   public static final ComponentIdentifier ANNOTATIONS_ELEMENT_IDENTIFIER =
-      builder().namespace(CORE_PREFIX).name(ANNOTATION_ELEMENT).build();
+      builder().namespace(CORE_PREFIX).name(ANNOTATIONS_PROPERTY_NAME).build();
   public static final ComponentIdentifier TRANSFORMER_IDENTIFIER =
       builder().namespace(CORE_PREFIX).name(TRANSFORMER_REFERENCE_ELEMENT).build();
   public static final ComponentIdentifier CUSTOM_TRANSFORMER_IDENTIFIER =
@@ -233,8 +246,6 @@ public class ApplicationModel {
           .add(builder().namespace(MULE_ROOT_ELEMENT)
               .name("string-to-byte-array-transformer")
               .build())
-          .add(builder().namespace(MULE_ROOT_ELEMENT).name("append-string-transformer")
-              .build())
           .add(builder().namespace(MULE_ROOT_ELEMENT).name("security-manager").build())
           .add(builder().namespace(TEST_NAMESPACE).name("queue").build())
           .add(builder().namespace(TEST_NAMESPACE).name("invocation-counter").build())
@@ -252,46 +263,27 @@ public class ApplicationModel {
           .add(builder().namespace(XSL_NAMESPACE).name("param").build())
           .add(builder().namespace(XSL_NAMESPACE).name("attribute").build())
           .add(builder().namespace(XSL_NAMESPACE).name("element").build())
-          .add(builder().namespace(TRANSPORT_NAMESPACE).name("inbound-endpoint").build())
-          .add(builder().namespace(TRANSPORT_NAMESPACE).name("outbound-endpoint").build())
-          .add(builder().namespace(JMS_NAMESPACE).name("inbound-endpoint").build())
-          .add(builder().namespace(VM_NAMESPACE).name("inbound-endpoint").build())
-          .add(builder().namespace(HTTP_TRANSPORT_NAMESPACE).name("inbound-endpoint").build())
-          .add(builder().namespace(HTTP_TRANSPORT_NAMESPACE).name("set-cookie").build())
-          .add(builder().namespace(HTTP_TRANSPORT_NAMESPACE).name("header").build())
-          .add(builder().namespace(HTTP_TRANSPORT_NAMESPACE)
-              .name("http-response-to-object-transformer")
-              .build())
-          .add(builder().namespace(HTTP_TRANSPORT_NAMESPACE)
-              .name("http-response-to-string-transformer")
-              .build())
-          .add(builder().namespace(HTTP_TRANSPORT_NAMESPACE)
-              .name("message-to-http-response-transformer")
-              .build())
-          .add(builder().namespace(HTTP_TRANSPORT_NAMESPACE)
-              .name("object-to-http-request-transformer")
-              .build())
           .add(builder().namespace(BATCH_NAMESPACE).name("step").build())
           .add(builder().namespace(BATCH_NAMESPACE).name("execute").build())
           .add(builder().namespace(PARSER_TEST_NAMESPACE).name("child").build())
           .add(builder().namespace(PARSER_TEST_NAMESPACE).name("kid").build())
-          .add(builder().namespace(DATA_WEAVE).name("reader-property").build())
           .build();
 
   private final Optional<ComponentBuildingDefinitionRegistry> componentBuildingDefinitionRegistry;
-  private final ArtifactConfig artifactConfig;
-  private List<ComponentModel> muleComponentModels = new LinkedList<>();
+  private final List<ComponentModel> muleComponentModels = new LinkedList<>();
   private PropertiesResolverConfigurationProperties configurationProperties;
-  private ResourceProvider externalResourceProvider;
-  private Map<String, ComponentModel> namedComponentModels = new HashMap<>();
-  private Map<String, ComponentModel> namedTopLevelComponentModels = new HashMap<>();
+  private final ResourceProvider externalResourceProvider;
+  private final ExtensionModelHelper extensionModelHelper;
+  private final Map<String, ComponentModel> namedComponentModels = new HashMap<>();
+  private final Map<String, ComponentModel> namedTopLevelComponentModels = new HashMap<>();
+  private boolean runtimeMode = true;
 
   /**
    * Creates an {code ApplicationModel} from a {@link ArtifactConfig}.
    * <p/>
    * A set of validations are applied that may make creation fail.
    *
-   * @param artifactConfig the mule artifact configuration content.
+   * @param artifactConfig      the mule artifact configuration content.
    * @param artifactDeclaration an {@link ArtifactDeclaration}
    * @throws Exception when the application configuration has semantic errors.
    */
@@ -299,7 +291,7 @@ public class ApplicationModel {
                           ResourceProvider externalResourceProvider)
       throws Exception {
     this(artifactConfig, artifactDeclaration, emptySet(), emptyMap(), empty(), of(new ComponentBuildingDefinitionRegistry()),
-         true, externalResourceProvider);
+         externalResourceProvider, true);
   }
 
   /**
@@ -307,16 +299,14 @@ public class ApplicationModel {
    * <p/>
    * A set of validations are applied that may make creation fail.
    *
-   * @param artifactConfig the mule artifact configuration content.
-   * @param artifactDeclaration an {@link ArtifactDeclaration}
-   * @param extensionModels Set of {@link ExtensionModel extensionModels} that will be used to type componentModels
-   * @param parentConfigurationProperties the {@link ConfigurationProperties} of the parent artifact. For instance, application
-   *        will receive the domain resolver.
+   * @param artifactConfig                      the mule artifact configuration content.
+   * @param artifactDeclaration                 an {@link ArtifactDeclaration}
+   * @param extensionModels                     Set of {@link ExtensionModel extensionModels} that will be used to type componentModels
+   * @param parentConfigurationProperties       the {@link ConfigurationProperties} of the parent artifact. For instance, application
+   *                                            will receive the domain resolver.
    * @param componentBuildingDefinitionRegistry an optional {@link ComponentBuildingDefinitionRegistry} used to correlate items in
-   *        this model to their definitions
-   * @param runtimeMode true implies the mule application should behave as a runtime app (e.g.: smart connectors will be macro
-   *        expanded) false implies the mule is being created from a tooling perspective.
-   * @param externalResourceProvider the provider for configuration properties files and ${file::name.txt} placeholders
+   *                                            this model to their definitions expanded) false implies the mule is being created from a tooling perspective.
+   * @param externalResourceProvider            the provider for configuration properties files and ${file::name.txt} placeholders
    * @throws Exception when the application configuration has semantic errors.
    */
   // TODO: MULE-9638 remove this optional
@@ -325,32 +315,55 @@ public class ApplicationModel {
                           Map<String, String> deploymentProperties,
                           Optional<ConfigurationProperties> parentConfigurationProperties,
                           Optional<ComponentBuildingDefinitionRegistry> componentBuildingDefinitionRegistry,
-                          boolean runtimeMode, ResourceProvider externalResourceProvider)
+                          ResourceProvider externalResourceProvider)
+      throws Exception {
+    this(artifactConfig, artifactDeclaration, extensionModels, deploymentProperties, parentConfigurationProperties,
+         componentBuildingDefinitionRegistry,
+         externalResourceProvider, true);
+  }
+
+  // TODO: MULE-9638 remove this optional
+  public ApplicationModel(ArtifactConfig artifactConfig, ArtifactDeclaration artifactDeclaration,
+                          Set<ExtensionModel> extensionModels,
+                          Map<String, String> deploymentProperties,
+                          Optional<ConfigurationProperties> parentConfigurationProperties,
+                          Optional<ComponentBuildingDefinitionRegistry> componentBuildingDefinitionRegistry,
+                          ResourceProvider externalResourceProvider,
+                          boolean runtimeMode)
       throws Exception {
 
+    this.runtimeMode = runtimeMode;
     this.componentBuildingDefinitionRegistry = componentBuildingDefinitionRegistry;
     this.externalResourceProvider = externalResourceProvider;
-    this.artifactConfig = artifactConfig;
     createConfigurationAttributeResolver(artifactConfig, parentConfigurationProperties, deploymentProperties);
     convertConfigFileToComponentModel(artifactConfig);
     convertArtifactDeclarationToComponentModel(extensionModels, artifactDeclaration);
-    resolveRegistrationNames();
     createEffectiveModel();
     indexComponentModels();
     validateModel(componentBuildingDefinitionRegistry);
-    ExtensionModelHelper extensionModelHelper = new ExtensionModelHelper(extensionModels);
-    if (runtimeMode) {
-      expandModules(extensionModels);
-      // Have to index again the component models with macro expanded ones
-      indexComponentModels();
-    }
+    extensionModelHelper = new ExtensionModelHelper(extensionModels);
     // TODO MULE-13894 do this only on runtimeMode=true once unified extensionModel names to use camelCase (see smart connectors
-    // and crafted declared extesion models)
+    // and crafted declared extension models)
     resolveComponentTypes();
-    resolveTypedComponentIdentifier(extensionModelHelper);
-    executeOnEveryMuleComponentTree(componentModel -> {
-      new ComponentLocationVisitor(extensionModelHelper).accept(componentModel);
+    muleComponentModels
+        .forEach(componentModel -> componentModel.resolveTypedComponentIdentifier(extensionModelHelper, runtimeMode));
+    final ComponentLocationVisitor clv = new ComponentLocationVisitor();
+    recursiveStreamWithHierarchy().forEach(clv);
+  }
+
+  public void macroExpandXmlSdkComponents(Set<ExtensionModel> extensionModels) {
+    expandModules(extensionModels, () -> {
+      // TODO MULE-13894 do this only on runtimeMode=true once unified extensionModel names to use camelCase (see smart connectors
+      // connectors and crafted declared extension models)
+      resolveComponentTypes();
+      muleComponentModels
+          .forEach(componentModel -> componentModel.resolveTypedComponentIdentifier(extensionModelHelper, runtimeMode));
     });
+    // Have to index again the component models with macro expanded ones
+    indexComponentModels();
+
+    final ComponentLocationVisitor clv = new ComponentLocationVisitor();
+    recursiveStreamWithHierarchy().forEach(clv);
   }
 
   private void indexComponentModels() {
@@ -364,17 +377,6 @@ public class ApplicationModel {
       if (componentModel.getNameAttribute() != null) {
         namedTopLevelComponentModels.put(componentModel.getNameAttribute(), componentModel);
       }
-    });
-  }
-
-  private void resolveTypedComponentIdentifier(ExtensionModelHelper extensionModelHelper) {
-    executeOnEveryComponentTree(componentModel -> {
-      Optional<TypedComponentIdentifier> typedComponentIdentifier =
-          of(TypedComponentIdentifier.builder().identifier(componentModel.getIdentifier())
-              .type(resolveComponentType(componentModel, extensionModelHelper))
-              .build());
-      componentModel.setComponentType(typedComponentIdentifier.map(typedIdentifier -> typedIdentifier.getType())
-          .orElse(TypedComponentIdentifier.ComponentType.UNKNOWN));
     });
   }
 
@@ -396,14 +398,21 @@ public class ApplicationModel {
 
     DefaultConfigurationPropertiesResolver environmentPropertiesConfigurationPropertiesResolver =
         new DefaultConfigurationPropertiesResolver(empty(), environmentPropertiesConfigurationProvider);
+
+    DefaultConfigurationPropertiesResolver parentLocalResolver;
+    if (deploymentPropertiesConfigurationProperties != null) {
+      parentLocalResolver = new DefaultConfigurationPropertiesResolver(of(environmentPropertiesConfigurationPropertiesResolver),
+                                                                       deploymentPropertiesConfigurationProperties);
+    } else {
+      parentLocalResolver = environmentPropertiesConfigurationPropertiesResolver;
+    }
+
     DefaultConfigurationPropertiesResolver localResolver =
-        new DefaultConfigurationPropertiesResolver(of(new DefaultConfigurationPropertiesResolver(
-                                                                                                 deploymentPropertiesConfigurationProperties != null
-                                                                                                     ? of(new DefaultConfigurationPropertiesResolver(of(environmentPropertiesConfigurationPropertiesResolver),
-                                                                                                                                                     deploymentPropertiesConfigurationProperties))
-                                                                                                     : of(environmentPropertiesConfigurationPropertiesResolver),
+        new DefaultConfigurationPropertiesResolver(of(new DefaultConfigurationPropertiesResolver(of(parentLocalResolver),
                                                                                                  globalPropertiesConfigurationAttributeProvider)),
                                                    environmentPropertiesConfigurationProvider);
+    localResolver.setRootResolver(parentLocalResolver);
+
     List<ConfigurationPropertiesProvider> configConfigurationPropertiesProviders =
         getConfigurationPropertiesProvidersFromComponents(artifactConfig, localResolver);
     FileConfigurationPropertiesProvider externalPropertiesConfigurationProvider =
@@ -428,9 +437,10 @@ public class ApplicationModel {
           }));
     }
 
+    Optional<CompositeConfigurationPropertiesProvider> configurationAttributesProvider = empty();
     if (!configConfigurationPropertiesProviders.isEmpty()) {
-      CompositeConfigurationPropertiesProvider configurationAttributesProvider =
-          new CompositeConfigurationPropertiesProvider(configConfigurationPropertiesProviders);
+      configurationAttributesProvider = of(
+                                           new CompositeConfigurationPropertiesProvider(configConfigurationPropertiesProviders));
       parentConfigurationPropertiesResolver = of(new DefaultConfigurationPropertiesResolver(
                                                                                             deploymentPropertiesConfigurationProperties != null
                                                                                                 ?
@@ -441,7 +451,8 @@ public class ApplicationModel {
                                                                                                 of(new DefaultConfigurationPropertiesResolver(parentConfigurationPropertiesResolver,
                                                                                                                                               deploymentPropertiesConfigurationProperties))
                                                                                                 : parentConfigurationPropertiesResolver,
-                                                                                            configurationAttributesProvider));
+                                                                                            configurationAttributesProvider
+                                                                                                .get()));
     } else if (deploymentPropertiesConfigurationProperties != null) {
       parentConfigurationPropertiesResolver =
           of(new DefaultConfigurationPropertiesResolver(parentConfigurationPropertiesResolver,
@@ -451,9 +462,19 @@ public class ApplicationModel {
     DefaultConfigurationPropertiesResolver globalPropertiesConfigurationPropertiesResolver =
         new DefaultConfigurationPropertiesResolver(parentConfigurationPropertiesResolver,
                                                    globalPropertiesConfigurationAttributeProvider);
-    DefaultConfigurationPropertiesResolver systemPropertiesResolver =
-        new DefaultConfigurationPropertiesResolver(of(globalPropertiesConfigurationPropertiesResolver),
-                                                   environmentPropertiesConfigurationProvider);
+
+    DefaultConfigurationPropertiesResolver systemPropertiesResolver;
+    if (configurationAttributesProvider.isPresent()) {
+      DefaultConfigurationPropertiesResolver configurationPropertiesResolver =
+          new DefaultConfigurationPropertiesResolver(of(globalPropertiesConfigurationPropertiesResolver),
+                                                     configurationAttributesProvider.get());
+      systemPropertiesResolver = new DefaultConfigurationPropertiesResolver(of(configurationPropertiesResolver),
+                                                                            environmentPropertiesConfigurationProvider);
+    } else {
+      systemPropertiesResolver = new DefaultConfigurationPropertiesResolver(of(globalPropertiesConfigurationPropertiesResolver),
+                                                                            environmentPropertiesConfigurationProvider);
+    }
+
 
     DefaultConfigurationPropertiesResolver externalPropertiesResolver =
         new DefaultConfigurationPropertiesResolver(
@@ -465,12 +486,14 @@ public class ApplicationModel {
                                                        : of(systemPropertiesResolver),
                                                    externalPropertiesConfigurationProvider);
     if (deploymentPropertiesConfigurationProperties == null) {
+      externalPropertiesResolver.setAsRootResolver();
       this.configurationProperties = new PropertiesResolverConfigurationProperties(externalPropertiesResolver);
     } else {
       // finally the first configuration properties resolver should be deployment properties as they have precedence over the rest
-      this.configurationProperties =
-          new PropertiesResolverConfigurationProperties(new DefaultConfigurationPropertiesResolver(of(externalPropertiesResolver),
-                                                                                                   deploymentPropertiesConfigurationProperties));
+      DefaultConfigurationPropertiesResolver deploymentPropertiesResolver =
+          new DefaultConfigurationPropertiesResolver(of(externalPropertiesResolver), deploymentPropertiesConfigurationProperties);
+      deploymentPropertiesResolver.setAsRootResolver();
+      this.configurationProperties = new PropertiesResolverConfigurationProperties(deploymentPropertiesResolver);
     }
 
     try {
@@ -500,12 +523,14 @@ public class ApplicationModel {
         .forEach(configFile -> configFile.getConfigLines().stream()
             .forEach(configLine -> {
               for (ConfigLine componentConfigLine : configLine.getChildren()) {
-                if (componentConfigLine.getNamespace() == null) {
+                if (componentConfigLine.getNamespaceUri() == null || componentConfigLine.getNamespace() == null) {
                   continue;
                 }
 
                 ComponentIdentifier componentIdentifier = ComponentIdentifier.builder()
-                    .namespace(componentConfigLine.getNamespace()).name(componentConfigLine.getIdentifier()).build();
+                    .namespace(componentConfigLine.getNamespace())
+                    .namespaceUri(componentConfigLine.getNamespaceUri())
+                    .name(componentConfigLine.getIdentifier()).build();
                 if (!providerFactoriesMap.containsKey(componentIdentifier)) {
                   continue;
                 }
@@ -524,12 +549,11 @@ public class ApplicationModel {
                       new DefaultComponentLocation.DefaultLocationPart(componentIdentifier.getName(),
                                                                        of(typedComponentIdentifier),
                                                                        of(configFile.getFilename()),
-                                                                       of(configLine.getLineNumber()),
-                                                                       of(configLine.getStartColumn()));
+                                                                       OptionalInt.of(configLine.getLineNumber()),
+                                                                       OptionalInt.of(configLine.getStartColumn()));
                   providerComponent.setAnnotations(ImmutableMap.<QName, Object>builder()
-                      .put(AbstractComponent.LOCATION_KEY,
-                           new DefaultComponentLocation(of(componentIdentifier.getName()),
-                                                        singletonList(locationPart)))
+                      .put(LOCATION_KEY, new DefaultComponentLocation(of(componentIdentifier.getName()),
+                                                                      singletonList(locationPart)))
                       .build());
                 }
                 configConfigurationPropertiesProviders.add(provider);
@@ -551,7 +575,9 @@ public class ApplicationModel {
     for (ConfigLine childConfigLine : componentConfigLine.getChildren()) {
       DefaultConfigurationParameters.Builder childParametersBuilder = DefaultConfigurationParameters.builder();
       configurationParametersBuilder.withComplexParameter(ComponentIdentifier.builder().name(childConfigLine.getIdentifier())
-          .namespace(childConfigLine.getNamespace()).build(),
+          .namespace(childConfigLine.getNamespace())
+          .namespaceUri(childConfigLine.getNamespaceUri())
+          .build(),
                                                           resolveConfigurationParameters(childParametersBuilder, childConfigLine,
                                                                                          localResolver));
     }
@@ -572,13 +598,15 @@ public class ApplicationModel {
         buildingDefinition.map(definition -> {
           ObjectTypeVisitor typeDefinitionVisitor = new ObjectTypeVisitor(componentModel);
           definition.getTypeDefinition().visit(typeDefinitionVisitor);
+          // We still have components without extension models
           componentModel.setType(typeDefinitionVisitor.getType());
+
           return definition;
         }).orElseGet(() -> {
-          String classParameter = componentModel.getParameters().get(CLASS_ATTRIBUTE);
+          String classParameter = componentModel.getRawParameters().get(CLASS_ATTRIBUTE);
           if (classParameter != null) {
             try {
-              componentModel.setType(ClassUtils.loadClass(classParameter, Thread.currentThread().getContextClassLoader()));
+              componentModel.setType(ClassUtils.loadClass(classParameter, currentThread().getContextClassLoader()));
             } catch (ClassNotFoundException e) {
               throw new RuntimeConfigurationException(createStaticMessage(e.getMessage()), e);
             }
@@ -587,7 +615,89 @@ public class ApplicationModel {
         });
       });
     });
+
+    // Use ExtensionModel to register top level and subTypes elements
+    ReflectionCache reflectionCache = new ReflectionCache();
+    Map<ComponentIdentifier, MetadataTypeModelAdapter> registry = new HashMap();
+    extensionModelHelper.getExtensionsModels().stream().forEach(extensionModel -> extensionModel.getTypes().stream()
+        .filter(p -> isInstantiable(p, reflectionCache))
+        .forEach(parameterType -> registerTopLevelParameter(parameterType, reflectionCache, registry, extensionModel)));
+
+    executeOnEveryComponentTree(componentModel -> {
+      if (registry.containsKey(componentModel.getIdentifier())) {
+        componentModel.setMetadataTypeModelAdapter(registry.get(componentModel.getIdentifier()));
+      }
+    });
   }
+
+  private void registerTopLevelParameter(MetadataType parameterType, ReflectionCache reflectionCache,
+                                         Map<ComponentIdentifier, MetadataTypeModelAdapter> registry,
+                                         ExtensionModel extensionModel) {
+    Optional<DslElementSyntax> dslElement = extensionModelHelper.resolveDslElementModel(parameterType, extensionModel);
+    if (!dslElement.isPresent() ||
+        registry.containsKey(builder().name(dslElement.get().getElementName()).namespace(dslElement.get().getPrefix()).build())) {
+      return;
+    }
+
+    DslElementSyntax dsl = dslElement.get();
+
+    parameterType.accept(new MetadataTypeVisitor() {
+
+      @Override
+      public void visitObject(ObjectType objectType) {
+        if (dsl.supportsTopLevelDeclaration() || (dsl.supportsChildDeclaration() && dsl.isWrapped())
+            || getSubstitutionGroup(objectType).isPresent() ||
+            extensionModelHelper.getAllSubTypes().contains(objectType)) {
+
+          registry.put(builder().name(dsl.getElementName()).namespace(dsl.getPrefix())
+              .build(), createMetadataTypeModelAdapterWithSterotype(objectType, extensionModelHelper)
+                  .orElse(createParameterizedTypeModelAdapter(objectType, extensionModelHelper)));
+        }
+
+        registerSubTypes(objectType, reflectionCache, registry, extensionModel);
+      }
+
+      @Override
+      public void visitArrayType(ArrayType arrayType) {
+        registerTopLevelParameter(arrayType.getType(), reflectionCache, registry, extensionModel);
+      }
+
+      @Override
+      public void visitUnion(UnionType unionType) {
+        unionType.getTypes().forEach(type -> type.accept(this));
+      }
+
+    });
+  }
+
+  private void registerSubTypes(MetadataType type, ReflectionCache reflectionCache,
+                                Map<ComponentIdentifier, MetadataTypeModelAdapter> registry,
+                                ExtensionModel extensionModel) {
+    type.accept(new MetadataTypeVisitor() {
+
+      @Override
+      public void visitUnion(UnionType unionType) {
+        unionType.getTypes().forEach(type -> type.accept(this));
+      }
+
+      @Override
+      public void visitArrayType(ArrayType arrayType) {
+        arrayType.getType().accept(this);
+      }
+
+      @Override
+      public void visitObject(ObjectType objectType) {
+        Optional<MetadataType> openRestriction = objectType.getOpenRestriction();
+        if (objectType.isOpen() && openRestriction.isPresent()) {
+          openRestriction.get().accept(this);
+        } else {
+          extensionModelHelper.getSubTypes(objectType)
+              .forEach(subtype -> registerTopLevelParameter(subtype, reflectionCache, registry, extensionModel));
+        }
+      }
+    });
+  }
+
 
   /**
    * Creates the effective application model to be used to generate the runtime objects of the mule configuration.
@@ -628,6 +738,7 @@ public class ApplicationModel {
       ComponentModel rootComponent = new ComponentModel.Builder()
           .setIdentifier(ComponentIdentifier.builder()
               .namespace(CORE_PREFIX)
+              .namespaceUri(CORE_NAMESPACE)
               .name(CORE_PREFIX)
               .build())
           .build();
@@ -759,7 +870,7 @@ public class ApplicationModel {
 
   private void validateParameterAndChildForSameAttributeAreNotDefinedTogether() {
     executeOnEveryMuleComponentTree(componentModel -> {
-      for (String parameterName : componentModel.getParameters().keySet()) {
+      for (String parameterName : componentModel.getRawParameters().keySet()) {
         if (!componentModel.isParameterValueProvidedBySchema(parameterName)) {
           String mapChildName = hyphenize(pluralize(parameterName));
           String listOrPojoChildName = hyphenize(parameterName);
@@ -811,7 +922,6 @@ public class ApplicationModel {
           }
         }
         existingObjectsWithName.put(nameAttributeValue, componentModel);
-        componentModel.setParameter(ApplicationModel.NAME_ATTRIBUTE, componentBuildingDefinition.getRegistrationName());
       }
     }));
   }
@@ -869,7 +979,7 @@ public class ApplicationModel {
         } else if (anyMappings.size() == 1 && !isErrorMappingWithSourceAny(errorMappings.get(errorMappings.size() - 1))) {
           throw new MuleRuntimeException(createStaticMessage("Only the last error mapping can have 'ANY' or an empty source type."));
         }
-        List<String> sources = errorMappings.stream().map(model -> model.getParameters().get(SOURCE_TYPE)).collect(toList());
+        List<String> sources = errorMappings.stream().map(model -> model.getRawParameters().get(SOURCE_TYPE)).collect(toList());
         List<String> distinctSources = sources.stream().distinct().collect(toList());
         if (sources.size() != distinctSources.size()) {
           throw new MuleRuntimeException(createStaticMessage(format("Repeated source types are not allowed. Offending types are '%s'.",
@@ -880,7 +990,7 @@ public class ApplicationModel {
   }
 
   private boolean isErrorMappingWithSourceAny(ComponentModel model) {
-    String sourceType = model.getParameters().get(SOURCE_TYPE);
+    String sourceType = model.getRawParameters().get(SOURCE_TYPE);
     return sourceType == null || sourceType.equals(ANY_IDENTIFIER);
   }
 
@@ -895,13 +1005,13 @@ public class ApplicationModel {
   }
 
   private void validateRefOrOnErrorsExclusiveness(ComponentModel component) {
-    if (component.getParameters().get(REFERENCE_ATTRIBUTE) != null && !component.getInnerComponents().isEmpty()) {
+    if (component.getRawParameters().get(REFERENCE_ATTRIBUTE) != null && !component.getInnerComponents().isEmpty()) {
       throw new MuleRuntimeException(createStaticMessage("A reference error-handler cannot have on-errors."));
     }
   }
 
   private void validateNoMoreThanOneOnErrorPropagateWithRedelivery(ComponentModel component) {
-    if (component.getInnerComponents().stream().filter(exceptionStrategyComponent -> exceptionStrategyComponent.getParameters()
+    if (component.getInnerComponents().stream().filter(exceptionStrategyComponent -> exceptionStrategyComponent.getRawParameters()
         .get(MAX_REDELIVERY_ATTEMPTS_ROLLBACK_ES_ATTRIBUTE) != null).count() > 1) {
       throw new MuleRuntimeException(createStaticMessage(
                                                          "Only one on-error-propagate within a error-handler can handle message redelivery. Remove one of the maxRedeliveryAttempts attributes"));
@@ -912,7 +1022,7 @@ public class ApplicationModel {
     List<ComponentModel> innerComponents = component.getInnerComponents();
     for (int i = 0; i < innerComponents.size() - 1; i++) {
       ComponentModel componentModel = getOnErrorComponentModel(innerComponents.get(i));
-      Map<String, String> parameters = componentModel.getParameters();
+      Map<String, String> parameters = componentModel.getRawParameters();
       if (parameters.get(WHEN_CHOICE_ES_ATTRIBUTE) == null && parameters.get(TYPE_ES_ATTRIBUTE) == null) {
         throw new MuleRuntimeException(createStaticMessage(
                                                            "Every handler (except for the last one) within an 'error-handler' must specify a 'when' or 'type' attribute."));
@@ -922,7 +1032,7 @@ public class ApplicationModel {
 
   private ComponentModel getOnErrorComponentModel(ComponentModel onErrorModel) {
     if (ON_ERROR_IDENTIFIER.equals(onErrorModel.getIdentifier())) {
-      String sharedOnErrorName = onErrorModel.getParameters().get(REFERENCE_ATTRIBUTE);
+      String sharedOnErrorName = onErrorModel.getRawParameters().get(REFERENCE_ATTRIBUTE);
       return findTopLevelNamedComponent(sharedOnErrorName).orElseThrow(
                                                                        () -> new MuleRuntimeException(createStaticMessage(format("Could not find on-error reference named '%s'",
                                                                                                                                  sharedOnErrorName))));
@@ -934,7 +1044,7 @@ public class ApplicationModel {
   private void validateExceptionStrategyWhenAttributeIsOnlyPresentInsideChoice() {
     executeOnEveryMuleComponentTree(component -> {
       if (component.getIdentifier().getName().endsWith(EXCEPTION_STRATEGY_REFERENCE_ELEMENT)) {
-        if (component.getParameters().get(WHEN_CHOICE_ES_ATTRIBUTE) != null
+        if (component.getRawParameters().get(WHEN_CHOICE_ES_ATTRIBUTE) != null
             && !component.getParent().getIdentifier().getName().equals(ERROR_HANDLER)
             && !component.getParent().getIdentifier().getName().equals(MULE_ROOT_ELEMENT)) {
           throw new MuleRuntimeException(
@@ -1080,10 +1190,11 @@ public class ApplicationModel {
    * message processors
    *
    * @param extensionModels Set of {@link ExtensionModel extensionModels} that will be used to check if the element has to be
-   *        expanded.
+   *                        expanded.
+   * @param postProcess     a closure to be executed after the macroexpansion of an extension.
    */
-  private void expandModules(Set<ExtensionModel> extensionModels) {
-    new MacroExpansionModulesModel(this, extensionModels).expand();
+  private void expandModules(Set<ExtensionModel> extensionModels, Runnable postProcess) {
+    new MacroExpansionModulesModel(this, extensionModels).expand(postProcess);
   }
 
   /**
@@ -1091,14 +1202,6 @@ public class ApplicationModel {
    */
   public ConfigurationProperties getConfigurationProperties() {
     return configurationProperties;
-  }
-
-  private void resolveRegistrationNames() {
-    executeOnEveryRootElementWithBuildingDefinition((componentModel, componentBuildingDefinition) -> {
-      if (componentBuildingDefinition.getRegistrationName() != null) {
-        componentModel.setParameter(ApplicationModel.NAME_ATTRIBUTE, componentBuildingDefinition.getRegistrationName());
-      }
-    });
   }
 
   private void executeOnEveryRootElementWithBuildingDefinition(BiConsumer<ComponentModel, ComponentBuildingDefinition> action) {
@@ -1114,5 +1217,56 @@ public class ApplicationModel {
       });
     }
   }
+
+  @Override
+  public Stream<ComponentAst> recursiveStream() {
+    return topLevelComponentsStream()
+        .flatMap(cm -> cm.recursiveStream());
+  }
+
+  public Stream<Pair<ComponentAst, List<ComponentAst>>> recursiveStreamWithHierarchy() {
+    final List<Pair<ComponentAst, List<ComponentAst>>> ret = new ArrayList<>();
+
+    muleComponentModels.forEach(cm -> {
+      final List<ComponentAst> currentContext = new ArrayList<>();
+
+      ret.add(new Pair<>((ComponentAst) cm, new ArrayList<>(currentContext)));
+
+      recursiveStreamWithHierarchy(ret, cm, currentContext);
+    });
+
+    return ret.stream();
+  }
+
+  private void recursiveStreamWithHierarchy(final List<Pair<ComponentAst, List<ComponentAst>>> ret, ComponentModel cm,
+                                            final List<ComponentAst> currentContext) {
+    ((ComponentAst) cm).directChildrenStream().forEach(cmi -> {
+      final List<ComponentAst> currentContextI = new ArrayList<>(currentContext);
+
+      ret.add(new Pair<>(cmi, new ArrayList<>(currentContextI)));
+
+      currentContextI.add(cmi);
+      recursiveStreamWithHierarchy(ret, (ComponentModel) cmi, currentContextI);
+    });
+  }
+
+
+  @Override
+  public Spliterator<ComponentAst> recursiveSpliterator() {
+    return recursiveStream().spliterator();
+  }
+
+  @Override
+  public Stream<ComponentAst> topLevelComponentsStream() {
+    return muleComponentModels.stream()
+        .map(cm -> (ComponentAst) cm)
+        .flatMap(cm -> cm.directChildrenStream());
+  }
+
+  @Override
+  public Spliterator<ComponentAst> topLevelComponentsSpliterator() {
+    return topLevelComponentsStream().spliterator();
+  }
+
 }
 

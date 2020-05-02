@@ -9,20 +9,24 @@ package org.mule.runtime.globalconfig.internal;
 import static java.lang.Integer.MAX_VALUE;
 import static java.lang.Integer.valueOf;
 import static java.lang.String.format;
+import static java.util.Optional.empty;
+import static java.util.Optional.of;
+
+import org.mule.maven.client.api.model.Authentication;
+import org.mule.maven.client.api.model.MavenConfiguration;
+import org.mule.maven.client.api.model.RemoteRepository;
+import org.mule.maven.client.api.model.RepositoryPolicy;
+import org.mule.runtime.api.exception.MuleRuntimeException;
+import org.mule.runtime.api.i18n.I18nMessageFactory;
+import org.mule.runtime.container.api.MuleFoldersUtil;
+import org.mule.runtime.globalconfig.api.exception.RuntimeGlobalConfigException;
 
 import java.io.File;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.util.Comparator;
 import java.util.Map;
-
-import org.mule.maven.client.api.model.Authentication;
-import org.mule.maven.client.api.model.MavenConfiguration;
-import org.mule.maven.client.api.model.RemoteRepository;
-import org.mule.runtime.api.exception.MuleRuntimeException;
-import org.mule.runtime.api.i18n.I18nMessageFactory;
-import org.mule.runtime.container.api.MuleFoldersUtil;
-import org.mule.runtime.globalconfig.api.exception.RuntimeGlobalConfigException;
+import java.util.Optional;
 
 import com.typesafe.config.Config;
 import com.typesafe.config.ConfigObject;
@@ -52,10 +56,13 @@ public class MavenConfigBuilder {
           mavenConfig.hasPath("ignoreArtifactDescriptorRepositories")
               ? mavenConfig.getBoolean("ignoreArtifactDescriptorRepositories")
               : true;
+      boolean forcePolicyUpdateNever =
+          mavenConfig.hasPath("forcePolicyUpdateNever") && mavenConfig.getBoolean("forcePolicyUpdateNever");
 
-      boolean offLineMode =
-          mavenConfig.hasPath("offLineMode")
-              ? mavenConfig.getBoolean("offLineMode") : false;
+      boolean forcePolicyUpdateAlways = !forcePolicyUpdateNever
+          && mavenConfig.hasPath("forcePolicyUpdateAlways") && mavenConfig.getBoolean("forcePolicyUpdateAlways");
+
+      boolean offLineMode = mavenConfig.hasPath("offLineMode") && mavenConfig.getBoolean("offLineMode");
 
       File globalSettingsFile = findResource(globalSettingsLocation);
       File userSettingsFile = findResource(userSettingsLocation);
@@ -74,6 +81,8 @@ public class MavenConfigBuilder {
           MavenConfiguration.newMavenConfigurationBuilder()
               .localMavenRepositoryLocation(repositoryFolder)
               .ignoreArtifactDescriptorRepositories(ignoreArtifactDescriptorRepositories)
+              .forcePolicyUpdateNever(forcePolicyUpdateNever)
+              .forcePolicyUpdateAlways(forcePolicyUpdateAlways)
               .offlineMode(offLineMode);
       if (globalSettingsFile != null) {
         mavenConfigurationBuilder.globalSettingsLocation(globalSettingsFile);
@@ -91,10 +100,10 @@ public class MavenConfigBuilder {
         Map<String, Object> repositoriesAsMap = repositories.unwrapped();
         repositoriesAsMap.entrySet().stream().sorted(remoteRepositoriesComparator()).forEach((repoEntry) -> {
           String repositoryId = repoEntry.getKey();
-          Map<String, String> repositoryConfig = (Map<String, String>) repoEntry.getValue();
-          String url = repositoryConfig.get("url");
-          String username = repositoryConfig.get("username");
-          String password = repositoryConfig.get("password");
+          Map<String, Object> repositoryConfig = (Map<String, Object>) repoEntry.getValue();
+          String url = (String) repositoryConfig.get("url");
+          String username = (String) repositoryConfig.get("username");
+          String password = (String) repositoryConfig.get("password");
           try {
             RemoteRepository.RemoteRepositoryBuilder remoteRepositoryBuilder = RemoteRepository.newRemoteRepositoryBuilder()
                 .id(repositoryId).url(new URL(url));
@@ -106,6 +115,10 @@ public class MavenConfigBuilder {
               if (password != null) {
                 authenticationBuilder.password(password);
               }
+              getRepositoryPolicy(repositoryConfig, "snapshotPolicy")
+                  .ifPresent(snapshotPolicy -> remoteRepositoryBuilder.snapshotPolicy(snapshotPolicy));
+              getRepositoryPolicy(repositoryConfig, "releasePolicy")
+                  .ifPresent(releasePolicy -> remoteRepositoryBuilder.releasePolicy(releasePolicy));
               remoteRepositoryBuilder.authentication(authenticationBuilder.build());
             }
             mavenConfigurationBuilder.remoteRepository(remoteRepositoryBuilder.build());
@@ -121,6 +134,27 @@ public class MavenConfigBuilder {
       }
       throw new RuntimeGlobalConfigException(e);
     }
+  }
+
+  private static Optional<RepositoryPolicy> getRepositoryPolicy(Map<String, Object> repositoryConfig, String policy) {
+    if (repositoryConfig.containsKey(policy)) {
+      RepositoryPolicy.RepositoryPolicyBuilder repositoryPolicyBuilder = RepositoryPolicy.newRepositoryPolicyBuilder();
+      Map<String, String> snapshotPolicy = (Map<String, String>) repositoryConfig.get(policy);
+      String enabled = snapshotPolicy.getOrDefault("enabled", null);
+      String updatePolicy = snapshotPolicy.getOrDefault("updatePolicy", null);
+      String checksumPolicy = snapshotPolicy.getOrDefault("checksumPolicy", null);
+      if (enabled != null) {
+        repositoryPolicyBuilder.enabled(Boolean.valueOf(enabled));
+      }
+      if (updatePolicy != null) {
+        repositoryPolicyBuilder.updatePolicy(updatePolicy);
+      }
+      if (checksumPolicy != null) {
+        repositoryPolicyBuilder.checksumPolicy(checksumPolicy);
+      }
+      return of(repositoryPolicyBuilder.build());
+    }
+    return empty();
   }
 
   private static File findResource(String resourceLocation) {
@@ -159,7 +193,7 @@ public class MavenConfigBuilder {
   /**
    * @return creates a {@link MavenConfiguration} instance when no maven settings are defined.
    */
-  public static MavenConfiguration buildNullMavenConfig() {
+  public static MavenConfiguration defaultMavenConfig() {
     return MavenConfiguration.newMavenConfigurationBuilder().localMavenRepositoryLocation(getRuntimeRepositoryFolder())
         .build();
   }

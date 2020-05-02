@@ -10,12 +10,13 @@ import static java.util.Collections.singletonList;
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.is;
-import static org.mockito.Matchers.any;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.when;
 import static org.mule.runtime.api.i18n.I18nMessageFactory.createStaticMessage;
 import static org.mule.runtime.api.message.Message.of;
 import static reactor.core.publisher.Mono.error;
-import static reactor.core.publisher.Mono.just;
+
 import org.mule.runtime.api.event.Event;
 import org.mule.runtime.api.exception.MuleException;
 import org.mule.runtime.api.util.Reference;
@@ -23,9 +24,11 @@ import org.mule.runtime.api.util.concurrent.Latch;
 import org.mule.runtime.core.api.event.CoreEvent;
 import org.mule.runtime.core.api.processor.Processor;
 import org.mule.runtime.core.internal.exception.MessagingException;
+import org.mule.runtime.core.internal.message.InternalEvent;
 import org.mule.runtime.core.privileged.processor.chain.MessageProcessorChain;
 import org.mule.runtime.extension.api.runtime.operation.Result;
 import org.mule.runtime.module.extension.api.runtime.privileged.EventedResult;
+import org.mule.runtime.module.extension.internal.runtime.execution.SdkInternalContext;
 import org.mule.tck.junit4.AbstractMuleContextTestCase;
 
 import java.util.concurrent.atomic.AtomicInteger;
@@ -36,12 +39,14 @@ import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
-import org.mockito.runners.MockitoJUnitRunner;
+import org.mockito.junit.MockitoJUnitRunner;
+
+import reactor.core.publisher.Mono;
 
 @RunWith(MockitoJUnitRunner.class)
 public class ProcessorChainExecutorTestCase extends AbstractMuleContextTestCase {
 
-  @Mock
+  @Mock(lenient = true)
   private MessageProcessorChain chain;
 
   @Mock
@@ -54,15 +59,19 @@ public class ProcessorChainExecutorTestCase extends AbstractMuleContextTestCase 
   @Before
   public void setUp() throws Exception {
     this.coreEvent = testEvent();
+    ((InternalEvent) this.coreEvent).setSdkInternalContext(new SdkInternalContext());
     when(chain.getLocation()).thenReturn(null);
-    when(chain.apply(any())).thenReturn(just(coreEvent));
+    when(chain.apply(any())).thenAnswer(inv -> Mono.<CoreEvent>from(inv.getArgument(0))
+        .map(event -> CoreEvent.builder(event)
+            .message(coreEvent.getMessage())
+            .variables(coreEvent.getVariables())
+            .build()));
     when(chain.getMessageProcessors()).thenReturn(singletonList(processor));
   }
 
   @Test
   public void testDoProcessSuccessOnce() throws InterruptedException {
     ImmutableProcessorChainExecutor chainExecutor = new ImmutableProcessorChainExecutor(coreEvent, chain);
-
 
     AtomicInteger successCalls = new AtomicInteger(0);
     AtomicInteger errorCalls = new AtomicInteger(0);
@@ -76,8 +85,8 @@ public class ProcessorChainExecutorTestCase extends AbstractMuleContextTestCase 
   @Test
   public void testDoProcessOnErrorMessagingException() throws InterruptedException, MuleException {
     final String ERROR_PAYLOAD = "ERROR_PAYLOAD";
-    when(chain.apply(any())).thenReturn(error(new MessagingException(createStaticMessage(""),
-                                                                     getEventBuilder().message(of(ERROR_PAYLOAD)).build())));
+    doReturn(error(new MessagingException(createStaticMessage(""),
+                                          getEventBuilder().message(of(ERROR_PAYLOAD)).build()))).when(chain).apply(any());
     ImmutableProcessorChainExecutor chainExecutor = new ImmutableProcessorChainExecutor(coreEvent, chain);
 
     AtomicInteger successCalls = new AtomicInteger(0);
@@ -98,7 +107,7 @@ public class ProcessorChainExecutorTestCase extends AbstractMuleContextTestCase 
 
   @Test
   public void testDoProcessOnErrorGenericException() throws InterruptedException {
-    when(chain.apply(any())).thenReturn(error(new RuntimeException()));
+    doReturn(error(new RuntimeException())).when(chain).apply(any());
     ImmutableProcessorChainExecutor chainExecutor = new ImmutableProcessorChainExecutor(coreEvent, chain);
 
     AtomicInteger successCalls = new AtomicInteger(0);

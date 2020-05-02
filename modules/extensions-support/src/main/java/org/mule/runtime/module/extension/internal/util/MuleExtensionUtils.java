@@ -8,12 +8,9 @@ package org.mule.runtime.module.extension.internal.util;
 
 import static java.lang.String.format;
 import static java.lang.Thread.currentThread;
-import static java.util.Collections.emptyList;
 import static java.util.Collections.singleton;
 import static java.util.Optional.empty;
-import static org.apache.commons.collections.CollectionUtils.isEmpty;
 import static org.mule.runtime.api.dsl.DslResolvingContext.getDefault;
-import static org.mule.runtime.api.util.collection.Collectors.toImmutableList;
 import static org.mule.runtime.core.api.transaction.TransactionConfig.ACTION_ALWAYS_BEGIN;
 import static org.mule.runtime.core.api.transaction.TransactionConfig.ACTION_ALWAYS_JOIN;
 import static org.mule.runtime.core.api.transaction.TransactionConfig.ACTION_JOIN_IF_POSSIBLE;
@@ -23,7 +20,7 @@ import static org.mule.runtime.core.api.util.ClassUtils.withContextClassLoader;
 import static org.mule.runtime.extension.api.util.ExtensionMetadataTypeUtils.getId;
 import static org.mule.runtime.module.extension.api.loader.AbstractJavaExtensionModelLoader.TYPE_PROPERTY_NAME;
 import static org.mule.runtime.module.extension.api.loader.AbstractJavaExtensionModelLoader.VERSION;
-import static org.mule.runtime.module.extension.internal.runtime.resolver.ValueResolvingContext.from;
+
 import org.mule.metadata.api.model.ArrayType;
 import org.mule.metadata.api.model.MetadataType;
 import org.mule.runtime.api.dsl.DslResolvingContext;
@@ -37,14 +34,14 @@ import org.mule.runtime.api.meta.model.ModelProperty;
 import org.mule.runtime.api.meta.model.XmlDslModel;
 import org.mule.runtime.api.meta.model.config.ConfigurationModel;
 import org.mule.runtime.api.meta.model.connection.ConnectionProviderModel;
-import org.mule.runtime.api.meta.model.declaration.fluent.BaseDeclaration;
+import org.mule.runtime.api.meta.model.construct.ConstructModel;
 import org.mule.runtime.api.meta.model.declaration.fluent.ExtensionDeclaration;
 import org.mule.runtime.api.meta.model.operation.OperationModel;
 import org.mule.runtime.api.meta.model.parameter.ParameterModel;
 import org.mule.runtime.api.meta.model.source.SourceModel;
 import org.mule.runtime.api.meta.model.util.IdempotentExtensionWalker;
 import org.mule.runtime.api.util.Reference;
-import org.mule.runtime.core.api.event.CoreEvent;
+import org.mule.runtime.api.util.collection.SmallMap;
 import org.mule.runtime.core.api.extension.MuleExtensionModelProvider;
 import org.mule.runtime.core.api.source.MessageSource.BackPressureStrategy;
 import org.mule.runtime.core.api.transaction.TransactionConfig;
@@ -56,35 +53,36 @@ import org.mule.runtime.extension.api.exception.IllegalOperationModelDefinitionE
 import org.mule.runtime.extension.api.exception.IllegalSourceModelDefinitionException;
 import org.mule.runtime.extension.api.metadata.MetadataResolverFactory;
 import org.mule.runtime.extension.api.property.ClassLoaderModelProperty;
-import org.mule.runtime.extension.api.runtime.InterceptorFactory;
+import org.mule.runtime.extension.api.property.SyntheticModelModelProperty;
 import org.mule.runtime.extension.api.runtime.config.ConfigurationFactory;
 import org.mule.runtime.extension.api.runtime.connectivity.ConnectionProviderFactory;
+import org.mule.runtime.extension.api.runtime.operation.CompletableComponentExecutorFactory;
 import org.mule.runtime.extension.api.runtime.operation.ComponentExecutorFactory;
-import org.mule.runtime.extension.api.runtime.operation.Interceptor;
+import org.mule.runtime.extension.api.runtime.operation.ExecutionContext;
 import org.mule.runtime.extension.api.runtime.source.BackPressureAction;
 import org.mule.runtime.extension.api.runtime.source.BackPressureMode;
 import org.mule.runtime.extension.api.runtime.source.SourceFactory;
 import org.mule.runtime.extension.api.tx.OperationTransactionalAction;
 import org.mule.runtime.extension.api.tx.SourceTransactionalAction;
 import org.mule.runtime.module.extension.api.loader.java.DefaultJavaExtensionModelLoader;
+import org.mule.runtime.module.extension.api.loader.java.property.CompletableComponentExecutorModelProperty;
 import org.mule.runtime.module.extension.api.loader.java.property.ComponentExecutorModelProperty;
 import org.mule.runtime.module.extension.api.loader.java.type.Type;
+import org.mule.runtime.module.extension.internal.loader.java.property.CompileTimeModelProperty;
 import org.mule.runtime.module.extension.internal.loader.java.property.ConfigurationFactoryModelProperty;
 import org.mule.runtime.module.extension.internal.loader.java.property.ConnectionProviderFactoryModelProperty;
 import org.mule.runtime.module.extension.internal.loader.java.property.ConnectionTypeModelProperty;
-import org.mule.runtime.module.extension.internal.loader.java.property.InterceptorsModelProperty;
+import org.mule.runtime.module.extension.internal.loader.java.property.ImplementingTypeModelProperty;
 import org.mule.runtime.module.extension.internal.loader.java.property.MetadataResolverFactoryModelProperty;
 import org.mule.runtime.module.extension.internal.loader.java.property.NullSafeModelProperty;
 import org.mule.runtime.module.extension.internal.loader.java.property.SourceFactoryModelProperty;
-import org.mule.runtime.module.extension.internal.runtime.execution.OperationExecutorFactoryWrapper;
+import org.mule.runtime.module.extension.internal.runtime.config.MutableConfigurationStats;
+import org.mule.runtime.module.extension.internal.runtime.execution.deprecated.ComponentExecutorCompletableAdapterFactory;
+import org.mule.runtime.module.extension.internal.runtime.execution.deprecated.ReactiveOperationExecutorFactoryWrapper;
 import org.mule.runtime.module.extension.internal.runtime.resolver.ResolverSet;
 import org.mule.runtime.module.extension.internal.runtime.resolver.ValueResolver;
 import org.mule.runtime.module.extension.internal.runtime.resolver.ValueResolvingContext;
 
-import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableMap;
-
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
@@ -92,6 +90,9 @@ import java.util.Optional;
 import java.util.concurrent.Callable;
 import java.util.function.Function;
 import java.util.function.Supplier;
+
+import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
 
 /**
  * Utilities for handling {@link ExtensionModel extensions}
@@ -114,7 +115,7 @@ public class MuleExtensionUtils {
    * Returns {@code true} if any of the items in {@code resolvers} return true for the {@link ValueResolver#isDynamic()} method
    *
    * @param resolvers a {@link Iterable} with instances of {@link ValueResolver}
-   * @param <T> the generic type of the {@link ValueResolver} items
+   * @param <T>       the generic type of the {@link ValueResolver} items
    * @return {@code true} if at least one {@link ValueResolver} is dynamic, {@code false} otherwise
    */
   public static <T extends Object> boolean hasAnyDynamic(Iterable<ValueResolver<T>> resolvers) {
@@ -126,9 +127,6 @@ public class MuleExtensionUtils {
     return false;
   }
 
-  public static Map<String, Object> toMap(ResolverSet resolverSet, CoreEvent event) throws MuleException {
-    return toMap(resolverSet, from(event));
-  }
 
   public static Map<String, Object> toMap(ResolverSet resolverSet, ValueResolvingContext ctx) throws MuleException {
     ImmutableMap.Builder<String, Object> map = ImmutableMap.builder();
@@ -156,7 +154,7 @@ public class MuleExtensionUtils {
    * {@link ConfigurationModel#getConnectionProviders()} level and finally the ones at
    * {@link ExtensionModel#getConnectionProviders()}
    *
-   * @param extensionModel the {@link ExtensionModel} which owns the {@code configurationModel}
+   * @param extensionModel     the {@link ExtensionModel} which owns the {@code configurationModel}
    * @param configurationModel a {@link ConfigurationModel}
    * @return a {@link List}. Might be empty but will never be {@code null}
    */
@@ -189,64 +187,6 @@ public class MuleExtensionUtils {
   }
 
   /**
-   * Creates a new {@link List} of {@link Interceptor interceptors} using the factories returned by
-   * {@link InterceptorsModelProperty} (if present).
-   *
-   * @param model the model on which {@link InterceptorsModelProperty} is to be invoked
-   * @return an immutable {@link List} with instances of {@link Interceptor}
-   */
-  public static List<Interceptor> createInterceptors(EnrichableModel model) {
-    return model.getModelProperty(InterceptorsModelProperty.class)
-        .map(p -> createInterceptors(p.getInterceptorFactories()))
-        .orElse(ImmutableList.of());
-  }
-
-  /**
-   * Adds the given {@code interceptorFactory} to the {@code declaration} as the last interceptor in the list
-   *
-   * @param declaration a {@link BaseDeclaration}
-   * @param interceptorFactory a {@link InterceptorFactory}
-   */
-  public static void addInterceptorFactory(BaseDeclaration declaration, InterceptorFactory interceptorFactory) {
-    getOrCreateInterceptorModelProperty(declaration).addInterceptorFactory(interceptorFactory);
-  }
-
-  /**
-   * Adds the given {@code interceptorFactory} to the {@code declaration} at the given {@code position}
-   *
-   * @param declaration a {@link BaseDeclaration}
-   * @param interceptorFactory a {@link InterceptorFactory}
-   * @param position a valid list index
-   */
-  public static void addInterceptorFactory(BaseDeclaration declaration, InterceptorFactory interceptorFactory, int position) {
-    getOrCreateInterceptorModelProperty(declaration).addInterceptorFactory(interceptorFactory, position);
-  }
-
-  private static InterceptorsModelProperty getOrCreateInterceptorModelProperty(BaseDeclaration declaration) {
-    InterceptorsModelProperty property =
-        (InterceptorsModelProperty) declaration.getModelProperty(InterceptorsModelProperty.class).orElse(null);
-    if (property == null) {
-      property = new InterceptorsModelProperty(emptyList());
-      declaration.addModelProperty(property);
-    }
-    return property;
-  }
-
-  /**
-   * Creates a new {@link List} of {@link Interceptor interceptors} using the {@code interceptorFactories}
-   *
-   * @param interceptorFactories a {@link List} with instances of {@link InterceptorFactory}
-   * @return an immutable {@link List} with instances of {@link Interceptor}
-   */
-  public static List<Interceptor> createInterceptors(List<InterceptorFactory> interceptorFactories) {
-    if (isEmpty(interceptorFactories)) {
-      return ImmutableList.of();
-    }
-
-    return interceptorFactories.stream().map(InterceptorFactory::createInterceptor).collect(toImmutableList());
-  }
-
-  /**
    * If the {@code extensionModel} contains a {@link ClassLoaderModelProperty}, then it returns the {@link ClassLoader} associated
    * to such property. Otherwise, it returns the current TCCL
    *
@@ -262,8 +202,8 @@ public class MuleExtensionUtils {
    * Executes the given {@code callable} using the {@link ClassLoader} associated to the {@code extensionModel}
    *
    * @param extensionModel a {@link ExtensionModel}
-   * @param callable a {@link Callable}
-   * @param <T> the generic type of the {@code callable}'s return type
+   * @param callable       a {@link Callable}
+   * @param <T>            the generic type of the {@code callable}'s return type
    * @return the value returned by the {@code callable}
    * @throws Exception if the {@code callable} fails to execute
    */
@@ -364,6 +304,52 @@ public class MuleExtensionUtils {
   }
 
   /**
+   * Tests the given {@code operationModel} for a {@link ComponentExecutorModelProperty} and if present it returns the enclosed
+   * {@link ComponentExecutorFactory}. If no such property is found, then a {@link IllegalOperationModelDefinitionException} is
+   * thrown.
+   *
+   * @param operationModel an {@link OperationModel}
+   * @return a {@link ComponentExecutorFactory}
+   * @throws IllegalOperationModelDefinitionException if the operation is not properly enriched
+   * @deprecated since 4.3. Use {@link #getOperationExecutorFactory(ComponentModel)} instead
+   */
+  @Deprecated
+  public static <T extends ComponentModel> ComponentExecutorFactory<T> getLegacyOperationExecutorFactory(T operationModel) {
+    ComponentExecutorFactory executorFactory =
+        fromModelProperty(operationModel,
+                          ComponentExecutorModelProperty.class,
+                          ComponentExecutorModelProperty::getExecutorFactory,
+                          () -> new IllegalOperationModelDefinitionException(format("Operation '%s' does not provide a %s",
+                                                                                    operationModel.getName(),
+                                                                                    ComponentExecutorFactory.class
+                                                                                        .getSimpleName())));
+
+    return new ReactiveOperationExecutorFactoryWrapper(executorFactory);
+  }
+
+  public static <T extends ComponentModel> CompletableComponentExecutorFactory<T> getOperationExecutorFactory(T operationModel) {
+    if (operationModel.getModelProperty(ComponentExecutorModelProperty.class).isPresent()) {
+      return new ComponentExecutorCompletableAdapterFactory<>(getLegacyOperationExecutorFactory(operationModel));
+    }
+
+    return fromModelProperty(operationModel,
+                             CompletableComponentExecutorModelProperty.class,
+                             CompletableComponentExecutorModelProperty::getExecutorFactory,
+                             () -> new IllegalOperationModelDefinitionException(format("Operation '%s' does not provide a %s",
+                                                                                       operationModel.getName(),
+                                                                                       CompletableComponentExecutorModelProperty.class
+                                                                                           .getSimpleName())));
+  }
+
+  public static boolean isNonBlocking(ComponentModel model) {
+    if (model instanceof OperationModel) {
+      return !((OperationModel) model).isBlocking();
+    }
+
+    return model instanceof ConstructModel;
+  }
+
+  /**
    * Tests the given {@code model} for a {@link MetadataResolverFactoryModelProperty} and if present it returns the contained
    * {@link MetadataResolverFactory}. If no such property is found, then a {@link NullMetadataResolverFactory} is returned
    *
@@ -376,27 +362,7 @@ public class MuleExtensionUtils {
         .orElse(new NullMetadataResolverFactory());
   }
 
-  /**
-   * Tests the given {@code operationModel} for a {@link ComponentExecutorModelProperty} and if present it returns the enclosed
-   * {@link ComponentExecutorFactory}. If no such property is found, then a {@link IllegalOperationModelDefinitionException} is
-   * thrown.
-   *
-   * @param operationModel an {@link OperationModel}
-   * @return a {@link ComponentExecutorFactory}
-   * @throws IllegalOperationModelDefinitionException if the operation is not properly enriched
-   */
-  public static <T extends ComponentModel> ComponentExecutorFactory<T> getOperationExecutorFactory(T operationModel) {
-    ComponentExecutorFactory executorFactory =
-        fromModelProperty(operationModel,
-                          ComponentExecutorModelProperty.class,
-                          ComponentExecutorModelProperty::getExecutorFactory,
-                          () -> new IllegalOperationModelDefinitionException(format("Operation '%s' does not provide a %s",
-                                                                                    operationModel.getName(),
-                                                                                    ComponentExecutorFactory.class
-                                                                                        .getSimpleName())));
 
-    return new OperationExecutorFactoryWrapper(executorFactory, createInterceptors(operationModel));
-  }
 
   /**
    * Tests the given {@code sourceModel} for a {@link SourceFactoryModelProperty} and if present it returns the enclosed
@@ -481,7 +447,7 @@ public class MuleExtensionUtils {
   }
 
   public static ExtensionModel loadExtension(Class<?> clazz) {
-    return loadExtension(clazz, new HashMap<>());
+    return loadExtension(clazz, new SmallMap<>());
   }
 
   public static ExtensionModel loadExtension(Class<?> clazz, Map<String, Object> params) {
@@ -498,8 +464,9 @@ public class MuleExtensionUtils {
 
   /**
    * TODO MULE-14603 - This should not exist after MULE-14603 is fixed
-   *
+   * <p>
    * Indicates if the given value is considered as an expression
+   *
    * @param value Value to check
    * @return a boolean indicating if the value is an expression or not.
    */
@@ -512,4 +479,50 @@ public class MuleExtensionUtils {
     }
   }
 
+  /**
+   * Indicates if the extension model is being built on compile time.
+   *
+   * @param extensionModel the extension model to check
+   * @return a boolean indicating if the the extension model is being build on runtime or not
+   * @since 4.3.0
+   */
+  public static boolean isCompileTime(ExtensionModel extensionModel) {
+    return extensionModel.getModelProperty(CompileTimeModelProperty.class).isPresent();
+  }
+
+  /**
+   * Indicates whether a give {@link EnrichableModel} is synthetic or not.
+   *
+   * @param enrichableModel the enrichable model that may be synthetic
+   * @return if the enrichable model is synthetic or not
+   * @since 4.3.0
+   */
+  public static boolean isSynthetic(EnrichableModel enrichableModel) {
+    return enrichableModel.getModelProperty(SyntheticModelModelProperty.class).isPresent();
+  }
+
+  /**
+   * Tests the given {@code enrichableModel} for a {@link ImplementingTypeModelProperty} and if present it
+   * returns the enclosed implementing type.
+   *
+   * @param enrichableModel the provider to get the implemented type from
+   * @return an {@link Optional} that either has the provider implementing type, or is empty
+   * @since 4.3.0
+   */
+  public static Optional<Class> getImplementingType(EnrichableModel enrichableModel) {
+    return enrichableModel.getModelProperty(ImplementingTypeModelProperty.class).map(mp -> mp.getType());
+  }
+
+  /**
+   * @return the {@link MutableConfigurationStats} for a given {@link ExecutionContext}
+   *
+   * @since 4.2.3 - 4.3.0
+   */
+  public static MutableConfigurationStats getMutableConfigurationStats(ExecutionContext<?> context) {
+    if (context.getConfiguration().isPresent()) {
+      return (MutableConfigurationStats) (context.getConfiguration().get()).getStatistics();
+    } else {
+      return null;
+    }
+  }
 }

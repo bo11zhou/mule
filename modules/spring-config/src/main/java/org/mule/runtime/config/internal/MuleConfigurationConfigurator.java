@@ -6,11 +6,11 @@
  */
 package org.mule.runtime.config.internal;
 
-import static java.lang.String.format;
 import static org.mule.runtime.api.i18n.I18nMessageFactory.createStaticMessage;
+import static org.mule.runtime.core.api.lifecycle.LifecycleUtils.isLazyInitMode;
 
 import org.mule.runtime.api.artifact.Registry;
-import org.mule.runtime.api.exception.MuleRuntimeException;
+import org.mule.runtime.api.component.ConfigurationProperties;
 import org.mule.runtime.api.serialization.ObjectSerializer;
 import org.mule.runtime.core.api.MuleContext;
 import org.mule.runtime.core.api.config.ConfigurationException;
@@ -18,16 +18,14 @@ import org.mule.runtime.core.api.config.ConfigurationExtension;
 import org.mule.runtime.core.api.config.DefaultMuleConfiguration;
 import org.mule.runtime.core.api.config.DynamicConfigExpiration;
 import org.mule.runtime.core.api.config.MuleConfiguration;
-import org.mule.runtime.core.api.exception.FlowExceptionHandler;
 import org.mule.runtime.core.internal.context.DefaultMuleContext;
-import org.mule.runtime.core.privileged.exception.MessagingExceptionHandlerAcceptor;
 import org.mule.runtime.dsl.api.component.AbstractComponentFactory;
-
-import org.springframework.beans.factory.SmartFactoryBean;
 
 import java.util.List;
 
 import javax.inject.Inject;
+
+import org.springframework.beans.factory.SmartFactoryBean;
 
 /**
  * This class is a "SmartFactoryBean" which allows a few XML attributes to be set on the otherwise read-only MuleConfiguration. It
@@ -43,6 +41,9 @@ public class MuleConfigurationConfigurator extends AbstractComponentFactory impl
   @Inject
   private Registry registry;
 
+  @Inject
+  private ConfigurationProperties configurationProperties;
+
   // We instantiate DefaultMuleConfiguration to make sure we get the default values for
   // any properties not set by the user.
   private DefaultMuleConfiguration config = new DefaultMuleConfiguration();
@@ -55,22 +56,6 @@ public class MuleConfigurationConfigurator extends AbstractComponentFactory impl
   @Override
   public boolean isPrototype() {
     return false;
-  }
-
-  private void validateDefaultErrorHandler() {
-    String defaultErrorHandler = config.getDefaultErrorHandlerName();
-    if (defaultErrorHandler != null) {
-      FlowExceptionHandler messagingExceptionHandler = registry.<FlowExceptionHandler>lookupByName(defaultErrorHandler)
-          .orElseThrow(() -> new MuleRuntimeException(createStaticMessage(format("No global error handler defined with name '%s'.",
-                                                                                 defaultErrorHandler))));
-      if (messagingExceptionHandler instanceof MessagingExceptionHandlerAcceptor) {
-        MessagingExceptionHandlerAcceptor messagingExceptionHandlerAcceptor =
-            (MessagingExceptionHandlerAcceptor) messagingExceptionHandler;
-        if (!messagingExceptionHandlerAcceptor.acceptsAll()) {
-          throw new MuleRuntimeException(createStaticMessage("Default exception strategy must not have expression attribute. It must accept any message."));
-        }
-      }
-    }
   }
 
   private void applyDefaultIfNoObjectSerializerSet(DefaultMuleConfiguration configuration) {
@@ -126,6 +111,10 @@ public class MuleConfigurationConfigurator extends AbstractComponentFactory impl
     config.setDynamicConfigExpiration(dynamicConfigExpiration);
   }
 
+  public void setInheritIterableRepeatability(String inheritIterableRepeatability) {
+    config.setInheritIterableRepeatability(inheritIterableRepeatability);
+  }
+
   public void setExtensions(List<ConfigurationExtension> extensions) {
     config.addExtensions(extensions);
   }
@@ -135,6 +124,9 @@ public class MuleConfigurationConfigurator extends AbstractComponentFactory impl
     MuleConfiguration configuration = muleContext.getConfiguration();
     if (configuration instanceof DefaultMuleConfiguration) {
       DefaultMuleConfiguration defaultConfig = (DefaultMuleConfiguration) configuration;
+      // First of all set the lazyInit mode or not to allow modifications to the configuration
+      defaultConfig.setLazyInit(isLazyInitMode(configurationProperties));
+
       defaultConfig.setDefaultResponseTimeout(config.getDefaultResponseTimeout());
       defaultConfig.setDefaultTransactionTimeout(config.getDefaultTransactionTimeout());
       defaultConfig.setShutdownTimeout(config.getShutdownTimeout());
@@ -142,7 +134,7 @@ public class MuleConfigurationConfigurator extends AbstractComponentFactory impl
       defaultConfig.addExtensions(config.getExtensions());
       defaultConfig.setMaxQueueTransactionFilesSize(config.getMaxQueueTransactionFilesSizeInMegabytes());
       defaultConfig.setDynamicConfigExpiration(config.getDynamicConfigExpiration());
-      validateDefaultErrorHandler();
+      defaultConfig.setInheritIterableRepeatability(config.isInheritIterableRepeatability());
       applyDefaultIfNoObjectSerializerSet(defaultConfig);
 
       return configuration;

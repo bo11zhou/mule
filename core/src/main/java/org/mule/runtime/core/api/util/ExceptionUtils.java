@@ -9,9 +9,10 @@ package org.mule.runtime.core.api.util;
 import static java.lang.System.lineSeparator;
 import static java.util.Optional.empty;
 import static java.util.Optional.of;
+import static java.util.Optional.ofNullable;
 import static org.mule.runtime.core.api.exception.Errors.CORE_NAMESPACE_NAME;
 import static org.mule.runtime.core.api.exception.Errors.Identifiers.UNKNOWN_ERROR_IDENTIFIER;
-import static org.mule.runtime.core.internal.component.ComponentAnnotations.ANNOTATION_NAME;
+
 import org.mule.runtime.api.component.Component;
 import org.mule.runtime.api.component.ComponentIdentifier;
 import org.mule.runtime.api.connection.ConnectionException;
@@ -19,10 +20,8 @@ import org.mule.runtime.api.message.ErrorType;
 import org.mule.runtime.core.internal.exception.MessagingException;
 
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
-import java.util.Set;
 import java.util.concurrent.Callable;
 
 /**
@@ -35,7 +34,7 @@ public class ExceptionUtils {
    * exception chain. Subclasses of the specified class do match.
    *
    * @param throwable the throwable to inspect, may be null
-   * @param type the type to search for, subclasses match, null returns false
+   * @param type      the type to search for, subclasses match, null returns false
    * @return the index into the throwable chain, false if no match or null input
    */
   public static boolean containsType(Throwable throwable, Class<?> type) {
@@ -50,8 +49,8 @@ public class ExceptionUtils {
    * A <code>null</code> type returns <code>-1</code>.
    * No match in the chain returns <code>-1</code>.</p>
    *
-   * @param throwable  the throwable to inspect, may be null
-   * @param type  the type to search for, subclasses match, null returns -1
+   * @param throwable the throwable to inspect, may be null
+   * @param type      the type to search for, subclasses match, null returns -1
    * @return the index into the throwable chain, -1 if no match or null input
    */
   public static int indexOfType(final Throwable throwable, final Class<?> type) {
@@ -62,12 +61,12 @@ public class ExceptionUtils {
    * Similar to {@link org.apache.commons.lang3.exception.ExceptionUtils#indexOf(Throwable, Class, int, boolean)} but avoiding the
    * deprecated {@link org.apache.commons.lang3.exception.ExceptionUtils#getCause(Throwable)}.
    *
-   * @param throwable  the throwable to inspect, may be null
-   * @param type  the type to search for, subclasses match, null returns -1
-   * @param fromIndex  the (zero based) index of the starting position,
-   *  negative treated as zero, larger than chain size returns -1
-   * @param subclass if <code>true</code>, compares with {@link Class#isAssignableFrom(Class)}, otherwise compares
-   * using references
+   * @param throwable the throwable to inspect, may be null
+   * @param type      the type to search for, subclasses match, null returns -1
+   * @param fromIndex the (zero based) index of the starting position,
+   *                  negative treated as zero, larger than chain size returns -1
+   * @param subclass  if <code>true</code>, compares with {@link Class#isAssignableFrom(Class)}, otherwise compares
+   *                  using references
    * @return index of the <code>type</code> within throwables nested within the specified <code>throwable</code>
    */
   private static int indexOf(final Throwable throwable, final Class<?> type, int fromIndex, final boolean subclass) {
@@ -101,9 +100,9 @@ public class ExceptionUtils {
    * Similar to {@link org.apache.commons.lang3.exception.ExceptionUtils#getThrowables(Throwable)} but avoiding the deprecated
    * {@link org.apache.commons.lang3.exception.ExceptionUtils#getCause(Throwable)}.
    *
-   * @see #getThrowableList(Throwable)
-   * @param throwable  the throwable to inspect, may be null
+   * @param throwable the throwable to inspect, may be null
    * @return the array of throwables, never null
+   * @see #getThrowableList(Throwable)
    */
   public static Throwable[] getThrowables(final Throwable throwable) {
     final List<Throwable> list = getThrowableList(throwable);
@@ -114,7 +113,7 @@ public class ExceptionUtils {
    * Similar to {@link org.apache.commons.lang3.exception.ExceptionUtils#getThrowableList(Throwable)} but avoiding the deprecated
    * {@link org.apache.commons.lang3.exception.ExceptionUtils#getCause(Throwable)}.
    *
-   * @param throwable  the throwable to inspect, may be null
+   * @param throwable the throwable to inspect, may be null
    * @return the list of throwables, never null
    */
   public static List<Throwable> getThrowableList(Throwable throwable) {
@@ -159,7 +158,7 @@ public class ExceptionUtils {
    * Introspects the {@link Throwable} parameter to obtain the first {@link Throwable} of type {@code throwableType} in the
    * exception chain and return the cause of it.
    *
-   * @param throwable the last throwable on the exception chain.
+   * @param throwable     the last throwable on the exception chain.
    * @param throwableType the type of the throwable that the cause is wanted.
    * @return the cause of the first {@link Throwable} of type {@code throwableType}.
    */
@@ -175,7 +174,7 @@ public class ExceptionUtils {
    * {@link ConnectionException} the same value will be returned. If the throwable parameter has a cause of itself, then an empty
    * value will be returned.
    *
-   * @param throwable the last throwable on the exception chain.
+   * @param throwable     the last throwable on the exception chain.
    * @param throwableType the type of the throwable is wanted to find.
    * @return the cause of the first {@link Throwable} of type {@code throwableType}.
    */
@@ -189,15 +188,13 @@ public class ExceptionUtils {
       return empty();
     }
 
-    Set<Throwable> causes = new HashSet<>();
-
-    for (throwable = throwable.getCause(); throwable != null; throwable = throwable.getCause()) {
-      if (!causes.add(throwable)) {
+    for (Throwable cause = throwable.getCause(); cause != null; cause = cause.getCause()) {
+      if (cause == throwable) {
         return empty();
       }
 
-      if (throwableType.isInstance(throwable)) {
-        return of((T) throwable);
+      if (throwableType.isInstance(cause)) {
+        return of((T) cause);
       }
     }
 
@@ -213,10 +210,10 @@ public class ExceptionUtils {
    * turn also throw an exception or handle it returning a value.
    *
    * @param expectedExceptionType the type of exception which is expected to be thrown
-   * @param callable the delegate to be executed
-   * @param exceptionHandler a {@link ExceptionHandler} in case an unexpected exception is found instead
-   * @param <T> the generic type of the return value
-   * @param <E> the generic type of the expected exception
+   * @param callable              the delegate to be executed
+   * @param exceptionHandler      a {@link ExceptionHandler} in case an unexpected exception is found instead
+   * @param <T>                   the generic type of the return value
+   * @param <E>                   the generic type of the expected exception
    * @return a value returned by either the {@code callable} or the {@code exceptionHandler}
    * @throws E if the expected exception is actually thrown
    */
@@ -235,6 +232,47 @@ public class ExceptionUtils {
       }
 
       return exceptionHandler.handle(e);
+    }
+  }
+
+  /**
+   * Executes the given {@code runnable} knowing that it might throw an {@link Exception} of type {@code expectedExceptionType}.
+   * If that happens, then it will re throw such exception.
+   * <p>
+   * If the {@code runnable} throws a {@link RuntimeException} of a different type, then it is also re-thrown. Finally, if an
+   * exception of any different type is thrown, then it is handled by delegating into the {@code exceptionHandler}, which might in
+   * turn also throw an exception or handle it returning a value.
+   * <p>
+   * This method is only suitable for pieces that are only executed sporadically, are not executed at high concurrency rates and
+   * are not critical performance wise. This is because all the lambdas and functional abstraction it relies on are really nice
+   * from a coding POV, but it does add a performance overhead.
+   * <p>
+   * This method is only suitable for pieces that are only executed sporadically, are not executed at high concurrency rates and
+   * are not critical performance wise. This is because all the lambdas and functional abstraction it relies on are really nice
+   * from a coding POV, but it does add a performance overhead.
+   *
+   * @param expectedExceptionType the type of exception which is expected to be thrown
+   * @param runnable              the delegate to be executed
+   * @param exceptionHandler      a {@link ExceptionHandler} in case an unexpected exception is found instead
+   * @param <T>                   the generic type of the return value
+   * @param <E>                   the generic type of the expected exception
+   * @throws E if the expected exception is actually thrown
+   */
+  public static <T, E extends Exception> void tryExpecting(Class<E> expectedExceptionType, Runnable runnable,
+                                                           ExceptionHandler<T, E> exceptionHandler)
+      throws E {
+    try {
+      runnable.run();
+    } catch (Exception e) {
+      if (expectedExceptionType.isInstance(e)) {
+        throw (E) e;
+      }
+
+      if (e instanceof RuntimeException) {
+        throw (RuntimeException) e;
+      }
+
+      exceptionHandler.handle(e);
     }
   }
 
@@ -261,7 +299,11 @@ public class ExceptionUtils {
   }
 
   public static Optional<ComponentIdentifier> getComponentIdentifier(Component obj) {
-    return Optional.ofNullable((ComponentIdentifier) obj.getAnnotation(ANNOTATION_NAME));
+    return ofNullable(getComponentIdentifierOf(obj));
+  }
+
+  public static ComponentIdentifier getComponentIdentifierOf(Component obj) {
+    return obj.getIdentifier();
   }
 
   private ExceptionUtils() {}

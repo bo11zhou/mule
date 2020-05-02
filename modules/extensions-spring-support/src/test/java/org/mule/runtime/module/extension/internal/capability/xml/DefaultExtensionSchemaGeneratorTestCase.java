@@ -7,6 +7,7 @@
 package org.mule.runtime.module.extension.internal.capability.xml;
 
 import static com.google.common.collect.ImmutableSet.copyOf;
+import static java.lang.Boolean.getBoolean;
 import static java.lang.String.format;
 import static java.util.Arrays.asList;
 import static java.util.Optional.ofNullable;
@@ -14,6 +15,8 @@ import static java.util.stream.Collectors.toList;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 import static org.mule.runtime.api.dsl.DslResolvingContext.getDefault;
+import static org.mule.runtime.api.util.MuleSystemProperties.SYSTEM_PROPERTY_PREFIX;
+import static org.mule.runtime.api.util.collection.SmallMap.of;
 import static org.mule.runtime.core.api.config.MuleManifest.getProductVersion;
 import static org.mule.runtime.core.api.util.FileUtils.stringToFile;
 import static org.mule.runtime.core.api.util.IOUtils.getResourceAsString;
@@ -23,6 +26,7 @@ import static org.mule.runtime.module.extension.api.loader.AbstractJavaExtension
 import static org.mule.runtime.module.extension.internal.capability.xml.DefaultExtensionSchemaGeneratorTestCase.SchemaGeneratorTestUnit.newTestUnit;
 import static org.mule.runtime.module.extension.internal.resources.BaseExtensionResourcesGeneratorAnnotationProcessor.COMPILATION_MODE;
 import static org.mule.test.module.extension.internal.util.ExtensionsTestUtils.compareXML;
+
 import org.mule.extension.test.extension.reconnection.ReconnectionExtension;
 import org.mule.runtime.api.dsl.DslResolvingContext;
 import org.mule.runtime.api.meta.model.ExtensionModel;
@@ -45,8 +49,10 @@ import org.mule.tck.junit4.AbstractMuleTestCase;
 import org.mule.tck.size.SmallTest;
 import org.mule.test.function.extension.WeaveFunctionExtension;
 import org.mule.test.heisenberg.extension.HeisenbergExtension;
+import org.mule.test.implicit.config.extension.extension.api.ImplicitConfigExtension;
 import org.mule.test.marvel.MarvelExtension;
 import org.mule.test.metadata.extension.MetadataExtension;
+import org.mule.test.nonimplicit.config.extension.extension.api.NonImplicitConfigExtension;
 import org.mule.test.oauth.TestOAuthExtension;
 import org.mule.test.petstore.extension.PetStoreConnector;
 import org.mule.test.ram.RickAndMortyExtension;
@@ -78,6 +84,9 @@ import org.junit.runners.Parameterized;
 @RunWith(Parameterized.class)
 public class DefaultExtensionSchemaGeneratorTestCase extends AbstractMuleTestCase {
 
+  private static final boolean UPDATE_EXPECTED_FILES_ON_ERROR =
+      getBoolean(SYSTEM_PROPERTY_PREFIX + "extensionSchemas.updateExpectedFilesOnError");
+
   static final Map<String, ExtensionModel> extensionModels = new HashMap<>();
 
   private static ExtensionModelLoader javaLoader = new DefaultJavaExtensionModelLoader();
@@ -89,7 +98,7 @@ public class DefaultExtensionSchemaGeneratorTestCase extends AbstractMuleTestCas
   @Parameterized.Parameter(1)
   public String expectedXSD;
 
-  private ExtensionSchemaGenerator generator = new DefaultExtensionSchemaGenerator();
+  private final ExtensionSchemaGenerator generator = new DefaultExtensionSchemaGenerator();
   private String expectedSchema;
 
 
@@ -121,6 +130,8 @@ public class DefaultExtensionSchemaGeneratorTestCase extends AbstractMuleTestCas
                         newTestUnit(javaLoader, TestOAuthExtension.class, "test-oauth.xsd"),
                         newTestUnit(javaLoader, WeaveFunctionExtension.class, "test-fn.xsd"),
                         newTestUnit(javaLoader, ValuesExtension.class, "values.xsd"),
+                        newTestUnit(javaLoader, ImplicitConfigExtension.class, "implicit-config.xsd"),
+                        newTestUnit(javaLoader, NonImplicitConfigExtension.class, "non-implicit-config.xsd"),
                         newTestUnit(javaLoader, ReconnectionExtension.class, "reconnection-extension.xsd"));
 
     BiFunction<Class<?>, ExtensionModelLoader, ExtensionModel> createExtensionModel = (extension, loader) -> {
@@ -135,7 +146,7 @@ public class DefaultExtensionSchemaGeneratorTestCase extends AbstractMuleTestCas
     };
 
     return extensions.stream()
-        .map(e -> new Object[] {createExtensionModel.apply(e.getExtensionClass(), e.getLoader()), e.getFileName()})
+        .map(e -> e.toTestParams(createExtensionModel))
         .collect(toList());
   }
 
@@ -148,7 +159,7 @@ public class DefaultExtensionSchemaGeneratorTestCase extends AbstractMuleTestCas
    * @return whether or not the "expected" test files should be updated when comparison fails
    */
   private boolean shouldUpdateExpectedFilesOnError() {
-    return false;
+    return UPDATE_EXPECTED_FILES_ON_ERROR;
   }
 
   @Before
@@ -199,11 +210,10 @@ public class DefaultExtensionSchemaGeneratorTestCase extends AbstractMuleTestCas
   }
 
   public static ExtensionModel loadExtension(Class<?> clazz, ExtensionModelLoader loader) {
-    Map<String, Object> params = new HashMap<>();
-    params.put(TYPE_PROPERTY_NAME, clazz.getName());
-    params.put(VERSION, getProductVersion());
-    // TODO MULE-14517: This workaround should be replaced for a better and more complete mechanism
-    params.put(COMPILATION_MODE, true);
+    Map<String, Object> params = of(TYPE_PROPERTY_NAME, clazz.getName(),
+                                    VERSION, getProductVersion(),
+                                    // TODO MULE-14517: This workaround should be replaced for a better and more complete mechanism
+                                    COMPILATION_MODE, true);
 
     //TODO MULE-11797: as this utils is consumed from org.mule.runtime.module.extension.internal.capability.xml.schema.AbstractXmlResourceFactory.generateResource(org.mule.runtime.api.meta.model.ExtensionModel), this util should get dropped once the ticket gets implemented.
     final DslResolvingContext dslResolvingContext = getDefault(new LinkedHashSet<>(extensionModels.values()));
@@ -236,6 +246,11 @@ public class DefaultExtensionSchemaGeneratorTestCase extends AbstractMuleTestCas
 
     String getFileName() {
       return fileName;
+    }
+
+    public Object[] toTestParams(BiFunction<Class<?>, ExtensionModelLoader, ExtensionModel> createExtensionModel) {
+      final ExtensionModel extensionModel = createExtensionModel.apply(getExtensionClass(), getLoader());
+      return new Object[] {extensionModel, getFileName()};
     }
   }
 }

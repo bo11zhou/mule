@@ -10,6 +10,7 @@ import org.mule.runtime.api.artifact.Registry;
 import org.mule.runtime.api.meta.model.ExtensionModel;
 import org.mule.runtime.api.meta.model.construct.ConstructModel;
 import org.mule.runtime.core.api.MuleContext;
+import org.mule.runtime.core.api.el.ExpressionManager;
 import org.mule.runtime.core.api.extension.ExtensionManager;
 import org.mule.runtime.core.internal.policy.PolicyManager;
 import org.mule.runtime.module.extension.internal.runtime.resolver.ResolverSet;
@@ -27,21 +28,22 @@ public final class ConstructMessageProcessorBuilder
                                           ConstructModel operationModel,
                                           PolicyManager policyManager,
                                           ReflectionCache reflectionCache,
+                                          ExpressionManager expressionManager,
                                           MuleContext muleContext,
                                           Registry registry) {
-
-    super(extensionModel, operationModel, policyManager, reflectionCache, muleContext, registry);
+    super(extensionModel, operationModel, policyManager, reflectionCache, expressionManager, muleContext, registry);
   }
 
   @Override
   protected ConstructMessageProcessor createMessageProcessor(ExtensionManager extensionManager, ResolverSet arguments) {
     return new ConstructMessageProcessor(extensionModel, operationModel,
-                                         configurationProvider, target, targetValue,
+                                         getConfigurationProvider(), target, targetValue,
                                          arguments,
                                          cursorProviderFactory, retryPolicyTemplate,
                                          extensionManager,
                                          policyManager,
-                                         reflectionCache);
+                                         reflectionCache,
+                                         terminationTimeout);
   }
 
 }

@@ -6,10 +6,12 @@
  */
 package org.mule.runtime.module.extension.internal.runtime.source;
 
+import static com.google.common.base.Functions.identity;
 import static java.lang.String.format;
 import static java.util.Collections.emptyMap;
 import static java.util.Optional.empty;
 import static java.util.Optional.of;
+import static org.mule.runtime.api.component.execution.CompletableCallback.always;
 import static org.mule.runtime.api.i18n.I18nMessageFactory.createStaticMessage;
 import static org.mule.runtime.api.tx.TransactionType.LOCAL;
 import static org.mule.runtime.core.api.exception.Errors.ComponentIdentifiers.Unhandleable.FLOW_BACK_PRESSURE;
@@ -21,15 +23,15 @@ import static org.mule.runtime.extension.api.runtime.source.BackPressureAction.F
 import static org.mule.runtime.extension.api.tx.SourceTransactionalAction.NONE;
 import static org.mule.runtime.module.extension.api.util.MuleExtensionUtils.getInitialiserEvent;
 import static org.mule.runtime.module.extension.internal.ExtensionProperties.BACK_PRESSURE_ACTION_CONTEXT_PARAM;
-import static org.mule.runtime.module.extension.internal.runtime.resolver.ValueResolvingContext.from;
 import static org.mule.runtime.module.extension.internal.util.IntrospectionUtils.getFieldsOfType;
 import static org.mule.runtime.module.extension.internal.util.IntrospectionUtils.getSourceName;
 import static org.reflections.ReflectionUtils.getAllFields;
 import static org.reflections.ReflectionUtils.withAnnotation;
 import static org.slf4j.LoggerFactory.getLogger;
 import static reactor.core.publisher.Mono.create;
-import static reactor.core.publisher.Mono.from;
+
 import org.mule.runtime.api.component.Component;
+import org.mule.runtime.api.component.execution.CompletableCallback;
 import org.mule.runtime.api.component.location.ComponentLocation;
 import org.mule.runtime.api.connection.ConnectionException;
 import org.mule.runtime.api.connection.ConnectionProvider;
@@ -37,6 +39,7 @@ import org.mule.runtime.api.exception.DefaultMuleException;
 import org.mule.runtime.api.exception.ErrorTypeRepository;
 import org.mule.runtime.api.exception.MuleException;
 import org.mule.runtime.api.exception.MuleRuntimeException;
+import org.mule.runtime.api.functional.Either;
 import org.mule.runtime.api.lifecycle.InitialisationException;
 import org.mule.runtime.api.lifecycle.Lifecycle;
 import org.mule.runtime.api.message.ErrorType;
@@ -46,13 +49,15 @@ import org.mule.runtime.api.meta.model.source.SourceModel;
 import org.mule.runtime.api.tx.TransactionException;
 import org.mule.runtime.api.tx.TransactionType;
 import org.mule.runtime.core.api.MuleContext;
+import org.mule.runtime.core.api.el.ExpressionManager;
 import org.mule.runtime.core.api.event.CoreEvent;
-import org.mule.runtime.core.api.functional.Either;
+import org.mule.runtime.core.api.execution.ExceptionContextProvider;
 import org.mule.runtime.core.api.streaming.CursorProviderFactory;
 import org.mule.runtime.core.api.streaming.StreamingManager;
 import org.mule.runtime.core.internal.exception.MessagingException;
 import org.mule.runtime.core.internal.util.MessagingExceptionResolver;
 import org.mule.runtime.core.privileged.event.BaseEventContext;
+import org.mule.runtime.core.privileged.exception.ErrorTypeLocator;
 import org.mule.runtime.extension.api.annotation.param.Config;
 import org.mule.runtime.extension.api.annotation.param.Connection;
 import org.mule.runtime.extension.api.exception.IllegalModelDefinitionException;
@@ -70,14 +75,17 @@ import org.mule.runtime.module.extension.internal.runtime.connectivity.ReactiveR
 import org.mule.runtime.module.extension.internal.runtime.resolver.ResolverSet;
 import org.mule.runtime.module.extension.internal.runtime.resolver.ResolverSetResult;
 import org.mule.runtime.module.extension.internal.runtime.resolver.ValueResolver;
+import org.mule.runtime.module.extension.internal.runtime.resolver.ValueResolvingContext;
 import org.mule.runtime.module.extension.internal.runtime.source.poll.PollingSourceWrapper;
 import org.mule.runtime.module.extension.internal.util.FieldSetter;
 
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.Supplier;
@@ -125,6 +133,15 @@ public class SourceAdapter implements Lifecycle {
   private ErrorTypeRepository errorTypeRepository;
 
   @Inject
+  private ExpressionManager expressionManager;
+
+  @Inject
+  private Collection<ExceptionContextProvider> exceptionContextProviders;
+
+  @Inject
+  private ErrorTypeLocator errorTypeLocator;
+
+  @Inject
   private MuleContext muleContext;
 
   public SourceAdapter(ExtensionModel extensionModel, SourceModel sourceModel,
@@ -137,7 +154,6 @@ public class SourceAdapter implements Lifecycle {
                        ResolverSet nonCallbackParameters,
                        ResolverSet successCallbackParameters,
                        ResolverSet errorCallbackParameters,
-                       MessagingExceptionResolver exceptionResolver,
                        Optional<BackPressureAction> backPressureAction) {
     this.extensionModel = extensionModel;
     this.sourceModel = sourceModel;
@@ -153,7 +169,7 @@ public class SourceAdapter implements Lifecycle {
     this.nonCallbackParameters = nonCallbackParameters;
     this.successCallbackParameters = successCallbackParameters;
     this.errorCallbackParameters = errorCallbackParameters;
-    this.exceptionResolver = exceptionResolver;
+    this.exceptionResolver = new MessagingExceptionResolver(component);
     this.configurationSetter = fetchConfigurationField();
     this.connectionSetter = fetchConnectionProviderField();
     this.backPressureAction = backPressureAction.orElse(FAIL);
@@ -201,14 +217,14 @@ public class SourceAdapter implements Lifecycle {
                                                    SourceCallbackModelProperty sourceCallbackModel,
                                                    SourceCallbackExecutor then) {
     SourceCallbackExecutor executor = method
-        .map(m -> (SourceCallbackExecutor) new ReflectiveSourceCallbackExecutor(extensionModel, configurationInstance,
-                                                                                sourceModel,
-                                                                                sourceInvokationTarget.get(),
-                                                                                m, cursorProviderFactory,
-                                                                                streamingManager,
-                                                                                component,
-                                                                                muleContext,
-                                                                                sourceCallbackModel))
+        .map(m -> (SourceCallbackExecutor) new DefaultSourceCallbackExecutor(extensionModel, configurationInstance,
+                                                                             sourceModel,
+                                                                             sourceInvokationTarget.get(),
+                                                                             m, cursorProviderFactory,
+                                                                             streamingManager,
+                                                                             component,
+                                                                             muleContext,
+                                                                             sourceCallbackModel))
         .orElse(NullSourceCallbackExecutor.INSTANCE);
 
     if (then != null) {
@@ -276,12 +292,15 @@ public class SourceAdapter implements Lifecycle {
     }
 
     @Override
-    public Publisher<Void> onCompletion(CoreEvent event, Map<String, Object> parameters) {
-      return from(onSuccessExecutor.execute(event, parameters, context)).doOnSuccess(v -> commit());
+    public void onCompletion(CoreEvent event, Map<String, Object> parameters, CompletableCallback<Void> callback) {
+      if (context.getTransactionHandle().isTransacted()) {
+        callback = callback.before(v -> commit());
+      }
+      onSuccessExecutor.execute(event, parameters, context, callback);
     }
 
     @Override
-    public Publisher<Void> onFailure(MessagingException exception, Map<String, Object> parameters) {
+    public void onFailure(MessagingException exception, Map<String, Object> parameters, CompletableCallback<Void> callback) {
       final CoreEvent event = exception.getEvent();
       final boolean isBackPressureError = event.getError()
           .map(e -> flowBackPressueErrorType.equals(e.getErrorType()))
@@ -297,20 +316,22 @@ public class SourceAdapter implements Lifecycle {
         executor = onErrorExecutor;
       }
 
-      return from(executor.execute(event, parameters, context)).doAfterTerminate(this::rollback);
+      if (context.getTransactionHandle().isTransacted()) {
+        callback = callback.finallyBefore(this::rollback);
+      }
+
+      executor.execute(event, parameters, context, callback);
     }
 
     @Override
     public void onTerminate(Either<MessagingException, CoreEvent> result) throws Exception {
-      CoreEvent event = result.isRight() ? result.getRight() : result.getLeft().getEvent();
-      from(onTerminateExecutor.execute(event, emptyMap(), context))
-          .doAfterTerminate(() -> context.releaseConnection())
-          .subscribe();
+      onTerminateExecutor.execute(result.reduce(MessagingException::getEvent, identity()), emptyMap(), context,
+                                  always(context::releaseConnection));
     }
 
     private void commit() {
       try {
-        context.getTransactionHandle().commit();
+        context.getTransactionHandle().resolve();
       } catch (TransactionException e) {
         LOGGER.error(format("Failed to commit transaction for message source at '%s': %s",
                             component.getLocation().toString(),
@@ -332,10 +353,8 @@ public class SourceAdapter implements Lifecycle {
 
     @Override
     public Map<String, Object> createResponseParameters(CoreEvent event) throws MessagingException {
-      try {
-        ResolverSetResult parameters =
-            SourceAdapter.this.successCallbackParameters.resolve(from(event, configurationInstance, false));
-        return parameters.asMap();
+      try (ValueResolvingContext context = buildResolvingContext(event)) {
+        return SourceAdapter.this.successCallbackParameters.resolve(context).asMap();
       } catch (Exception e) {
         throw createSourceException(event, e);
       }
@@ -343,13 +362,21 @@ public class SourceAdapter implements Lifecycle {
 
     @Override
     public Map<String, Object> createFailureResponseParameters(CoreEvent event) throws MessagingException {
-      try {
-        ResolverSetResult parameters =
-            SourceAdapter.this.errorCallbackParameters.resolve(from(event, configurationInstance, false));
+      ResolverSet resolverSet = SourceAdapter.this.errorCallbackParameters;
+      try (ValueResolvingContext ctx = buildResolvingContext(event)) {
+        ResolverSetResult parameters = resolverSet.resolve(ctx);
         return parameters.asMap();
       } catch (Exception e) {
         throw createSourceException(event, e);
       }
+    }
+
+    private ValueResolvingContext buildResolvingContext(CoreEvent event) {
+      return ValueResolvingContext.builder(event)
+          .withExpressionManager(expressionManager)
+          .withConfig(configurationInstance)
+          .resolveCursors(false)
+          .build();
     }
   }
 
@@ -498,10 +525,9 @@ public class SourceAdapter implements Lifecycle {
 
     T object;
 
-    CoreEvent initialiserEvent = null;
-    try {
-      initialiserEvent = getInitialiserEvent(muleContext);
-      object = valueResolver.resolve(from(initialiserEvent));
+    CoreEvent initialiserEvent = getInitialiserEvent(muleContext);
+    try (ValueResolvingContext context = ValueResolvingContext.builder(initialiserEvent, expressionManager).build()) {
+      object = valueResolver.resolve(context);
     } catch (MuleException e) {
       throw new MuleRuntimeException(createStaticMessage("Unable to get the " + type.getSimpleName()
           + " value for Message Source"), e);
@@ -537,8 +563,11 @@ public class SourceAdapter implements Lifecycle {
   }
 
   private MessagingException createSourceException(CoreEvent event, Throwable cause) {
-    MessagingException messagingException = new MessagingException(event, cause);
+    return exceptionResolver.resolve(new MessagingException(event, cause), errorTypeLocator, exceptionContextProviders);
+  }
 
-    return exceptionResolver.resolve(messagingException, muleContext);
+  @Override
+  public String toString() {
+    return this.getClass().getSimpleName() + ": " + Objects.toString(source);
   }
 }

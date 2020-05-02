@@ -6,21 +6,20 @@
  */
 package org.mule.runtime.core.internal.policy;
 
+import static java.util.Collections.reverse;
 import static org.mule.runtime.api.util.Preconditions.checkArgument;
-import static org.mule.runtime.api.util.Preconditions.checkState;
-import static org.mule.runtime.core.privileged.processor.MessageProcessors.processToApply;
-import static reactor.core.publisher.Mono.from;
+import static reactor.core.publisher.Flux.from;
 
 import org.mule.runtime.api.exception.MuleException;
-import org.mule.runtime.api.component.AbstractComponent;
-import org.mule.runtime.api.exception.DefaultMuleException;
 import org.mule.runtime.core.api.event.CoreEvent;
 import org.mule.runtime.core.api.policy.Policy;
 import org.mule.runtime.core.api.processor.Processor;
 import org.mule.runtime.core.api.processor.ReactiveProcessor;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.function.Function;
 
 import org.reactivestreams.Publisher;
 
@@ -28,15 +27,14 @@ import org.reactivestreams.Publisher;
  * Abstract implementation that performs the chaining of a set of policies and the {@link Processor} being intercepted.
  *
  * @param <ParametersTransformer> the type of the function parameters transformer.
- * @param <ParametersProcessor> the type of the parameters processor that provides access to the initial value of the parameters.
  *
  * @since 4.0
  */
-public abstract class AbstractCompositePolicy<ParametersTransformer, ParametersProcessor> {
+public abstract class AbstractCompositePolicy<ParametersTransformer> {
 
   private final List<Policy> parameterizedPolicies;
   private final Optional<ParametersTransformer> parametersTransformer;
-  private final ParametersProcessor parametersProcessor;
+  private ReactiveProcessor executionProcessor;
 
   /**
    * Creates a new composite policy.
@@ -45,26 +43,34 @@ public abstract class AbstractCompositePolicy<ParametersTransformer, ParametersP
    * @param parametersTransformer transformer from the operation parameters to a message and vice versa.
    */
   public AbstractCompositePolicy(List<Policy> policies,
-                                 Optional<ParametersTransformer> parametersTransformer,
-                                 ParametersProcessor parametersProcessor) {
+                                 Optional<ParametersTransformer> parametersTransformer) {
     checkArgument(!policies.isEmpty(), "policies list cannot be empty");
     this.parameterizedPolicies = policies;
     this.parametersTransformer = parametersTransformer;
-    this.parametersProcessor = parametersProcessor;
   }
 
-  /**
-   * When this policy is processed, it will use the {@link CompositeOperationPolicy.NextOperationCall} which will keep track of
-   * the different policies to be applied and the current index of the policy under execution.
-   * <p>
-   * The first time, the first policy in the {@code parameterizedPolicies} will be executed, it will receive as it next operation
-   * the same instance of {@link CompositeOperationPolicy.NextOperationCall}, and since
-   * {@link CompositeOperationPolicy.NextOperationCall} keeps track of the policy executed, it will execute the following policy
-   * in the chain until the finally policy it's executed in which case then next operation of it, it will be the operation
-   * execution.
-   */
-  public final ReactiveProcessor getPolicyProcessor() {
-    return new AbstractCompositePolicy.NextOperationCall();
+  protected final void initProcessor() {
+    this.executionProcessor = getPolicyProcessor();
+  }
+
+  protected ReactiveProcessor getPolicyProcessor() {
+    List<Function<ReactiveProcessor, ReactiveProcessor>> interceptors = new ArrayList<>();
+    for (Policy policy : parameterizedPolicies) {
+      interceptors.add(next -> eventPub -> from(applyPolicy(policy, next, eventPub)));
+    }
+
+    ReactiveProcessor chainedPoliciesAndOperation = eventPub -> from(applyNextOperation(eventPub));
+    // Take processor publisher function itself and transform it by applying interceptor transformations onto it.
+    reverse(interceptors);
+    for (Function<ReactiveProcessor, ReactiveProcessor> interceptor : interceptors) {
+      chainedPoliciesAndOperation = interceptor.apply(chainedPoliciesAndOperation);
+    }
+
+    return chainedPoliciesAndOperation;
+  }
+
+  protected Policy getLastPolicy() {
+    return parameterizedPolicies.get(parameterizedPolicies.size() - 1);
   }
 
   /**
@@ -75,57 +81,32 @@ public abstract class AbstractCompositePolicy<ParametersTransformer, ParametersP
   }
 
   /**
-   * @return the parameters processors that generates the parameters to be sent.
+   * @return the processing chain for the policy and the inner execution.
    */
-  protected ParametersProcessor getParametersProcessor() {
-    return parametersProcessor;
+  protected ReactiveProcessor getExecutionProcessor() {
+    return executionProcessor;
   }
 
   /**
    * Template method for executing the final processor of the chain.
-   * 
-   * @param event the event to use for executing the next operation.
+   *
+   * @param eventPub the event to use for executing the next operation.
    * @return the event to use for processing the after phase of the policy
    * @throws MuleException if there's an error executing processing the next operation.
    */
-  protected abstract Publisher<CoreEvent> processNextOperation(CoreEvent event);
+  protected abstract Publisher<CoreEvent> applyNextOperation(Publisher<CoreEvent> eventPub);
 
   /**
    * Template method for executing a policy.
-   * 
+   *
    * @param policy the policy to execute
    * @param nextProcessor the next processor to use as the {@link PolicyNextActionMessageProcessor}. It will invoke the next
    *        policy in the chain.
-   * @param event the event to use for processing the policy.
+   * @param eventPub the event to use for processing the policy.
    * @return the result to use for the next policy in the chain.
    * @throws Exception if the execution of the policy fails.
    */
-  protected abstract Publisher<CoreEvent> processPolicy(Policy policy, Processor nextProcessor, CoreEvent event);
-
-  /**
-   * Inner class that implements the actually chaining of policies.
-   */
-  public class NextOperationCall extends AbstractComponent implements Processor {
-
-    private int index = 0;
-
-    @Override
-    public CoreEvent process(CoreEvent event) throws MuleException {
-      return processToApply(event, this);
-    }
-
-    @Override
-    public Publisher<CoreEvent> apply(Publisher<CoreEvent> publisher) {
-      return from(publisher)
-          .flatMap(event -> {
-            checkState(index <= parameterizedPolicies.size(), "composite policy index is greater that the number of policies.");
-            if (index == parameterizedPolicies.size()) {
-              return from(processNextOperation(event));
-            }
-            return from(processPolicy(parameterizedPolicies.get(index++), this, event));
-          })
-          .onErrorMap(throwable -> !(throwable instanceof MuleException), throwable -> new DefaultMuleException(throwable));
-    }
-  }
+  protected abstract Publisher<CoreEvent> applyPolicy(Policy policy, ReactiveProcessor nextProcessor,
+                                                      Publisher<CoreEvent> eventPub);
 
 }

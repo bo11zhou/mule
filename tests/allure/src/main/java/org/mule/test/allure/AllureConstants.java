@@ -14,6 +14,17 @@ public interface AllureConstants {
 
   }
 
+  interface LeakPrevention {
+
+    String LEAK_PREVENTION = "Leak Prevention";
+
+    interface LeakPreventionMetaspace {
+
+      String METASPACE_LEAK_PREVENTION_ON_REDEPLOY = "Class Loader leak prevention on redeploy";
+    }
+
+  }
+
   interface SpringModuleFeature {
 
     String SPRING_EXTENSION = "Spring Extension";
@@ -42,6 +53,7 @@ public interface AllureConstants {
     interface ConfigurationComponentLocationStory {
 
       String COMPONENT_LOCATION = "Component location";
+
     }
 
     interface MUnitComponentLocatorStory {
@@ -113,6 +125,7 @@ public interface AllureConstants {
       String EXCEPTION_MAPPINGS = "Exception Mappings";
       String ERROR_MAPPINGS = "Error Mappings";
       String ON_ERROR_CONTINUE = "On Error Continue";
+      String ON_ERROR_PROPAGATE = "On Error Propagate";
       String DEFAULT_ERROR_HANDLER = "Default Error Handler";
       String RAISE_ERROR = "Raise Errors";
     }
@@ -138,7 +151,6 @@ public interface AllureConstants {
       String SUPPORT_FUNCTIONS = "Support Functions";
       String SUPPORT_MVEL_DW = "Support both MVEL and DW";
     }
-
   }
 
   interface ExtensionsClientFeature {
@@ -150,9 +162,7 @@ public interface AllureConstants {
       String BLOCKING_CLIENT = "Blocking Client";
       String NON_BLOCKING_CLIENT = "Non-Blocking Client";
     }
-
   }
-
 
   interface FileFeature {
 
@@ -178,9 +188,7 @@ public interface AllureConstants {
       String LOGGER = "Logger";
 
     }
-
   }
-
 
   interface FtpFeature {
 
@@ -222,6 +230,7 @@ public interface AllureConstants {
     String JMS_EXTENSION = "JMS Extension";
 
     interface JmsStory {
+
     }
 
   }
@@ -231,6 +240,7 @@ public interface AllureConstants {
     String OAUTH_EXTENSION = "OAuth Extension";
 
     interface OauthStory {
+
     }
 
   }
@@ -282,6 +292,7 @@ public interface AllureConstants {
     String SOCKETS_EXTENSION = "Sockets Extension";
 
     interface SocketsStory {
+
     }
 
   }
@@ -291,6 +302,7 @@ public interface AllureConstants {
     String VALIDATION_EXTENSION = "Validation Extension";
 
     interface ValidationStory {
+
     }
 
   }
@@ -300,6 +312,7 @@ public interface AllureConstants {
     String WSC_EXTENSION = "WSC Extension";
 
     interface WscStory {
+
     }
 
   }
@@ -321,6 +334,7 @@ public interface AllureConstants {
     String INTEGRATIONS_TESTS = "Integration Tests";
 
     interface IntegrationTestsStory {
+
     }
 
   }
@@ -356,6 +370,8 @@ public interface AllureConstants {
 
       String BYTES_STREAMING = "Bytes Streaming";
       String OBJECT_STREAMING = "Object Streaming";
+      String STREAM_MANAGEMENT = "Management of Streams";
+      String TROUBLESHOOTING = "Streaming troubleshooting";
     }
 
   }
@@ -399,9 +415,9 @@ public interface AllureConstants {
       String PROCESSOR_CHAIN_ROUTER = "Processor Chain Router";
     }
 
-    interface SplitAggregateStory {
+    interface ParallelForEachStory {
 
-      String SPLIT_AGGREGATE = "Split Aggregate";
+      String PARALLEL_FOR_EACH = "Parallel For Each";
     }
 
   }
@@ -411,6 +427,7 @@ public interface AllureConstants {
     String TRANSFORM_MESSAGE = "Transform Message";
 
     interface TransformMessageStory {
+
     }
 
   }
@@ -429,6 +446,7 @@ public interface AllureConstants {
   interface LifecycleAndDependencyInjectionFeature {
 
     String LIFECYCLE_AND_DEPENDENCY_INJECTION = "Lifecycle and Dependency Injection";
+    String NULL_OBJECTS_IN_SPRING5_REGISTRY = "Spring 5 handling of null objects";
 
     interface ObjectFactoryStory {
 
@@ -452,9 +470,13 @@ public interface AllureConstants {
 
     interface ArtifactObjectsDependencyInjectionStory {
 
-      String ARTIFACT_OBJECTS_DEPENDENCY_INJECTION_STORY = "Artifact Objects Dependency injection Store";
+      String ARTIFACT_OBJECTS_DEPENDENCY_INJECTION_STORY = "Artifact Objects Dependency injection";
     }
 
+    interface GracefulShutdownStory {
+
+      String GRACEFUL_SHUTDOWN_STORY = "Graceful shutdown";
+    }
   }
 
   interface TransactionFeature {
@@ -504,6 +526,19 @@ public interface AllureConstants {
 
   }
 
+  interface Logging {
+
+    String LOGGING = "Logging";
+
+    interface LoggingStory {
+
+      String ERROR_REPORTING = "Error Reporting";
+      String FLOW_STACK = "Flow Stack";
+
+    }
+
+  }
+
   interface InterceptonApi {
 
     String INTERCEPTION_API = "Interception API";
@@ -523,6 +558,12 @@ public interface AllureConstants {
     interface MavenGlobalConfiguration {
 
       String MAVEN_GLOBAL_CONFIGURATION_STORY = "Maven Global Configuration Story";
+
+    }
+
+    interface ClusterGlobalConfiguration {
+
+      String CLUSTER_GLOBAL_CONFIGURATION_STORY = "Cluster Global Configuration Story";
 
     }
 
@@ -564,6 +605,22 @@ public interface AllureConstants {
 
   }
 
+  interface MuleEvent {
+
+    String MULE_EVENT = "Mule Event";
+
+  }
+
+  interface ArtifactAst {
+
+    String ARTIFACT_AST = "Mule Artifact AST";
+
+    interface ParameterAst {
+
+      String PARAMETER_AST = "Parameter AST resolution";
+    }
+
+  }
 
   interface XmlSdk {
 

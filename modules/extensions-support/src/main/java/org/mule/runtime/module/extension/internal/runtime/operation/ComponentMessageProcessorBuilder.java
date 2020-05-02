@@ -7,6 +7,7 @@
 package org.mule.runtime.module.extension.internal.runtime.operation;
 
 import static org.mule.runtime.api.util.Preconditions.checkArgument;
+import static org.mule.runtime.api.util.collection.SmallMap.copy;
 import static org.mule.runtime.core.api.util.ClassUtils.withContextClassLoader;
 import static org.mule.runtime.module.extension.internal.util.MuleExtensionUtils.getClassLoader;
 
@@ -16,6 +17,7 @@ import org.mule.runtime.api.meta.model.ComponentModel;
 import org.mule.runtime.api.meta.model.ExtensionModel;
 import org.mule.runtime.core.api.MuleContext;
 import org.mule.runtime.core.api.config.ConfigurationException;
+import org.mule.runtime.core.api.el.ExpressionManager;
 import org.mule.runtime.core.api.extension.ExtensionManager;
 import org.mule.runtime.core.api.retry.policy.RetryPolicyTemplate;
 import org.mule.runtime.core.api.streaming.CursorProviderFactory;
@@ -23,12 +25,10 @@ import org.mule.runtime.core.internal.policy.PolicyManager;
 import org.mule.runtime.extension.api.runtime.config.ConfigurationProvider;
 import org.mule.runtime.module.extension.internal.runtime.ExtensionComponent;
 import org.mule.runtime.module.extension.internal.runtime.connectivity.ExtensionConnectionSupplier;
-import org.mule.runtime.module.extension.internal.runtime.connectivity.oauth.ExtensionsOAuthManager;
 import org.mule.runtime.module.extension.internal.runtime.resolver.ParametersResolver;
 import org.mule.runtime.module.extension.internal.runtime.resolver.ResolverSet;
 import org.mule.runtime.module.extension.internal.util.ReflectionCache;
 
-import java.util.HashMap;
 import java.util.Map;
 
 /**
@@ -43,10 +43,11 @@ public abstract class ComponentMessageProcessorBuilder<M extends ComponentModel,
   protected final PolicyManager policyManager;
   protected final ReflectionCache reflectionCache;
   protected final MuleContext muleContext;
+  protected final ExpressionManager expressionManager;
   protected Registry registry;
   protected final ExtensionConnectionSupplier extensionConnectionSupplier;
-  protected final ExtensionsOAuthManager oauthManager;
   protected ConfigurationProvider configurationProvider;
+  protected long terminationTimeout;
 
   protected Map<String, ?> parameters;
   protected String target;
@@ -59,9 +60,9 @@ public abstract class ComponentMessageProcessorBuilder<M extends ComponentModel,
                                           M operationModel,
                                           PolicyManager policyManager,
                                           ReflectionCache reflectionCache,
+                                          ExpressionManager expressionManager,
                                           MuleContext muleContext,
                                           Registry registry) {
-
     checkArgument(extensionModel != null, "ExtensionModel cannot be null");
     checkArgument(operationModel != null, "OperationModel cannot be null");
     checkArgument(policyManager != null, "PolicyManager cannot be null");
@@ -74,7 +75,8 @@ public abstract class ComponentMessageProcessorBuilder<M extends ComponentModel,
     this.reflectionCache = reflectionCache;
     this.registry = registry;
     this.extensionConnectionSupplier = registry.lookupByType(ExtensionConnectionSupplier.class).get();
-    this.oauthManager = registry.lookupByType(ExtensionsOAuthManager.class).get();
+    this.expressionManager = expressionManager;
+    this.terminationTimeout = muleContext.getConfiguration().getShutdownTimeout();
   }
 
   public P build() {
@@ -97,11 +99,11 @@ public abstract class ComponentMessageProcessorBuilder<M extends ComponentModel,
 
   protected ResolverSet getArgumentsResolverSet() throws ConfigurationException {
     final ResolverSet parametersResolverSet =
-        ParametersResolver.fromValues(parameters, muleContext, lazyModeEnabled, reflectionCache)
+        ParametersResolver.fromValues(parameters, muleContext, lazyModeEnabled, reflectionCache, expressionManager)
             .getParametersAsResolverSet(operationModel, muleContext);
 
     final ResolverSet childsResolverSet =
-        ParametersResolver.fromValues(parameters, muleContext, lazyModeEnabled, reflectionCache)
+        ParametersResolver.fromValues(parameters, muleContext, lazyModeEnabled, reflectionCache, expressionManager)
             .getNestedComponentsAsResolverSet(operationModel);
 
     return parametersResolverSet.merge(childsResolverSet);
@@ -113,7 +115,7 @@ public abstract class ComponentMessageProcessorBuilder<M extends ComponentModel,
   }
 
   public ComponentMessageProcessorBuilder<M, P> setParameters(Map<String, ?> parameters) {
-    this.parameters = parameters != null ? parameters : new HashMap<>();
+    this.parameters = copy(parameters);
     return this;
   }
 
@@ -147,4 +149,15 @@ public abstract class ComponentMessageProcessorBuilder<M extends ComponentModel,
     return this;
   }
 
+  public ComponentMessageProcessorBuilder<M, P> setTerminationTimeout(long terminationTimeout) {
+    this.terminationTimeout = terminationTimeout;
+    return this;
+  }
+
+  protected ConfigurationProvider getConfigurationProvider() {
+    return parameters.values().stream()
+        .filter(v -> v instanceof ConfigurationProvider)
+        .map(v -> ((ConfigurationProvider) v)).findAny()
+        .orElse(configurationProvider);
+  }
 }

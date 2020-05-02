@@ -7,16 +7,17 @@
 
 package org.mule.runtime.core.internal.util;
 
+import static java.util.Optional.of;
 import static org.mule.runtime.api.exception.ExceptionHelper.getExceptionsAsList;
-import static org.mule.runtime.api.exception.MuleException.INFO_ALREADY_LOGGED_KEY;
 import static org.mule.runtime.api.notification.EnrichedNotificationInfo.createInfo;
 import static org.mule.runtime.core.api.exception.Errors.CORE_NAMESPACE_NAME;
 import static org.mule.runtime.core.api.exception.Errors.Identifiers.CRITICAL_IDENTIFIER;
-import static org.mule.runtime.core.api.util.ExceptionUtils.getComponentIdentifier;
+import static org.mule.runtime.core.api.util.ExceptionUtils.getComponentIdentifierOf;
 import static org.mule.runtime.core.api.util.ExceptionUtils.getMessagingExceptionCause;
 import static org.mule.runtime.core.api.util.ExceptionUtils.isUnknownMuleError;
+import static org.mule.runtime.core.internal.event.EventQuickCopy.quickCopy;
+import static org.mule.runtime.core.internal.message.ErrorBuilder.builder;
 import static org.mule.runtime.core.internal.util.InternalExceptionUtils.createErrorEvent;
-import static org.mule.runtime.core.internal.util.InternalExceptionUtils.getErrorMappings;
 
 import org.mule.runtime.api.component.Component;
 import org.mule.runtime.api.component.ComponentIdentifier;
@@ -26,18 +27,16 @@ import org.mule.runtime.api.message.Error;
 import org.mule.runtime.api.message.ErrorType;
 import org.mule.runtime.api.notification.EnrichedNotificationInfo;
 import org.mule.runtime.api.util.Pair;
-import org.mule.runtime.api.util.Reference;
-import org.mule.runtime.core.api.MuleContext;
 import org.mule.runtime.core.api.event.CoreEvent;
 import org.mule.runtime.core.api.exception.SingleErrorTypeMatcher;
 import org.mule.runtime.core.api.execution.ExceptionContextProvider;
 import org.mule.runtime.core.internal.exception.ErrorMapping;
+import org.mule.runtime.core.internal.exception.ErrorMappingsAware;
 import org.mule.runtime.core.internal.exception.MessagingException;
-import org.mule.runtime.core.internal.message.ErrorBuilder;
 import org.mule.runtime.core.internal.policy.FlowExecutionException;
-import org.mule.runtime.core.privileged.PrivilegedMuleContext;
 import org.mule.runtime.core.privileged.exception.ErrorTypeLocator;
 
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.LinkedList;
 import java.util.List;
@@ -70,27 +69,7 @@ public class MessagingExceptionResolver {
    *
    * @return a {@link MessagingException} with the proper {@link Error} associated to it's {@link CoreEvent}
    *
-   * @deprecated Use {@link #resolve(MessagingException, ErrorTypeLocator, Collection)} instead.
-   */
-  @Deprecated
-  public MessagingException resolve(final MessagingException me, MuleContext context) {
-    return resolve(me, ((PrivilegedMuleContext) context).getErrorTypeLocator(), context.getExceptionContextProviders());
-  }
-
-  /**
    * @since 4.1.3
-   *
-   *        Resolves a new {@link MessagingException} with the real cause of the problem based on the content of an Incoming
-   *        {@link MessagingException} with a chain of causes inside it and the current event that the exception is carrying.
-   *        <p>
-   *        This method will pick the FIRST cause exception that has a mule or extension KNOWN error as the real cause, if there
-   *        is not an exception in the causes that match with an Known error type then this method will try to find the error that
-   *        the current {@link Event} is carrying.
-   *        <p>
-   *        When there are multiple exceptions that contains the same root error type, then this method will wrap the one that has
-   *        highest position in the causes list
-   *
-   * @return a {@link MessagingException} with the proper {@link Error} associated to it's {@link CoreEvent}
    */
   public MessagingException resolve(final MessagingException me, ErrorTypeLocator locator,
                                     Collection<ExceptionContextProvider> exceptionContextProviders) {
@@ -101,72 +80,96 @@ public class MessagingExceptionResolver {
     }
 
     Throwable root = rootCause.get().getFirst();
-    ErrorType rootErrorType = rootCause.get().getSecond();
-    Component failingComponent = getFailingProcessor(me, root).orElse(component);
+    Component failingComponent = getFailingProcessor(me, root);
 
-    ErrorType errorType = getErrorMappings(component)
-        .stream()
-        .filter(m -> m.match(rootErrorType))
-        .findFirst()
-        .map(ErrorMapping::getTarget)
-        .orElse(rootErrorType);
+    CoreEvent event = resolveEvent(me, root, resolveErrorType(rootCause.get().getSecond()));
+    MessagingException result = resolveResultException(me, root, failingComponent, event);
 
-    Error error = ErrorBuilder.builder(getMessagingExceptionCause(root)).errorType(errorType).build();
-    CoreEvent event = CoreEvent.builder(me.getEvent()).error(error).build();
+    propagateAlreadyLogged(me, result);
+    return enrich(result, failingComponent, component, event, exceptionContextProviders);
+  }
 
+  private MessagingException resolveResultException(final MessagingException me, Throwable root, Component failingComponent,
+                                                    CoreEvent event) {
     MessagingException result;
     if (root instanceof MessagingException) {
       ((MessagingException) root).setProcessedEvent(event);
       result = ((MessagingException) root);
     } else {
-      result = me instanceof FlowExecutionException ? new FlowExecutionException(event, root, failingComponent)
+      result = me instanceof FlowExecutionException
+          ? new FlowExecutionException(event, root, failingComponent)
           : new MessagingException(event, root, failingComponent);
     }
-    propagateAlreadyLogged(me, result);
-    return enrich(result, failingComponent, event, exceptionContextProviders);
+    return result;
+  }
+
+  private CoreEvent resolveEvent(final MessagingException me, Throwable root, ErrorType errorType) {
+    return quickCopy(builder(getMessagingExceptionCause(root)).errorType(errorType)
+        .build(), me.getEvent());
+  }
+
+  private ErrorType resolveErrorType(ErrorType rootErrorType) {
+    ErrorType errorType = rootErrorType;
+    if (component instanceof ErrorMappingsAware) {
+      if (((ErrorMappingsAware) component).getErrorMappings().isEmpty()) {
+        errorType = rootErrorType;
+      } else {
+        errorType = ((ErrorMappingsAware) component).getErrorMappings()
+            .stream()
+            .filter(m -> m.match(rootErrorType))
+            .findFirst()
+            .map(ErrorMapping::getTarget)
+            .orElse(rootErrorType);
+      }
+    }
+    return errorType;
   }
 
   private void propagateAlreadyLogged(MessagingException origin, MuleException result) {
-    if (origin.getInfo().containsKey(INFO_ALREADY_LOGGED_KEY)) {
-      result.addInfo(INFO_ALREADY_LOGGED_KEY, origin.getInfo().get(INFO_ALREADY_LOGGED_KEY));
-    }
+    result.getExceptionInfo().setAlreadyLogged(origin.getExceptionInfo().isAlreadyLogged());
   }
 
   private Optional<Pair<Throwable, ErrorType>> findRoot(Component obj, MessagingException me, ErrorTypeLocator locator) {
-    List<Pair<Throwable, ErrorType>> errors = collectErrors(obj, me, locator);
+    List<Pair<Throwable, ErrorType>> errors = collectUnsuppressedErrors(obj, me, locator);
+
     if (errors.isEmpty()) {
       return collectCritical(obj, me, locator).stream().findFirst();
     }
+
+    if (errors.size() == 1) {
+      return of(errors.get(0));
+    }
+
     // We look if there is a more specific error in the chain that matches with the root error (is child or has the same error)
-    SingleErrorTypeMatcher matcher = new SingleErrorTypeMatcher(errors.get(0).getSecond());
-    Reference<Pair<Throwable, ErrorType>> result = new Reference<>();
-    errors.forEach(p -> {
-      if (matcher.match(p.getSecond())) {
-        result.set(p);
-      }
-    });
-    return Optional.ofNullable(result.get());
+    SingleErrorTypeMatcher matcher = new SingleErrorTypeMatcher(errors.get(errors.size() - 1).getSecond());
+
+    return errors.stream()
+        .filter(p -> matcher.match(p.getSecond()))
+        .findFirst();
   }
 
-  private List<Pair<Throwable, ErrorType>> collectErrors(Component obj, MessagingException me, ErrorTypeLocator locator) {
-    List<Pair<Throwable, ErrorType>> errors = new LinkedList<>();
-    getExceptionsAsList(me).forEach(e -> {
+  private List<Pair<Throwable, ErrorType>> collectUnsuppressedErrors(Component obj, MessagingException me,
+                                                                     ErrorTypeLocator locator) {
+    List<Pair<Throwable, ErrorType>> errors = new ArrayList<>(4);
+    final List<Throwable> exceptionsAsList = getExceptionsAsList(me);
+    for (Throwable e : exceptionsAsList) {
       ErrorType type = errorTypeFromException(obj, locator, e);
       if (!isUnknownMuleError(type) && !isCriticalMuleError(type)) {
         errors.add(new Pair<>(e, type));
       }
-    });
+    }
     return errors;
   }
 
   private List<Pair<Throwable, ErrorType>> collectCritical(Component obj, MessagingException me, ErrorTypeLocator locator) {
     List<Pair<Throwable, ErrorType>> errors = new LinkedList<>();
-    getExceptionsAsList(me).forEach(e -> {
+    final List<Throwable> exceptionsAsList = getExceptionsAsList(me);
+    for (Throwable e : exceptionsAsList) {
       ErrorType type = errorTypeFromException(obj, locator, e);
       if (isCriticalMuleError(type)) {
-        errors.add(new Pair<>(e, type));
+        errors.add(0, new Pair<>(e, type));
       }
-    });
+    }
     return errors;
   }
 
@@ -174,39 +177,61 @@ public class MessagingExceptionResolver {
                                            Collection<ExceptionContextProvider> exceptionContextProviders) {
     CoreEvent errorEvent = createErrorEvent(me.getEvent(), processor, me, locator);
     Component failingProcessor = me.getFailingComponent() != null ? me.getFailingComponent() : processor;
-    MessagingException updated =
-        me instanceof FlowExecutionException ? new FlowExecutionException(errorEvent, me.getCause(), failingProcessor)
-            : new MessagingException(me.getI18nMessage(), errorEvent, me.getCause(), failingProcessor);
-    return enrich(updated, failingProcessor, errorEvent, exceptionContextProviders);
+
+    MessagingException updated;
+    if (errorEvent == me.getEvent() && failingProcessor == me.getFailingComponent()) {
+      updated = me;
+    } else {
+      updated = me instanceof FlowExecutionException
+          ? new FlowExecutionException(errorEvent, me.getCause(), failingProcessor)
+          : new MessagingException(me.getI18nMessage(), errorEvent, me.getCause(), failingProcessor);
+    }
+
+    return enrich(updated, failingProcessor, processor, errorEvent, exceptionContextProviders);
   }
 
-  private Optional<Component> getFailingProcessor(MessagingException me, Throwable root) {
+  private Component getFailingProcessor(MessagingException me, Throwable root) {
     Component failing = me.getFailingComponent();
     if (failing == null && root instanceof MessagingException) {
       failing = ((MessagingException) root).getFailingComponent();
     }
-    return Optional.ofNullable(failing);
+
+    return failing != null ? failing : component;
   }
 
   private ErrorType errorTypeFromException(Component failing, ErrorTypeLocator locator, Throwable e) {
-    if (isMessagingExceptionWithError(e)) {
-      return ((MessagingException) e).getEvent().getError().map(Error::getErrorType).orElse(locator.lookupErrorType(e));
+    final ErrorType mapped;
+
+    if (e instanceof MessagingException) {
+      final Optional<Error> eventError = ((MessagingException) e).getEvent().getError();
+      if (eventError.isPresent()) {
+        mapped = eventError.get().getErrorType();
+      } else {
+        mapped = ((MessagingException) e).getExceptionInfo().getErrorType();
+      }
     } else {
-      Optional<ComponentIdentifier> componentIdentifier = getComponentIdentifier(failing);
-      return componentIdentifier.map(ci -> locator.lookupComponentErrorType(ci, e)).orElse(locator.lookupErrorType(e));
+      mapped = errorTypeFromNotMessagingException(failing, locator, e);
+    }
+
+    return mapped != null ? mapped : locator.lookupErrorType(e);
+  }
+
+  private ErrorType errorTypeFromNotMessagingException(Component failing, ErrorTypeLocator locator, Throwable e) {
+    final ComponentIdentifier identifier = getComponentIdentifierOf(failing);
+
+    if (identifier != null) {
+      return locator.lookupComponentErrorType(identifier, e);
+    } else {
+      return null;
     }
   }
 
-  private boolean isMessagingExceptionWithError(Throwable cause) {
-    return cause instanceof MessagingException && ((MessagingException) cause).getEvent().getError().isPresent();
-  }
-
-  private <T extends MuleException> T enrich(T me, Component failing, CoreEvent event,
+  private <T extends MuleException> T enrich(T me, Component failing, Component handling, CoreEvent event,
                                              Collection<ExceptionContextProvider> exceptionContextProviders) {
     EnrichedNotificationInfo notificationInfo = createInfo(event, me, null);
-    exceptionContextProviders.forEach(cp -> {
-      cp.getContextInfo(notificationInfo, failing).forEach((k, v) -> me.getInfo().putIfAbsent(k, v));
-    });
+    for (ExceptionContextProvider exceptionContextProvider : exceptionContextProviders) {
+      exceptionContextProvider.putContextInfo(me.getExceptionInfo(), notificationInfo, failing);
+    }
     return me;
   }
 

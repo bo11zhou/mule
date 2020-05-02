@@ -11,6 +11,7 @@ import static org.mule.runtime.api.meta.Category.SELECT;
 import static org.mule.runtime.api.meta.ExpressionSupport.NOT_SUPPORTED;
 import static org.mule.runtime.api.meta.ExpressionSupport.REQUIRED;
 import static org.mule.runtime.api.meta.ExternalLibraryType.NATIVE;
+
 import org.mule.runtime.api.exception.MuleException;
 import org.mule.runtime.api.lifecycle.InitialisationException;
 import org.mule.runtime.api.lifecycle.Lifecycle;
@@ -26,6 +27,7 @@ import org.mule.runtime.extension.api.annotation.Operations;
 import org.mule.runtime.extension.api.annotation.Sources;
 import org.mule.runtime.extension.api.annotation.SubTypeMapping;
 import org.mule.runtime.extension.api.annotation.connectivity.ConnectionProviders;
+import org.mule.runtime.extension.api.annotation.deprecated.Deprecated;
 import org.mule.runtime.extension.api.annotation.error.ErrorTypes;
 import org.mule.runtime.extension.api.annotation.notification.NotificationActions;
 import org.mule.runtime.extension.api.annotation.param.Optional;
@@ -36,14 +38,11 @@ import org.mule.runtime.extension.api.annotation.param.display.DisplayName;
 import org.mule.runtime.extension.api.annotation.param.display.Example;
 import org.mule.runtime.extension.api.annotation.param.display.Text;
 import org.mule.runtime.extension.api.runtime.source.BackPressureContext;
-import org.mule.tck.testmodels.fruit.Apple;
-import org.mule.tck.testmodels.fruit.Banana;
-import org.mule.tck.testmodels.fruit.Fruit;
 import org.mule.test.heisenberg.extension.exception.HeisenbergConnectionExceptionEnricher;
-import org.mule.test.heisenberg.extension.exception.HeisenbergException;
 import org.mule.test.heisenberg.extension.model.BarberPreferences;
 import org.mule.test.heisenberg.extension.model.CarDealer;
 import org.mule.test.heisenberg.extension.model.CarWash;
+import org.mule.test.heisenberg.extension.model.DifferedKnockableDoor;
 import org.mule.test.heisenberg.extension.model.HankSchrader;
 import org.mule.test.heisenberg.extension.model.HealthStatus;
 import org.mule.test.heisenberg.extension.model.Investment;
@@ -67,7 +66,7 @@ import javax.inject.Inject;
 @OnException(HeisenbergConnectionExceptionEnricher.class)
 @ConnectionProviders({HeisenbergConnectionProvider.class, SecureHeisenbergConnectionProvider.class})
 @Sources({HeisenbergSource.class, DEARadioSource.class, AsyncHeisenbergSource.class, ReconnectableHeisenbergSource.class})
-@Export(classes = {HeisenbergExtension.class, HeisenbergException.class}, resources = "methRecipe.json")
+@Export(classes = {HeisenbergExtension.class, DifferedKnockableDoor.class}, resources = "methRecipe.json")
 @SubTypeMapping(baseType = Weapon.class, subTypes = {Ricin.class})
 @SubTypeMapping(baseType = Drug.class, subTypes = {Meta.class})
 @SubTypeMapping(baseType = Investment.class, subTypes = {CarWash.class, CarDealer.class})
@@ -75,6 +74,8 @@ import javax.inject.Inject;
     nameRegexpMatcher = HeisenbergExtension.HEISENBERG_LIB_FILE_NAME,
     requiredClassName = HeisenbergExtension.HEISENBERG_LIB_CLASS_NAME, type = NATIVE,
     coordinates = "org.mule.libs:this-is-a-lib:dll:1.0.0")
+@Deprecated(message = "This extension has been deprecated because Breaking Bad has ended, use Better Call Saul extension.",
+    since = "1.4.0")
 @ErrorTypes(HeisenbergErrors.class)
 @NotificationActions(HeisenbergNotificationAction.class)
 public class HeisenbergExtension implements Lifecycle {
@@ -99,7 +100,7 @@ public class HeisenbergExtension implements Lifecycle {
   private int start = 0;
   private int stop = 0;
   private int dispose = 0;
-  public static int sourceTimesStarted = 0;
+  public static volatile int sourceTimesStarted = 0;
 
   @Inject
   private ExtensionManager extensionManager;
@@ -118,7 +119,7 @@ public class HeisenbergExtension implements Lifecycle {
   private List<String> enemies = new LinkedList<>();
 
   @Parameter
-  private List<Long> monthlyIncomes = new LinkedList<>();
+  private final List<Long> monthlyIncomes = new LinkedList<>();
 
   @Parameter
   private boolean cancer;
@@ -136,14 +137,14 @@ public class HeisenbergExtension implements Lifecycle {
 
   @ParameterGroup(name = PERSONAL_INFORMATION_GROUP_NAME)
   @DisplayName("Personal Info")
-  private PersonalInfo personalInfo = new PersonalInfo();
+  private final PersonalInfo personalInfo = new PersonalInfo();
 
   @Parameter
   private BigDecimal money;
 
   @Parameter
   @Optional
-  private Weapon weapon = new Ricin();
+  private final Weapon weapon = new Ricin();
 
   @Parameter
   @Optional
@@ -196,7 +197,7 @@ public class HeisenbergExtension implements Lifecycle {
   @DisplayName("Brother in law")
   private HankSchrader brotherInLaw;
 
-  private List<BackPressureContext> backPressureContexts = new LinkedList<>();
+  private final List<BackPressureContext> backPressureContexts = new LinkedList<>();
 
   public void onBackPressure(BackPressureContext ctx) {
     synchronized (backPressureContexts) {

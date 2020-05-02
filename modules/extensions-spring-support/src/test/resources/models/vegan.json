@@ -69,14 +69,63 @@
           "namespace": "MULE"
         }
       },
-      "parameterGroupModels": [],
+      "parameterGroupModels": [
+        {
+          "parameters": [
+            {
+              "type": {
+                "format": "java",
+                "type": "String"
+              },
+              "hasDynamicType": false,
+              "required": true,
+              "isConfigOverride": false,
+              "isComponentId": true,
+              "expressionSupport": "NOT_SUPPORTED",
+              "role": "BEHAVIOUR",
+              "dslConfiguration": {
+                "allowsInlineDefinition": false,
+                "allowsReferences": false,
+                "allowTopLevelDefinition": false
+              },
+              "layoutModel": {
+                "password": false,
+                "text": false,
+                "query": false,
+                "order": 1
+              },
+              "allowedStereotypeModels": [],
+              "name": "name",
+              "description": "The identifier of this element used to reference it in other components",
+              "modelProperties": {}
+            }
+          ],
+          "exclusiveParametersModels": [],
+          "layoutModel": {
+            "password": false,
+            "text": false,
+            "query": false,
+            "order": 1
+          },
+          "showInDsl": false,
+          "name": "General",
+          "description": "",
+          "modelProperties": {}
+        }
+      ],
       "externalLibraryModels": [],
       "operations": [],
       "connectionProviders": [],
       "messageSources": [],
       "name": "PearConfig",
       "description": "",
-      "modelProperties": {}
+      "modelProperties": {
+        "requiredForMetadata": {
+          "requiredParameters": [
+            "name"
+          ]
+        }
+      }
     },
     {
       "stereotype": {
@@ -205,7 +254,16 @@
                 "query": false,
                 "order": 3
               },
-              "allowedStereotypeModels": [],
+              "allowedStereotypeModels": [
+                {
+                  "type": "HEALTHY_FOOD",
+                  "namespace": "VEGAN",
+                  "parent": {
+                    "type": "FARMED_FOOD",
+                    "namespace": "VEGAN"
+                  }
+                }
+              ],
               "name": "sample",
               "description": "",
               "modelProperties": {}
@@ -262,6 +320,33 @@
               "allowedStereotypeModels": [],
               "name": "cookBook",
               "description": "",
+              "modelProperties": {}
+            },
+            {
+              "type": {
+                "format": "java",
+                "type": "String"
+              },
+              "hasDynamicType": false,
+              "required": true,
+              "isConfigOverride": false,
+              "isComponentId": true,
+              "expressionSupport": "NOT_SUPPORTED",
+              "role": "BEHAVIOUR",
+              "dslConfiguration": {
+                "allowsInlineDefinition": false,
+                "allowsReferences": false,
+                "allowTopLevelDefinition": false
+              },
+              "layoutModel": {
+                "password": false,
+                "text": false,
+                "query": false,
+                "order": 7
+              },
+              "allowedStereotypeModels": [],
+              "name": "name",
+              "description": "The identifier of this element used to reference it in other components",
               "modelProperties": {}
             },
             {
@@ -523,7 +608,11 @@
                   "allowedStereotypeModels": [],
                   "name": "outputMimeType",
                   "description": "The mime type of the payload that this operation outputs.",
-                  "modelProperties": {}
+                  "modelProperties": {
+                    "sinceMuleVersion": {
+                      "version": "4.2.0"
+                    }
+                  }
                 },
                 {
                   "type": {
@@ -551,6 +640,50 @@
                   "allowedStereotypeModels": [],
                   "name": "outputEncoding",
                   "description": "The encoding of the payload that this operation outputs.",
+                  "modelProperties": {
+                    "sinceMuleVersion": {
+                      "version": "4.2.0"
+                    }
+                  }
+                },
+                {
+                  "type": {
+                    "format": "java",
+                    "type": "Object",
+                    "annotations": {
+                      "typeId": "org.mule.runtime.extension.api.runtime.config.ConfigurationProvider"
+                    },
+                    "fields": []
+                  },
+                  "hasDynamicType": false,
+                  "required": true,
+                  "isConfigOverride": false,
+                  "isComponentId": false,
+                  "expressionSupport": "NOT_SUPPORTED",
+                  "role": "BEHAVIOUR",
+                  "dslConfiguration": {
+                    "allowsInlineDefinition": false,
+                    "allowsReferences": true,
+                    "allowTopLevelDefinition": false
+                  },
+                  "layoutModel": {
+                    "password": false,
+                    "text": false,
+                    "query": false,
+                    "order": 4
+                  },
+                  "allowedStereotypeModels": [
+                    {
+                      "type": "APPLE_CONFIG",
+                      "namespace": "VEGAN",
+                      "parent": {
+                        "type": "MODULE_CONFIG",
+                        "namespace": "MULE"
+                      }
+                    }
+                  ],
+                  "name": "config-ref",
+                  "description": "The name of the configuration to be used to execute this component",
                   "modelProperties": {}
                 }
               ],
@@ -588,7 +721,7 @@
                     "password": false,
                     "text": false,
                     "query": false,
-                    "order": 4,
+                    "order": 5,
                     "tabName": "Advanced"
                   },
                   "allowedStereotypeModels": [],
@@ -620,7 +753,7 @@
                     "password": false,
                     "text": false,
                     "query": false,
-                    "order": 5,
+                    "order": 6,
                     "tabName": "Advanced"
                   },
                   "allowedStereotypeModels": [],
@@ -693,6 +826,22 @@
                           },
                           {
                             "key": {
+                              "name": "blocking"
+                            },
+                            "model": {
+                              "type": "Boolean",
+                              "annotations": {
+                                "default": "true"
+                              }
+                            },
+                            "annotations": {
+                              "description": {
+                                "value": "If false, the reconnection strategy will run in a separate, non-blocking thread"
+                              }
+                            }
+                          },
+                          {
+                            "key": {
                               "name": "count"
                             },
                             "model": {
@@ -746,6 +895,22 @@
                                 "value": "How often (in ms) to reconnect"
                               }
                             }
+                          },
+                          {
+                            "key": {
+                              "name": "blocking"
+                            },
+                            "model": {
+                              "type": "Boolean",
+                              "annotations": {
+                                "default": "true"
+                              }
+                            },
+                            "annotations": {
+                              "description": {
+                                "value": "If false, the reconnection strategy will run in a separate, non-blocking thread"
+                              }
+                            }
                           }
                         ]
                       }
@@ -766,7 +931,7 @@
                     "password": false,
                     "text": false,
                     "query": false,
-                    "order": 6,
+                    "order": 7,
                     "tabName": "Advanced"
                   },
                   "allowedStereotypeModels": [],
@@ -802,9 +967,13 @@
           "name": "eatApple",
           "description": "",
           "modelProperties": {
-            "org.mule.runtime.extension.api.property.TypeResolversInformationModelProperty": {
+            "typeResolversInformation": {
               "category": "AppleKeys",
-              "outputResolver": "AppleTypesResolver"
+              "outputResolver": {
+                "resolverName": "AppleTypesResolver",
+                "requiresConnection": true,
+                "requiresConfiguration": true
+              }
             },
             "metadataKeyId": {
               "type": {
@@ -881,9 +1050,66 @@
                     "query": false,
                     "order": 1
                   },
-                  "allowedStereotypeModels": [],
+                  "allowedStereotypeModels": [
+                    {
+                      "type": "HEALTHY_FOOD",
+                      "namespace": "VEGAN",
+                      "parent": {
+                        "type": "FARMED_FOOD",
+                        "namespace": "VEGAN"
+                      }
+                    }
+                  ],
                   "name": "sample",
                   "description": "",
+                  "modelProperties": {}
+                },
+                {
+                  "type": {
+                    "format": "java",
+                    "type": "Object",
+                    "annotations": {
+                      "typeId": "org.mule.runtime.extension.api.runtime.config.ConfigurationProvider"
+                    },
+                    "fields": []
+                  },
+                  "hasDynamicType": false,
+                  "required": false,
+                  "isConfigOverride": false,
+                  "isComponentId": false,
+                  "expressionSupport": "NOT_SUPPORTED",
+                  "role": "BEHAVIOUR",
+                  "dslConfiguration": {
+                    "allowsInlineDefinition": false,
+                    "allowsReferences": true,
+                    "allowTopLevelDefinition": false
+                  },
+                  "layoutModel": {
+                    "password": false,
+                    "text": false,
+                    "query": false,
+                    "order": 2
+                  },
+                  "allowedStereotypeModels": [
+                    {
+                      "type": "APPLE_CONFIG",
+                      "namespace": "VEGAN",
+                      "parent": {
+                        "type": "MODULE_CONFIG",
+                        "namespace": "MULE"
+                      }
+                    },
+                    {
+                      "type": "BANANA-CONFIG",
+                      "namespace": "VEGAN",
+                      "parent": {
+                        "type": "MODULE_CONFIG",
+                        "namespace": "MULE"
+                      }
+                    }
+                  ],
+                  "name": "config-ref",
+                  "description": "The name of the configuration to be used to execute this component",
                   "modelProperties": {}
                 }
               ],
@@ -921,7 +1147,7 @@
                     "password": false,
                     "text": false,
                     "query": false,
-                    "order": 2,
+                    "order": 3,
                     "tabName": "Advanced"
                   },
                   "allowedStereotypeModels": [],
@@ -953,7 +1179,7 @@
                     "password": false,
                     "text": false,
                     "query": false,
-                    "order": 3,
+                    "order": 4,
                     "tabName": "Advanced"
                   },
                   "allowedStereotypeModels": [],
@@ -1057,6 +1283,54 @@
                   "name": "shouldNotOverride",
                   "description": "",
                   "modelProperties": {}
+                },
+                {
+                  "type": {
+                    "format": "java",
+                    "type": "Object",
+                    "annotations": {
+                      "typeId": "org.mule.runtime.extension.api.runtime.config.ConfigurationProvider"
+                    },
+                    "fields": []
+                  },
+                  "hasDynamicType": false,
+                  "required": false,
+                  "isConfigOverride": false,
+                  "isComponentId": false,
+                  "expressionSupport": "NOT_SUPPORTED",
+                  "role": "BEHAVIOUR",
+                  "dslConfiguration": {
+                    "allowsInlineDefinition": false,
+                    "allowsReferences": true,
+                    "allowTopLevelDefinition": false
+                  },
+                  "layoutModel": {
+                    "password": false,
+                    "text": false,
+                    "query": false,
+                    "order": 2
+                  },
+                  "allowedStereotypeModels": [
+                    {
+                      "type": "APPLE_CONFIG",
+                      "namespace": "VEGAN",
+                      "parent": {
+                        "type": "MODULE_CONFIG",
+                        "namespace": "MULE"
+                      }
+                    },
+                    {
+                      "type": "BANANA-CONFIG",
+                      "namespace": "VEGAN",
+                      "parent": {
+                        "type": "MODULE_CONFIG",
+                        "namespace": "MULE"
+                      }
+                    }
+                  ],
+                  "name": "config-ref",
+                  "description": "The name of the configuration to be used to execute this component",
+                  "modelProperties": {}
                 }
               ],
               "exclusiveParametersModels": [],
@@ -1093,7 +1367,7 @@
                     "password": false,
                     "text": false,
                     "query": false,
-                    "order": 2,
+                    "order": 3,
                     "tabName": "Advanced"
                   },
                   "allowedStereotypeModels": [],
@@ -1125,7 +1399,7 @@
                     "password": false,
                     "text": false,
                     "query": false,
-                    "order": 3,
+                    "order": 4,
                     "tabName": "Advanced"
                   },
                   "allowedStereotypeModels": [],
@@ -1292,6 +1566,58 @@
                   "allowedStereotypeModels": [],
                   "name": "outputMimeType",
                   "description": "The mime type of the payload that this operation outputs.",
+                  "modelProperties": {
+                    "sinceMuleVersion": {
+                      "version": "4.2.0"
+                    }
+                  }
+                },
+                {
+                  "type": {
+                    "format": "java",
+                    "type": "Object",
+                    "annotations": {
+                      "typeId": "org.mule.runtime.extension.api.runtime.config.ConfigurationProvider"
+                    },
+                    "fields": []
+                  },
+                  "hasDynamicType": false,
+                  "required": false,
+                  "isConfigOverride": false,
+                  "isComponentId": false,
+                  "expressionSupport": "NOT_SUPPORTED",
+                  "role": "BEHAVIOUR",
+                  "dslConfiguration": {
+                    "allowsInlineDefinition": false,
+                    "allowsReferences": true,
+                    "allowTopLevelDefinition": false
+                  },
+                  "layoutModel": {
+                    "password": false,
+                    "text": false,
+                    "query": false,
+                    "order": 3
+                  },
+                  "allowedStereotypeModels": [
+                    {
+                      "type": "APPLE_CONFIG",
+                      "namespace": "VEGAN",
+                      "parent": {
+                        "type": "MODULE_CONFIG",
+                        "namespace": "MULE"
+                      }
+                    },
+                    {
+                      "type": "BANANA-CONFIG",
+                      "namespace": "VEGAN",
+                      "parent": {
+                        "type": "MODULE_CONFIG",
+                        "namespace": "MULE"
+                      }
+                    }
+                  ],
+                  "name": "config-ref",
+                  "description": "The name of the configuration to be used to execute this component",
                   "modelProperties": {}
                 }
               ],
@@ -1329,7 +1655,7 @@
                     "password": false,
                     "text": false,
                     "query": false,
-                    "order": 3,
+                    "order": 4,
                     "tabName": "Advanced"
                   },
                   "allowedStereotypeModels": [],
@@ -1361,7 +1687,7 @@
                     "password": false,
                     "text": false,
                     "query": false,
-                    "order": 4,
+                    "order": 5,
                     "tabName": "Advanced"
                   },
                   "allowedStereotypeModels": [],
@@ -1493,6 +1819,54 @@
                   "name": "timeToPeel",
                   "description": "",
                   "modelProperties": {}
+                },
+                {
+                  "type": {
+                    "format": "java",
+                    "type": "Object",
+                    "annotations": {
+                      "typeId": "org.mule.runtime.extension.api.runtime.config.ConfigurationProvider"
+                    },
+                    "fields": []
+                  },
+                  "hasDynamicType": false,
+                  "required": false,
+                  "isConfigOverride": false,
+                  "isComponentId": false,
+                  "expressionSupport": "NOT_SUPPORTED",
+                  "role": "BEHAVIOUR",
+                  "dslConfiguration": {
+                    "allowsInlineDefinition": false,
+                    "allowsReferences": true,
+                    "allowTopLevelDefinition": false
+                  },
+                  "layoutModel": {
+                    "password": false,
+                    "text": false,
+                    "query": false,
+                    "order": 2
+                  },
+                  "allowedStereotypeModels": [
+                    {
+                      "type": "APPLE_CONFIG",
+                      "namespace": "VEGAN",
+                      "parent": {
+                        "type": "MODULE_CONFIG",
+                        "namespace": "MULE"
+                      }
+                    },
+                    {
+                      "type": "BANANA-CONFIG",
+                      "namespace": "VEGAN",
+                      "parent": {
+                        "type": "MODULE_CONFIG",
+                        "namespace": "MULE"
+                      }
+                    }
+                  ],
+                  "name": "config-ref",
+                  "description": "The name of the configuration to be used to execute this component",
+                  "modelProperties": {}
                 }
               ],
               "exclusiveParametersModels": [],
@@ -1529,7 +1903,7 @@
                     "password": false,
                     "text": false,
                     "query": false,
-                    "order": 2,
+                    "order": 3,
                     "tabName": "Advanced"
                   },
                   "allowedStereotypeModels": [],
@@ -1561,7 +1935,7 @@
                     "password": false,
                     "text": false,
                     "query": false,
-                    "order": 3,
+                    "order": 4,
                     "tabName": "Advanced"
                   },
                   "allowedStereotypeModels": [],
@@ -1710,6 +2084,54 @@
                   "name": "eloquenceLevel",
                   "description": "",
                   "modelProperties": {}
+                },
+                {
+                  "type": {
+                    "format": "java",
+                    "type": "Object",
+                    "annotations": {
+                      "typeId": "org.mule.runtime.extension.api.runtime.config.ConfigurationProvider"
+                    },
+                    "fields": []
+                  },
+                  "hasDynamicType": false,
+                  "required": false,
+                  "isConfigOverride": false,
+                  "isComponentId": false,
+                  "expressionSupport": "NOT_SUPPORTED",
+                  "role": "BEHAVIOUR",
+                  "dslConfiguration": {
+                    "allowsInlineDefinition": false,
+                    "allowsReferences": true,
+                    "allowTopLevelDefinition": false
+                  },
+                  "layoutModel": {
+                    "password": false,
+                    "text": false,
+                    "query": false,
+                    "order": 3
+                  },
+                  "allowedStereotypeModels": [
+                    {
+                      "type": "APPLE_CONFIG",
+                      "namespace": "VEGAN",
+                      "parent": {
+                        "type": "MODULE_CONFIG",
+                        "namespace": "MULE"
+                      }
+                    },
+                    {
+                      "type": "BANANA-CONFIG",
+                      "namespace": "VEGAN",
+                      "parent": {
+                        "type": "MODULE_CONFIG",
+                        "namespace": "MULE"
+                      }
+                    }
+                  ],
+                  "name": "config-ref",
+                  "description": "The name of the configuration to be used to execute this component",
+                  "modelProperties": {}
                 }
               ],
               "exclusiveParametersModels": [],
@@ -1746,7 +2168,7 @@
                     "password": false,
                     "text": false,
                     "query": false,
-                    "order": 3,
+                    "order": 4,
                     "tabName": "Advanced"
                   },
                   "allowedStereotypeModels": [],
@@ -1778,7 +2200,7 @@
                     "password": false,
                     "text": false,
                     "query": false,
-                    "order": 4,
+                    "order": 5,
                     "tabName": "Advanced"
                   },
                   "allowedStereotypeModels": [],
@@ -1898,6 +2320,22 @@
                                 },
                                 {
                                   "key": {
+                                    "name": "blocking"
+                                  },
+                                  "model": {
+                                    "type": "Boolean",
+                                    "annotations": {
+                                      "default": "true"
+                                    }
+                                  },
+                                  "annotations": {
+                                    "description": {
+                                      "value": "If false, the reconnection strategy will run in a separate, non-blocking thread"
+                                    }
+                                  }
+                                },
+                                {
+                                  "key": {
                                     "name": "count"
                                   },
                                   "model": {
@@ -1949,6 +2387,22 @@
                                   "annotations": {
                                     "description": {
                                       "value": "How often (in ms) to reconnect"
+                                    }
+                                  }
+                                },
+                                {
+                                  "key": {
+                                    "name": "blocking"
+                                  },
+                                  "model": {
+                                    "type": "Boolean",
+                                    "annotations": {
+                                      "default": "true"
+                                    }
+                                  },
+                                  "annotations": {
+                                    "description": {
+                                      "value": "If false, the reconnection strategy will run in a separate, non-blocking thread"
                                     }
                                   }
                                 }
@@ -2081,6 +2535,54 @@
                 {
                   "type": {
                     "format": "java",
+                    "type": "Object",
+                    "annotations": {
+                      "typeId": "org.mule.runtime.extension.api.runtime.config.ConfigurationProvider"
+                    },
+                    "fields": []
+                  },
+                  "hasDynamicType": false,
+                  "required": false,
+                  "isConfigOverride": false,
+                  "isComponentId": false,
+                  "expressionSupport": "NOT_SUPPORTED",
+                  "role": "BEHAVIOUR",
+                  "dslConfiguration": {
+                    "allowsInlineDefinition": false,
+                    "allowsReferences": true,
+                    "allowTopLevelDefinition": false
+                  },
+                  "layoutModel": {
+                    "password": false,
+                    "text": false,
+                    "query": false,
+                    "order": 1
+                  },
+                  "allowedStereotypeModels": [
+                    {
+                      "type": "APPLE_CONFIG",
+                      "namespace": "VEGAN",
+                      "parent": {
+                        "type": "MODULE_CONFIG",
+                        "namespace": "MULE"
+                      }
+                    },
+                    {
+                      "type": "BANANA-CONFIG",
+                      "namespace": "VEGAN",
+                      "parent": {
+                        "type": "MODULE_CONFIG",
+                        "namespace": "MULE"
+                      }
+                    }
+                  ],
+                  "name": "config-ref",
+                  "description": "The name of the configuration to be used to execute this component",
+                  "modelProperties": {}
+                },
+                {
+                  "type": {
+                    "format": "java",
                     "type": "Boolean"
                   },
                   "hasDynamicType": false,
@@ -2099,7 +2601,7 @@
                     "password": false,
                     "text": false,
                     "query": false,
-                    "order": 2,
+                    "order": 3,
                     "tabName": "Advanced"
                   },
                   "allowedStereotypeModels": [],
@@ -2238,7 +2740,7 @@
                     "password": false,
                     "text": false,
                     "query": false,
-                    "order": 1,
+                    "order": 2,
                     "tabName": "Redelivery"
                   },
                   "allowedStereotypeModels": [],
@@ -2274,9 +2776,13 @@
           "name": "PaulMcCartneySource",
           "description": "",
           "modelProperties": {
-            "org.mule.runtime.extension.api.property.TypeResolversInformationModelProperty": {
+            "typeResolversInformation": {
               "category": "FruitResolver",
-              "outputResolver": "OUTPUT_PAYLOAD"
+              "outputResolver": {
+                "resolverName": "OUTPUT_PAYLOAD",
+                "requiresConnection": false,
+                "requiresConfiguration": false
+              }
             }
           },
           "kind": "source"
@@ -2325,7 +2831,7 @@
                       "password": false,
                       "text": false,
                       "query": false,
-                      "order": 9
+                      "order": 10
                     },
                     "allowedStereotypeModels": [],
                     "name": "timeToPeel",
@@ -2544,9 +3050,54 @@
                     "query": false,
                     "order": 5
                   },
-                  "allowedStereotypeModels": [],
+                  "allowedStereotypeModels": [
+                    {
+                      "type": "GROUPED_FOOD",
+                      "namespace": "VEGAN"
+                    }
+                  ],
                   "name": "pojoGroupedFood",
                   "description": "",
+                  "modelProperties": {}
+                },
+                {
+                  "type": {
+                    "format": "java",
+                    "type": "Object",
+                    "annotations": {
+                      "typeId": "org.mule.runtime.extension.api.runtime.config.ConfigurationProvider"
+                    },
+                    "fields": []
+                  },
+                  "hasDynamicType": false,
+                  "required": true,
+                  "isConfigOverride": false,
+                  "isComponentId": false,
+                  "expressionSupport": "NOT_SUPPORTED",
+                  "role": "BEHAVIOUR",
+                  "dslConfiguration": {
+                    "allowsInlineDefinition": false,
+                    "allowsReferences": true,
+                    "allowTopLevelDefinition": false
+                  },
+                  "layoutModel": {
+                    "password": false,
+                    "text": false,
+                    "query": false,
+                    "order": 6
+                  },
+                  "allowedStereotypeModels": [
+                    {
+                      "type": "APPLE_CONFIG",
+                      "namespace": "VEGAN",
+                      "parent": {
+                        "type": "MODULE_CONFIG",
+                        "namespace": "MULE"
+                      }
+                    }
+                  ],
+                  "name": "config-ref",
+                  "description": "The name of the configuration to be used to execute this component",
                   "modelProperties": {}
                 },
                 {
@@ -2570,7 +3121,7 @@
                     "password": false,
                     "text": false,
                     "query": false,
-                    "order": 10,
+                    "order": 11,
                     "tabName": "Advanced"
                   },
                   "allowedStereotypeModels": [],
@@ -2709,7 +3260,7 @@
                     "password": false,
                     "text": false,
                     "query": false,
-                    "order": 6,
+                    "order": 7,
                     "tabName": "Redelivery"
                   },
                   "allowedStereotypeModels": [],
@@ -2763,9 +3314,18 @@
                     "password": false,
                     "text": false,
                     "query": false,
-                    "order": 7
+                    "order": 8
                   },
-                  "allowedStereotypeModels": [],
+                  "allowedStereotypeModels": [
+                    {
+                      "type": "HEALTHY_FOOD",
+                      "namespace": "VEGAN",
+                      "parent": {
+                        "type": "FARMED_FOOD",
+                        "namespace": "VEGAN"
+                      }
+                    }
+                  ],
                   "name": "sample",
                   "description": "",
                   "modelProperties": {}
@@ -2805,9 +3365,14 @@
                     "password": false,
                     "text": false,
                     "query": false,
-                    "order": 8
+                    "order": 9
                   },
-                  "allowedStereotypeModels": [],
+                  "allowedStereotypeModels": [
+                    {
+                      "type": "FARMED_FOOD",
+                      "namespace": "VEGAN"
+                    }
+                  ],
                   "name": "food",
                   "description": "",
                   "modelProperties": {
@@ -2836,10 +3401,18 @@
           "name": "harvest-apples",
           "description": "",
           "modelProperties": {
-            "org.mule.runtime.extension.api.property.TypeResolversInformationModelProperty": {
+            "typeResolversInformation": {
               "category": "HarvestedKeys",
-              "outputResolver": "HarvestAppleKeyResolver",
-              "keysResolver": "HarvestAppleKeyResolver"
+              "outputResolver": {
+                "resolverName": "HarvestAppleKeyResolver",
+                "requiresConnection": false,
+                "requiresConfiguration": false
+              },
+              "keysResolver": {
+                "resolverName": "HarvestAppleKeyResolver",
+                "requiresConnection": false,
+                "requiresConfiguration": false
+              }
             },
             "metadataKeyId": {
               "type": {
@@ -2853,9 +3426,24 @@
           "kind": "source"
         }
       ],
+      "deprecationModel": {
+        "message": "This configuration overlaps with the BananaConfig, use that one instead.",
+        "deprecatedSince": "1.2.0"
+      },
       "name": "apple-config",
       "description": "",
-      "modelProperties": {}
+      "modelProperties": {
+        "requiredForMetadata": {
+          "requiredParameters": [
+            "timeToPeel",
+            "mainProducers",
+            "sample",
+            "shouldNotOverride",
+            "cookBook",
+            "name"
+          ]
+        }
+      }
     },
     {
       "stereotype": {
@@ -2984,7 +3572,16 @@
                 "query": false,
                 "order": 3
               },
-              "allowedStereotypeModels": [],
+              "allowedStereotypeModels": [
+                {
+                  "type": "HEALTHY_FOOD",
+                  "namespace": "VEGAN",
+                  "parent": {
+                    "type": "FARMED_FOOD",
+                    "namespace": "VEGAN"
+                  }
+                }
+              ],
               "name": "sample",
               "description": "",
               "modelProperties": {}
@@ -3038,9 +3635,45 @@
                 "query": false,
                 "order": 5
               },
-              "allowedStereotypeModels": [],
+              "allowedStereotypeModels": [
+                {
+                  "type": "HEALTHY_FOOD",
+                  "namespace": "VEGAN",
+                  "parent": {
+                    "type": "FARMED_FOOD",
+                    "namespace": "VEGAN"
+                  }
+                }
+              ],
               "name": "healthyFood",
               "description": "",
+              "modelProperties": {}
+            },
+            {
+              "type": {
+                "format": "java",
+                "type": "String"
+              },
+              "hasDynamicType": false,
+              "required": true,
+              "isConfigOverride": false,
+              "isComponentId": true,
+              "expressionSupport": "NOT_SUPPORTED",
+              "role": "BEHAVIOUR",
+              "dslConfiguration": {
+                "allowsInlineDefinition": false,
+                "allowsReferences": false,
+                "allowTopLevelDefinition": false
+              },
+              "layoutModel": {
+                "password": false,
+                "text": false,
+                "query": false,
+                "order": 7
+              },
+              "allowedStereotypeModels": [],
+              "name": "name",
+              "description": "The identifier of this element used to reference it in other components",
               "modelProperties": {}
             },
             {
@@ -3223,6 +3856,61 @@
                 {
                   "type": {
                     "format": "java",
+                    "type": "Object",
+                    "annotations": {
+                      "typeId": "org.mule.runtime.extension.api.runtime.config.ConfigurationProvider"
+                    },
+                    "fields": []
+                  },
+                  "hasDynamicType": false,
+                  "required": false,
+                  "isConfigOverride": false,
+                  "isComponentId": false,
+                  "expressionSupport": "NOT_SUPPORTED",
+                  "role": "BEHAVIOUR",
+                  "dslConfiguration": {
+                    "allowsInlineDefinition": false,
+                    "allowsReferences": true,
+                    "allowTopLevelDefinition": false
+                  },
+                  "layoutModel": {
+                    "password": false,
+                    "text": false,
+                    "query": false,
+                    "order": 4
+                  },
+                  "allowedStereotypeModels": [
+                    {
+                      "type": "BANANA-CONFIG",
+                      "namespace": "VEGAN",
+                      "parent": {
+                        "type": "MODULE_CONFIG",
+                        "namespace": "MULE"
+                      }
+                    }
+                  ],
+                  "name": "config-ref",
+                  "description": "The name of the configuration to be used to execute this component",
+                  "modelProperties": {}
+                }
+              ],
+              "exclusiveParametersModels": [],
+              "layoutModel": {
+                "password": false,
+                "text": false,
+                "query": false,
+                "order": 0
+              },
+              "showInDsl": false,
+              "name": "General",
+              "description": "",
+              "modelProperties": {}
+            },
+            {
+              "parameters": [
+                {
+                  "type": {
+                    "format": "java",
                     "type": "String"
                   },
                   "hasDynamicType": false,
@@ -3345,6 +4033,22 @@
                           },
                           {
                             "key": {
+                              "name": "blocking"
+                            },
+                            "model": {
+                              "type": "Boolean",
+                              "annotations": {
+                                "default": "true"
+                              }
+                            },
+                            "annotations": {
+                              "description": {
+                                "value": "If false, the reconnection strategy will run in a separate, non-blocking thread"
+                              }
+                            }
+                          },
+                          {
+                            "key": {
                               "name": "count"
                             },
                             "model": {
@@ -3396,6 +4100,22 @@
                             "annotations": {
                               "description": {
                                 "value": "How often (in ms) to reconnect"
+                              }
+                            }
+                          },
+                          {
+                            "key": {
+                              "name": "blocking"
+                            },
+                            "model": {
+                              "type": "Boolean",
+                              "annotations": {
+                                "default": "true"
+                              }
+                            },
+                            "annotations": {
+                              "description": {
+                                "value": "If false, the reconnection strategy will run in a separate, non-blocking thread"
                               }
                             }
                           }
@@ -3524,6 +4244,46 @@
                   "name": "attributeOnlyBanana",
                   "description": "",
                   "modelProperties": {}
+                },
+                {
+                  "type": {
+                    "format": "java",
+                    "type": "Object",
+                    "annotations": {
+                      "typeId": "org.mule.runtime.extension.api.runtime.config.ConfigurationProvider"
+                    },
+                    "fields": []
+                  },
+                  "hasDynamicType": false,
+                  "required": false,
+                  "isConfigOverride": false,
+                  "isComponentId": false,
+                  "expressionSupport": "NOT_SUPPORTED",
+                  "role": "BEHAVIOUR",
+                  "dslConfiguration": {
+                    "allowsInlineDefinition": false,
+                    "allowsReferences": true,
+                    "allowTopLevelDefinition": false
+                  },
+                  "layoutModel": {
+                    "password": false,
+                    "text": false,
+                    "query": false,
+                    "order": 2
+                  },
+                  "allowedStereotypeModels": [
+                    {
+                      "type": "BANANA-CONFIG",
+                      "namespace": "VEGAN",
+                      "parent": {
+                        "type": "MODULE_CONFIG",
+                        "namespace": "MULE"
+                      }
+                    }
+                  ],
+                  "name": "config-ref",
+                  "description": "The name of the configuration to be used to execute this component",
+                  "modelProperties": {}
                 }
               ],
               "exclusiveParametersModels": [],
@@ -3560,7 +4320,7 @@
                     "password": false,
                     "text": false,
                     "query": false,
-                    "order": 2,
+                    "order": 3,
                     "tabName": "Advanced"
                   },
                   "allowedStereotypeModels": [],
@@ -3592,7 +4352,7 @@
                     "password": false,
                     "text": false,
                     "query": false,
-                    "order": 3,
+                    "order": 4,
                     "tabName": "Advanced"
                   },
                   "allowedStereotypeModels": [],
@@ -3662,6 +4422,61 @@
             }
           },
           "parameterGroupModels": [
+            {
+              "parameters": [
+                {
+                  "type": {
+                    "format": "java",
+                    "type": "Object",
+                    "annotations": {
+                      "typeId": "org.mule.runtime.extension.api.runtime.config.ConfigurationProvider"
+                    },
+                    "fields": []
+                  },
+                  "hasDynamicType": false,
+                  "required": false,
+                  "isConfigOverride": false,
+                  "isComponentId": false,
+                  "expressionSupport": "NOT_SUPPORTED",
+                  "role": "BEHAVIOUR",
+                  "dslConfiguration": {
+                    "allowsInlineDefinition": false,
+                    "allowsReferences": true,
+                    "allowTopLevelDefinition": false
+                  },
+                  "layoutModel": {
+                    "password": false,
+                    "text": false,
+                    "query": false,
+                    "order": 3
+                  },
+                  "allowedStereotypeModels": [
+                    {
+                      "type": "BANANA-CONFIG",
+                      "namespace": "VEGAN",
+                      "parent": {
+                        "type": "MODULE_CONFIG",
+                        "namespace": "MULE"
+                      }
+                    }
+                  ],
+                  "name": "config-ref",
+                  "description": "The name of the configuration to be used to execute this component",
+                  "modelProperties": {}
+                }
+              ],
+              "exclusiveParametersModels": [],
+              "layoutModel": {
+                "password": false,
+                "text": false,
+                "query": false,
+                "order": 0
+              },
+              "showInDsl": false,
+              "name": "General",
+              "description": "",
+              "modelProperties": {}
+            },
             {
               "parameters": [
                 {
@@ -3810,9 +4625,66 @@
                     "query": false,
                     "order": 1
                   },
-                  "allowedStereotypeModels": [],
+                  "allowedStereotypeModels": [
+                    {
+                      "type": "HEALTHY_FOOD",
+                      "namespace": "VEGAN",
+                      "parent": {
+                        "type": "FARMED_FOOD",
+                        "namespace": "VEGAN"
+                      }
+                    }
+                  ],
                   "name": "sample",
                   "description": "",
+                  "modelProperties": {}
+                },
+                {
+                  "type": {
+                    "format": "java",
+                    "type": "Object",
+                    "annotations": {
+                      "typeId": "org.mule.runtime.extension.api.runtime.config.ConfigurationProvider"
+                    },
+                    "fields": []
+                  },
+                  "hasDynamicType": false,
+                  "required": false,
+                  "isConfigOverride": false,
+                  "isComponentId": false,
+                  "expressionSupport": "NOT_SUPPORTED",
+                  "role": "BEHAVIOUR",
+                  "dslConfiguration": {
+                    "allowsInlineDefinition": false,
+                    "allowsReferences": true,
+                    "allowTopLevelDefinition": false
+                  },
+                  "layoutModel": {
+                    "password": false,
+                    "text": false,
+                    "query": false,
+                    "order": 2
+                  },
+                  "allowedStereotypeModels": [
+                    {
+                      "type": "APPLE_CONFIG",
+                      "namespace": "VEGAN",
+                      "parent": {
+                        "type": "MODULE_CONFIG",
+                        "namespace": "MULE"
+                      }
+                    },
+                    {
+                      "type": "BANANA-CONFIG",
+                      "namespace": "VEGAN",
+                      "parent": {
+                        "type": "MODULE_CONFIG",
+                        "namespace": "MULE"
+                      }
+                    }
+                  ],
+                  "name": "config-ref",
+                  "description": "The name of the configuration to be used to execute this component",
                   "modelProperties": {}
                 }
               ],
@@ -3850,7 +4722,7 @@
                     "password": false,
                     "text": false,
                     "query": false,
-                    "order": 2,
+                    "order": 3,
                     "tabName": "Advanced"
                   },
                   "allowedStereotypeModels": [],
@@ -3882,7 +4754,7 @@
                     "password": false,
                     "text": false,
                     "query": false,
-                    "order": 3,
+                    "order": 4,
                     "tabName": "Advanced"
                   },
                   "allowedStereotypeModels": [],
@@ -3952,6 +4824,61 @@
             }
           },
           "parameterGroupModels": [
+            {
+              "parameters": [
+                {
+                  "type": {
+                    "format": "java",
+                    "type": "Object",
+                    "annotations": {
+                      "typeId": "org.mule.runtime.extension.api.runtime.config.ConfigurationProvider"
+                    },
+                    "fields": []
+                  },
+                  "hasDynamicType": false,
+                  "required": false,
+                  "isConfigOverride": false,
+                  "isComponentId": false,
+                  "expressionSupport": "NOT_SUPPORTED",
+                  "role": "BEHAVIOUR",
+                  "dslConfiguration": {
+                    "allowsInlineDefinition": false,
+                    "allowsReferences": true,
+                    "allowTopLevelDefinition": false
+                  },
+                  "layoutModel": {
+                    "password": false,
+                    "text": false,
+                    "query": false,
+                    "order": 3
+                  },
+                  "allowedStereotypeModels": [
+                    {
+                      "type": "BANANA-CONFIG",
+                      "namespace": "VEGAN",
+                      "parent": {
+                        "type": "MODULE_CONFIG",
+                        "namespace": "MULE"
+                      }
+                    }
+                  ],
+                  "name": "config-ref",
+                  "description": "The name of the configuration to be used to execute this component",
+                  "modelProperties": {}
+                }
+              ],
+              "exclusiveParametersModels": [],
+              "layoutModel": {
+                "password": false,
+                "text": false,
+                "query": false,
+                "order": 0
+              },
+              "showInDsl": false,
+              "name": "General",
+              "description": "",
+              "modelProperties": {}
+            },
             {
               "parameters": [
                 {
@@ -4034,9 +4961,13 @@
           "name": "getLunch",
           "description": "",
           "modelProperties": {
-            "org.mule.runtime.extension.api.property.TypeResolversInformationModelProperty": {
+            "typeResolversInformation": {
               "category": "FruitResolver",
-              "outputResolver": "OUTPUT_PAYLOAD"
+              "outputResolver": {
+                "resolverName": "OUTPUT_PAYLOAD",
+                "requiresConnection": false,
+                "requiresConfiguration": false
+              }
             }
           },
           "kind": "operation"
@@ -4115,6 +5046,54 @@
                   "name": "shouldNotOverride",
                   "description": "",
                   "modelProperties": {}
+                },
+                {
+                  "type": {
+                    "format": "java",
+                    "type": "Object",
+                    "annotations": {
+                      "typeId": "org.mule.runtime.extension.api.runtime.config.ConfigurationProvider"
+                    },
+                    "fields": []
+                  },
+                  "hasDynamicType": false,
+                  "required": false,
+                  "isConfigOverride": false,
+                  "isComponentId": false,
+                  "expressionSupport": "NOT_SUPPORTED",
+                  "role": "BEHAVIOUR",
+                  "dslConfiguration": {
+                    "allowsInlineDefinition": false,
+                    "allowsReferences": true,
+                    "allowTopLevelDefinition": false
+                  },
+                  "layoutModel": {
+                    "password": false,
+                    "text": false,
+                    "query": false,
+                    "order": 2
+                  },
+                  "allowedStereotypeModels": [
+                    {
+                      "type": "APPLE_CONFIG",
+                      "namespace": "VEGAN",
+                      "parent": {
+                        "type": "MODULE_CONFIG",
+                        "namespace": "MULE"
+                      }
+                    },
+                    {
+                      "type": "BANANA-CONFIG",
+                      "namespace": "VEGAN",
+                      "parent": {
+                        "type": "MODULE_CONFIG",
+                        "namespace": "MULE"
+                      }
+                    }
+                  ],
+                  "name": "config-ref",
+                  "description": "The name of the configuration to be used to execute this component",
+                  "modelProperties": {}
                 }
               ],
               "exclusiveParametersModels": [],
@@ -4151,7 +5130,7 @@
                     "password": false,
                     "text": false,
                     "query": false,
-                    "order": 2,
+                    "order": 3,
                     "tabName": "Advanced"
                   },
                   "allowedStereotypeModels": [],
@@ -4183,7 +5162,7 @@
                     "password": false,
                     "text": false,
                     "query": false,
-                    "order": 3,
+                    "order": 4,
                     "tabName": "Advanced"
                   },
                   "allowedStereotypeModels": [],
@@ -4350,6 +5329,58 @@
                   "allowedStereotypeModels": [],
                   "name": "outputMimeType",
                   "description": "The mime type of the payload that this operation outputs.",
+                  "modelProperties": {
+                    "sinceMuleVersion": {
+                      "version": "4.2.0"
+                    }
+                  }
+                },
+                {
+                  "type": {
+                    "format": "java",
+                    "type": "Object",
+                    "annotations": {
+                      "typeId": "org.mule.runtime.extension.api.runtime.config.ConfigurationProvider"
+                    },
+                    "fields": []
+                  },
+                  "hasDynamicType": false,
+                  "required": false,
+                  "isConfigOverride": false,
+                  "isComponentId": false,
+                  "expressionSupport": "NOT_SUPPORTED",
+                  "role": "BEHAVIOUR",
+                  "dslConfiguration": {
+                    "allowsInlineDefinition": false,
+                    "allowsReferences": true,
+                    "allowTopLevelDefinition": false
+                  },
+                  "layoutModel": {
+                    "password": false,
+                    "text": false,
+                    "query": false,
+                    "order": 3
+                  },
+                  "allowedStereotypeModels": [
+                    {
+                      "type": "APPLE_CONFIG",
+                      "namespace": "VEGAN",
+                      "parent": {
+                        "type": "MODULE_CONFIG",
+                        "namespace": "MULE"
+                      }
+                    },
+                    {
+                      "type": "BANANA-CONFIG",
+                      "namespace": "VEGAN",
+                      "parent": {
+                        "type": "MODULE_CONFIG",
+                        "namespace": "MULE"
+                      }
+                    }
+                  ],
+                  "name": "config-ref",
+                  "description": "The name of the configuration to be used to execute this component",
                   "modelProperties": {}
                 }
               ],
@@ -4387,7 +5418,7 @@
                     "password": false,
                     "text": false,
                     "query": false,
-                    "order": 3,
+                    "order": 4,
                     "tabName": "Advanced"
                   },
                   "allowedStereotypeModels": [],
@@ -4419,7 +5450,7 @@
                     "password": false,
                     "text": false,
                     "query": false,
-                    "order": 4,
+                    "order": 5,
                     "tabName": "Advanced"
                   },
                   "allowedStereotypeModels": [],
@@ -4551,6 +5582,54 @@
                   "name": "timeToPeel",
                   "description": "",
                   "modelProperties": {}
+                },
+                {
+                  "type": {
+                    "format": "java",
+                    "type": "Object",
+                    "annotations": {
+                      "typeId": "org.mule.runtime.extension.api.runtime.config.ConfigurationProvider"
+                    },
+                    "fields": []
+                  },
+                  "hasDynamicType": false,
+                  "required": false,
+                  "isConfigOverride": false,
+                  "isComponentId": false,
+                  "expressionSupport": "NOT_SUPPORTED",
+                  "role": "BEHAVIOUR",
+                  "dslConfiguration": {
+                    "allowsInlineDefinition": false,
+                    "allowsReferences": true,
+                    "allowTopLevelDefinition": false
+                  },
+                  "layoutModel": {
+                    "password": false,
+                    "text": false,
+                    "query": false,
+                    "order": 2
+                  },
+                  "allowedStereotypeModels": [
+                    {
+                      "type": "APPLE_CONFIG",
+                      "namespace": "VEGAN",
+                      "parent": {
+                        "type": "MODULE_CONFIG",
+                        "namespace": "MULE"
+                      }
+                    },
+                    {
+                      "type": "BANANA-CONFIG",
+                      "namespace": "VEGAN",
+                      "parent": {
+                        "type": "MODULE_CONFIG",
+                        "namespace": "MULE"
+                      }
+                    }
+                  ],
+                  "name": "config-ref",
+                  "description": "The name of the configuration to be used to execute this component",
+                  "modelProperties": {}
                 }
               ],
               "exclusiveParametersModels": [],
@@ -4587,7 +5666,7 @@
                     "password": false,
                     "text": false,
                     "query": false,
-                    "order": 2,
+                    "order": 3,
                     "tabName": "Advanced"
                   },
                   "allowedStereotypeModels": [],
@@ -4619,7 +5698,7 @@
                     "password": false,
                     "text": false,
                     "query": false,
-                    "order": 3,
+                    "order": 4,
                     "tabName": "Advanced"
                   },
                   "allowedStereotypeModels": [],
@@ -4768,6 +5847,54 @@
                   "name": "eloquenceLevel",
                   "description": "",
                   "modelProperties": {}
+                },
+                {
+                  "type": {
+                    "format": "java",
+                    "type": "Object",
+                    "annotations": {
+                      "typeId": "org.mule.runtime.extension.api.runtime.config.ConfigurationProvider"
+                    },
+                    "fields": []
+                  },
+                  "hasDynamicType": false,
+                  "required": false,
+                  "isConfigOverride": false,
+                  "isComponentId": false,
+                  "expressionSupport": "NOT_SUPPORTED",
+                  "role": "BEHAVIOUR",
+                  "dslConfiguration": {
+                    "allowsInlineDefinition": false,
+                    "allowsReferences": true,
+                    "allowTopLevelDefinition": false
+                  },
+                  "layoutModel": {
+                    "password": false,
+                    "text": false,
+                    "query": false,
+                    "order": 3
+                  },
+                  "allowedStereotypeModels": [
+                    {
+                      "type": "APPLE_CONFIG",
+                      "namespace": "VEGAN",
+                      "parent": {
+                        "type": "MODULE_CONFIG",
+                        "namespace": "MULE"
+                      }
+                    },
+                    {
+                      "type": "BANANA-CONFIG",
+                      "namespace": "VEGAN",
+                      "parent": {
+                        "type": "MODULE_CONFIG",
+                        "namespace": "MULE"
+                      }
+                    }
+                  ],
+                  "name": "config-ref",
+                  "description": "The name of the configuration to be used to execute this component",
+                  "modelProperties": {}
                 }
               ],
               "exclusiveParametersModels": [],
@@ -4804,7 +5931,7 @@
                     "password": false,
                     "text": false,
                     "query": false,
-                    "order": 3,
+                    "order": 4,
                     "tabName": "Advanced"
                   },
                   "allowedStereotypeModels": [],
@@ -4836,7 +5963,7 @@
                     "password": false,
                     "text": false,
                     "query": false,
-                    "order": 4,
+                    "order": 5,
                     "tabName": "Advanced"
                   },
                   "allowedStereotypeModels": [],
@@ -4999,6 +6126,22 @@
                                 },
                                 {
                                   "key": {
+                                    "name": "blocking"
+                                  },
+                                  "model": {
+                                    "type": "Boolean",
+                                    "annotations": {
+                                      "default": "true"
+                                    }
+                                  },
+                                  "annotations": {
+                                    "description": {
+                                      "value": "If false, the reconnection strategy will run in a separate, non-blocking thread"
+                                    }
+                                  }
+                                },
+                                {
+                                  "key": {
                                     "name": "count"
                                   },
                                   "model": {
@@ -5050,6 +6193,22 @@
                                   "annotations": {
                                     "description": {
                                       "value": "How often (in ms) to reconnect"
+                                    }
+                                  }
+                                },
+                                {
+                                  "key": {
+                                    "name": "blocking"
+                                  },
+                                  "model": {
+                                    "type": "Boolean",
+                                    "annotations": {
+                                      "default": "true"
+                                    }
+                                  },
+                                  "annotations": {
+                                    "description": {
+                                      "value": "If false, the reconnection strategy will run in a separate, non-blocking thread"
                                     }
                                   }
                                 }
@@ -5115,7 +6274,13 @@
           ],
           "name": "BananaPlantain",
           "description": "",
-          "modelProperties": {}
+          "modelProperties": {
+            "requiredForMetadata": {
+              "requiredParameters": [
+                "originCountry"
+              ]
+            }
+          }
         }
       ],
       "messageSources": [
@@ -5182,6 +6347,54 @@
                 {
                   "type": {
                     "format": "java",
+                    "type": "Object",
+                    "annotations": {
+                      "typeId": "org.mule.runtime.extension.api.runtime.config.ConfigurationProvider"
+                    },
+                    "fields": []
+                  },
+                  "hasDynamicType": false,
+                  "required": false,
+                  "isConfigOverride": false,
+                  "isComponentId": false,
+                  "expressionSupport": "NOT_SUPPORTED",
+                  "role": "BEHAVIOUR",
+                  "dslConfiguration": {
+                    "allowsInlineDefinition": false,
+                    "allowsReferences": true,
+                    "allowTopLevelDefinition": false
+                  },
+                  "layoutModel": {
+                    "password": false,
+                    "text": false,
+                    "query": false,
+                    "order": 1
+                  },
+                  "allowedStereotypeModels": [
+                    {
+                      "type": "APPLE_CONFIG",
+                      "namespace": "VEGAN",
+                      "parent": {
+                        "type": "MODULE_CONFIG",
+                        "namespace": "MULE"
+                      }
+                    },
+                    {
+                      "type": "BANANA-CONFIG",
+                      "namespace": "VEGAN",
+                      "parent": {
+                        "type": "MODULE_CONFIG",
+                        "namespace": "MULE"
+                      }
+                    }
+                  ],
+                  "name": "config-ref",
+                  "description": "The name of the configuration to be used to execute this component",
+                  "modelProperties": {}
+                },
+                {
+                  "type": {
+                    "format": "java",
                     "type": "Boolean"
                   },
                   "hasDynamicType": false,
@@ -5200,7 +6413,7 @@
                     "password": false,
                     "text": false,
                     "query": false,
-                    "order": 2,
+                    "order": 3,
                     "tabName": "Advanced"
                   },
                   "allowedStereotypeModels": [],
@@ -5339,7 +6552,7 @@
                     "password": false,
                     "text": false,
                     "query": false,
-                    "order": 1,
+                    "order": 2,
                     "tabName": "Redelivery"
                   },
                   "allowedStereotypeModels": [],
@@ -5375,9 +6588,13 @@
           "name": "PaulMcCartneySource",
           "description": "",
           "modelProperties": {
-            "org.mule.runtime.extension.api.property.TypeResolversInformationModelProperty": {
+            "typeResolversInformation": {
               "category": "FruitResolver",
-              "outputResolver": "OUTPUT_PAYLOAD"
+              "outputResolver": {
+                "resolverName": "OUTPUT_PAYLOAD",
+                "requiresConnection": false,
+                "requiresConfiguration": false
+              }
             }
           },
           "kind": "source"
@@ -5385,7 +6602,18 @@
       ],
       "name": "banana-config",
       "description": "",
-      "modelProperties": {}
+      "modelProperties": {
+        "requiredForMetadata": {
+          "requiredParameters": [
+            "timeToPeel",
+            "mainProducers",
+            "sample",
+            "shouldNotOverride",
+            "healthyFood",
+            "name"
+          ]
+        }
+      }
     },
     {
       "stereotype": {
@@ -5399,6 +6627,33 @@
       "parameterGroupModels": [
         {
           "parameters": [
+            {
+              "type": {
+                "format": "java",
+                "type": "String"
+              },
+              "hasDynamicType": false,
+              "required": true,
+              "isConfigOverride": false,
+              "isComponentId": true,
+              "expressionSupport": "NOT_SUPPORTED",
+              "role": "BEHAVIOUR",
+              "dslConfiguration": {
+                "allowsInlineDefinition": false,
+                "allowsReferences": false,
+                "allowTopLevelDefinition": false
+              },
+              "layoutModel": {
+                "password": false,
+                "text": false,
+                "query": false,
+                "order": 2
+              },
+              "allowedStereotypeModels": [],
+              "name": "name",
+              "description": "The identifier of this element used to reference it in other components",
+              "modelProperties": {}
+            },
             {
               "type": {
                 "format": "java",
@@ -5579,6 +6834,61 @@
                 {
                   "type": {
                     "format": "java",
+                    "type": "Object",
+                    "annotations": {
+                      "typeId": "org.mule.runtime.extension.api.runtime.config.ConfigurationProvider"
+                    },
+                    "fields": []
+                  },
+                  "hasDynamicType": false,
+                  "required": false,
+                  "isConfigOverride": false,
+                  "isComponentId": false,
+                  "expressionSupport": "NOT_SUPPORTED",
+                  "role": "BEHAVIOUR",
+                  "dslConfiguration": {
+                    "allowsInlineDefinition": false,
+                    "allowsReferences": true,
+                    "allowTopLevelDefinition": false
+                  },
+                  "layoutModel": {
+                    "password": false,
+                    "text": false,
+                    "query": false,
+                    "order": 4
+                  },
+                  "allowedStereotypeModels": [
+                    {
+                      "type": "GRAPE",
+                      "namespace": "VEGAN",
+                      "parent": {
+                        "type": "MODULE_CONFIG",
+                        "namespace": "MULE"
+                      }
+                    }
+                  ],
+                  "name": "config-ref",
+                  "description": "The name of the configuration to be used to execute this component",
+                  "modelProperties": {}
+                }
+              ],
+              "exclusiveParametersModels": [],
+              "layoutModel": {
+                "password": false,
+                "text": false,
+                "query": false,
+                "order": 0
+              },
+              "showInDsl": false,
+              "name": "General",
+              "description": "",
+              "modelProperties": {}
+            },
+            {
+              "parameters": [
+                {
+                  "type": {
+                    "format": "java",
                     "type": "String"
                   },
                   "hasDynamicType": false,
@@ -5701,6 +7011,22 @@
                           },
                           {
                             "key": {
+                              "name": "blocking"
+                            },
+                            "model": {
+                              "type": "Boolean",
+                              "annotations": {
+                                "default": "true"
+                              }
+                            },
+                            "annotations": {
+                              "description": {
+                                "value": "If false, the reconnection strategy will run in a separate, non-blocking thread"
+                              }
+                            }
+                          },
+                          {
+                            "key": {
                               "name": "count"
                             },
                             "model": {
@@ -5752,6 +7078,22 @@
                             "annotations": {
                               "description": {
                                 "value": "How often (in ms) to reconnect"
+                              }
+                            }
+                          },
+                          {
+                            "key": {
+                              "name": "blocking"
+                            },
+                            "model": {
+                              "type": "Boolean",
+                              "annotations": {
+                                "default": "true"
+                              }
+                            },
+                            "annotations": {
+                              "description": {
+                                "value": "If false, the reconnection strategy will run in a separate, non-blocking thread"
                               }
                             }
                           }
@@ -5944,6 +7286,22 @@
                                 },
                                 {
                                   "key": {
+                                    "name": "blocking"
+                                  },
+                                  "model": {
+                                    "type": "Boolean",
+                                    "annotations": {
+                                      "default": "true"
+                                    }
+                                  },
+                                  "annotations": {
+                                    "description": {
+                                      "value": "If false, the reconnection strategy will run in a separate, non-blocking thread"
+                                    }
+                                  }
+                                },
+                                {
+                                  "key": {
                                     "name": "count"
                                   },
                                   "model": {
@@ -5995,6 +7353,22 @@
                                   "annotations": {
                                     "description": {
                                       "value": "How often (in ms) to reconnect"
+                                    }
+                                  }
+                                },
+                                {
+                                  "key": {
+                                    "name": "blocking"
+                                  },
+                                  "model": {
+                                    "type": "Boolean",
+                                    "annotations": {
+                                      "default": "true"
+                                    }
+                                  },
+                                  "annotations": {
+                                    "description": {
+                                      "value": "If false, the reconnection strategy will run in a separate, non-blocking thread"
                                     }
                                   }
                                 }
@@ -6060,13 +7434,25 @@
           ],
           "name": "grape-connection",
           "description": "",
-          "modelProperties": {}
+          "modelProperties": {
+            "requiredForMetadata": {
+              "requiredParameters": [
+                "veganPolicy"
+              ]
+            }
+          }
         }
       ],
       "messageSources": [],
       "name": "grape",
       "description": "",
-      "modelProperties": {}
+      "modelProperties": {
+        "requiredForMetadata": {
+          "requiredParameters": [
+            "name"
+          ]
+        }
+      }
     },
     {
       "stereotype": {
@@ -6077,7 +7463,50 @@
           "namespace": "MULE"
         }
       },
-      "parameterGroupModels": [],
+      "parameterGroupModels": [
+        {
+          "parameters": [
+            {
+              "type": {
+                "format": "java",
+                "type": "String"
+              },
+              "hasDynamicType": false,
+              "required": true,
+              "isConfigOverride": false,
+              "isComponentId": true,
+              "expressionSupport": "NOT_SUPPORTED",
+              "role": "BEHAVIOUR",
+              "dslConfiguration": {
+                "allowsInlineDefinition": false,
+                "allowsReferences": false,
+                "allowTopLevelDefinition": false
+              },
+              "layoutModel": {
+                "password": false,
+                "text": false,
+                "query": false,
+                "order": 1
+              },
+              "allowedStereotypeModels": [],
+              "name": "name",
+              "description": "The identifier of this element used to reference it in other components",
+              "modelProperties": {}
+            }
+          ],
+          "exclusiveParametersModels": [],
+          "layoutModel": {
+            "password": false,
+            "text": false,
+            "query": false,
+            "order": 1
+          },
+          "showInDsl": false,
+          "name": "General",
+          "description": "",
+          "modelProperties": {}
+        }
+      ],
       "externalLibraryModels": [],
       "operations": [
         {
@@ -6123,6 +7552,61 @@
             }
           },
           "parameterGroupModels": [
+            {
+              "parameters": [
+                {
+                  "type": {
+                    "format": "java",
+                    "type": "Object",
+                    "annotations": {
+                      "typeId": "org.mule.runtime.extension.api.runtime.config.ConfigurationProvider"
+                    },
+                    "fields": []
+                  },
+                  "hasDynamicType": false,
+                  "required": false,
+                  "isConfigOverride": false,
+                  "isComponentId": false,
+                  "expressionSupport": "NOT_SUPPORTED",
+                  "role": "BEHAVIOUR",
+                  "dslConfiguration": {
+                    "allowsInlineDefinition": false,
+                    "allowsReferences": true,
+                    "allowTopLevelDefinition": false
+                  },
+                  "layoutModel": {
+                    "password": false,
+                    "text": false,
+                    "query": false,
+                    "order": 4
+                  },
+                  "allowedStereotypeModels": [
+                    {
+                      "type": "KIWI-CONFIG",
+                      "namespace": "VEGAN",
+                      "parent": {
+                        "type": "MODULE_CONFIG",
+                        "namespace": "MULE"
+                      }
+                    }
+                  ],
+                  "name": "config-ref",
+                  "description": "The name of the configuration to be used to execute this component",
+                  "modelProperties": {}
+                }
+              ],
+              "exclusiveParametersModels": [],
+              "layoutModel": {
+                "password": false,
+                "text": false,
+                "query": false,
+                "order": 0
+              },
+              "showInDsl": false,
+              "name": "General",
+              "description": "",
+              "modelProperties": {}
+            },
             {
               "parameters": [
                 {
@@ -6250,6 +7734,22 @@
                           },
                           {
                             "key": {
+                              "name": "blocking"
+                            },
+                            "model": {
+                              "type": "Boolean",
+                              "annotations": {
+                                "default": "true"
+                              }
+                            },
+                            "annotations": {
+                              "description": {
+                                "value": "If false, the reconnection strategy will run in a separate, non-blocking thread"
+                              }
+                            }
+                          },
+                          {
+                            "key": {
                               "name": "count"
                             },
                             "model": {
@@ -6301,6 +7801,22 @@
                             "annotations": {
                               "description": {
                                 "value": "How often (in ms) to reconnect"
+                              }
+                            }
+                          },
+                          {
+                            "key": {
+                              "name": "blocking"
+                            },
+                            "model": {
+                              "type": "Boolean",
+                              "annotations": {
+                                "default": "true"
+                              }
+                            },
+                            "annotations": {
+                              "description": {
+                                "value": "If false, the reconnection strategy will run in a separate, non-blocking thread"
                               }
                             }
                           }
@@ -6451,6 +7967,22 @@
                                 },
                                 {
                                   "key": {
+                                    "name": "blocking"
+                                  },
+                                  "model": {
+                                    "type": "Boolean",
+                                    "annotations": {
+                                      "default": "true"
+                                    }
+                                  },
+                                  "annotations": {
+                                    "description": {
+                                      "value": "If false, the reconnection strategy will run in a separate, non-blocking thread"
+                                    }
+                                  }
+                                },
+                                {
+                                  "key": {
                                     "name": "count"
                                   },
                                   "model": {
@@ -6502,6 +8034,22 @@
                                   "annotations": {
                                     "description": {
                                       "value": "How often (in ms) to reconnect"
+                                    }
+                                  }
+                                },
+                                {
+                                  "key": {
+                                    "name": "blocking"
+                                  },
+                                  "model": {
+                                    "type": "Boolean",
+                                    "annotations": {
+                                      "default": "true"
+                                    }
+                                  },
+                                  "annotations": {
+                                    "description": {
+                                      "value": "If false, the reconnection strategy will run in a separate, non-blocking thread"
                                     }
                                   }
                                 }
@@ -6573,7 +8121,13 @@
       "messageSources": [],
       "name": "kiwi-config",
       "description": "",
-      "modelProperties": {}
+      "modelProperties": {
+        "requiredForMetadata": {
+          "requiredParameters": [
+            "name"
+          ]
+        }
+      }
     },
     {
       "stereotype": {
@@ -6584,7 +8138,50 @@
           "namespace": "MULE"
         }
       },
-      "parameterGroupModels": [],
+      "parameterGroupModels": [
+        {
+          "parameters": [
+            {
+              "type": {
+                "format": "java",
+                "type": "String"
+              },
+              "hasDynamicType": false,
+              "required": true,
+              "isConfigOverride": false,
+              "isComponentId": true,
+              "expressionSupport": "NOT_SUPPORTED",
+              "role": "BEHAVIOUR",
+              "dslConfiguration": {
+                "allowsInlineDefinition": false,
+                "allowsReferences": false,
+                "allowTopLevelDefinition": false
+              },
+              "layoutModel": {
+                "password": false,
+                "text": false,
+                "query": false,
+                "order": 1
+              },
+              "allowedStereotypeModels": [],
+              "name": "name",
+              "description": "The identifier of this element used to reference it in other components",
+              "modelProperties": {}
+            }
+          ],
+          "exclusiveParametersModels": [],
+          "layoutModel": {
+            "password": false,
+            "text": false,
+            "query": false,
+            "order": 1
+          },
+          "showInDsl": false,
+          "name": "General",
+          "description": "",
+          "modelProperties": {}
+        }
+      ],
       "externalLibraryModels": [],
       "operations": [],
       "connectionProviders": [
@@ -6676,6 +8273,22 @@
                                 },
                                 {
                                   "key": {
+                                    "name": "blocking"
+                                  },
+                                  "model": {
+                                    "type": "Boolean",
+                                    "annotations": {
+                                      "default": "true"
+                                    }
+                                  },
+                                  "annotations": {
+                                    "description": {
+                                      "value": "If false, the reconnection strategy will run in a separate, non-blocking thread"
+                                    }
+                                  }
+                                },
+                                {
+                                  "key": {
                                     "name": "count"
                                   },
                                   "model": {
@@ -6727,6 +8340,22 @@
                                   "annotations": {
                                     "description": {
                                       "value": "How often (in ms) to reconnect"
+                                    }
+                                  }
+                                },
+                                {
+                                  "key": {
+                                    "name": "blocking"
+                                  },
+                                  "model": {
+                                    "type": "Boolean",
+                                    "annotations": {
+                                      "default": "true"
+                                    }
+                                  },
+                                  "annotations": {
+                                    "description": {
+                                      "value": "If false, the reconnection strategy will run in a separate, non-blocking thread"
                                     }
                                   }
                                 }
@@ -6847,6 +8476,46 @@
                 {
                   "type": {
                     "format": "java",
+                    "type": "Object",
+                    "annotations": {
+                      "typeId": "org.mule.runtime.extension.api.runtime.config.ConfigurationProvider"
+                    },
+                    "fields": []
+                  },
+                  "hasDynamicType": false,
+                  "required": false,
+                  "isConfigOverride": false,
+                  "isComponentId": false,
+                  "expressionSupport": "NOT_SUPPORTED",
+                  "role": "BEHAVIOUR",
+                  "dslConfiguration": {
+                    "allowsInlineDefinition": false,
+                    "allowsReferences": true,
+                    "allowTopLevelDefinition": false
+                  },
+                  "layoutModel": {
+                    "password": false,
+                    "text": false,
+                    "query": false,
+                    "order": 2
+                  },
+                  "allowedStereotypeModels": [
+                    {
+                      "type": "PEACH-CONFIG",
+                      "namespace": "VEGAN",
+                      "parent": {
+                        "type": "MODULE_CONFIG",
+                        "namespace": "MULE"
+                      }
+                    }
+                  ],
+                  "name": "config-ref",
+                  "description": "The name of the configuration to be used to execute this component",
+                  "modelProperties": {}
+                },
+                {
+                  "type": {
+                    "format": "java",
                     "type": "Boolean"
                   },
                   "hasDynamicType": false,
@@ -6865,7 +8534,7 @@
                     "password": false,
                     "text": false,
                     "query": false,
-                    "order": 3,
+                    "order": 4,
                     "tabName": "Advanced"
                   },
                   "allowedStereotypeModels": [],
@@ -7004,7 +8673,7 @@
                     "password": false,
                     "text": false,
                     "query": false,
-                    "order": 2,
+                    "order": 3,
                     "tabName": "Redelivery"
                   },
                   "allowedStereotypeModels": [],
@@ -7085,6 +8754,22 @@
                           },
                           {
                             "key": {
+                              "name": "blocking"
+                            },
+                            "model": {
+                              "type": "Boolean",
+                              "annotations": {
+                                "default": "true"
+                              }
+                            },
+                            "annotations": {
+                              "description": {
+                                "value": "If false, the reconnection strategy will run in a separate, non-blocking thread"
+                              }
+                            }
+                          },
+                          {
+                            "key": {
                               "name": "count"
                             },
                             "model": {
@@ -7136,6 +8821,22 @@
                             "annotations": {
                               "description": {
                                 "value": "How often (in ms) to reconnect"
+                              }
+                            }
+                          },
+                          {
+                            "key": {
+                              "name": "blocking"
+                            },
+                            "model": {
+                              "type": "Boolean",
+                              "annotations": {
+                                "default": "true"
+                              }
+                            },
+                            "annotations": {
+                              "description": {
+                                "value": "If false, the reconnection strategy will run in a separate, non-blocking thread"
                               }
                             }
                           }
@@ -7199,7 +8900,13 @@
       ],
       "name": "peach-config",
       "description": "",
-      "modelProperties": {}
+      "modelProperties": {
+        "requiredForMetadata": {
+          "requiredParameters": [
+            "name"
+          ]
+        }
+      }
     }
   ],
   "operations": [
@@ -7752,7 +9459,12 @@
                 "query": false,
                 "order": 2
               },
-              "allowedStereotypeModels": [],
+              "allowedStereotypeModels": [
+                {
+                  "type": "GROUPED_FOOD",
+                  "namespace": "VEGAN"
+                }
+              ],
               "name": "pojoGroupedFood",
               "description": "",
               "modelProperties": {}
@@ -7794,7 +9506,12 @@
                 "query": false,
                 "order": 1
               },
-              "allowedStereotypeModels": [],
+              "allowedStereotypeModels": [
+                {
+                  "type": "FARMED_FOOD",
+                  "namespace": "VEGAN"
+                }
+              ],
               "name": "food",
               "description": "",
               "modelProperties": {
@@ -8006,9 +9723,13 @@
       "name": "consumingGroupedFood",
       "description": "",
       "modelProperties": {
-        "org.mule.runtime.extension.api.property.TypeResolversInformationModelProperty": {
+        "typeResolversInformation": {
           "category": "FruitResolver",
-          "outputResolver": "OUTPUT_PAYLOAD"
+          "outputResolver": {
+            "resolverName": "OUTPUT_PAYLOAD",
+            "requiresConnection": false,
+            "requiresConfiguration": false
+          }
         }
       },
       "kind": "operation"
@@ -8529,7 +10250,11 @@
               "allowedStereotypeModels": [],
               "name": "outputMimeType",
               "description": "The mime type of the payload that this operation outputs.",
-              "modelProperties": {}
+              "modelProperties": {
+                "sinceMuleVersion": {
+                  "version": "4.2.0"
+                }
+              }
             }
           ],
           "exclusiveParametersModels": [],
@@ -8692,7 +10417,16 @@
                 "query": false,
                 "order": 1
               },
-              "allowedStereotypeModels": [],
+              "allowedStereotypeModels": [
+                {
+                  "type": "HEALTHY_FOOD",
+                  "namespace": "VEGAN",
+                  "parent": {
+                    "type": "FARMED_FOOD",
+                    "namespace": "VEGAN"
+                  }
+                }
+              ],
               "name": "healthyFood",
               "description": "",
               "modelProperties": {}
@@ -8837,9 +10571,13 @@
       "name": "getHealthyFood",
       "description": "",
       "modelProperties": {
-        "org.mule.runtime.extension.api.property.TypeResolversInformationModelProperty": {
+        "typeResolversInformation": {
           "category": "FruitResolver",
-          "outputResolver": "OUTPUT_PAYLOAD"
+          "outputResolver": {
+            "resolverName": "OUTPUT_PAYLOAD",
+            "requiresConnection": false,
+            "requiresConfiguration": false
+          }
         }
       },
       "kind": "operation"
@@ -8908,7 +10646,12 @@
                 "query": false,
                 "order": 1
               },
-              "allowedStereotypeModels": [],
+              "allowedStereotypeModels": [
+                {
+                  "type": "FARMED_FOOD",
+                  "namespace": "VEGAN"
+                }
+              ],
               "name": "food",
               "description": "",
               "modelProperties": {
@@ -9060,11 +10803,224 @@
       "name": "getProduction",
       "description": "",
       "modelProperties": {
-        "org.mule.runtime.extension.api.property.TypeResolversInformationModelProperty": {
+        "typeResolversInformation": {
           "category": "FruitResolver",
-          "outputResolver": "OUTPUT_PAYLOAD"
+          "outputResolver": {
+            "resolverName": "OUTPUT_PAYLOAD",
+            "requiresConnection": false,
+            "requiresConfiguration": false
+          }
         }
       },
+      "kind": "operation"
+    },
+    {
+      "blocking": false,
+      "executionType": "CPU_LITE",
+      "output": {
+        "type": {
+          "format": {
+            "id": "text/plain",
+            "label": "text/plain",
+            "validMimeTypes": [
+              "text/plain"
+            ]
+          },
+          "type": "String"
+        },
+        "hasDynamicType": false,
+        "description": "",
+        "modelProperties": {}
+      },
+      "outputAttributes": {
+        "type": {
+          "format": "java",
+          "type": "Object",
+          "annotations": {
+            "typeId": "java.lang.Object",
+            "classInformation": {
+              "classname": "java.lang.Object",
+              "hasDefaultConstructor": true,
+              "isInterface": false,
+              "isInstantiable": true,
+              "isAbstract": false,
+              "isFinal": false,
+              "implementedInterfaces": [],
+              "parent": "",
+              "genericTypes": [],
+              "isMap": false
+            },
+            "typeAlias": {
+              "value": "Object"
+            }
+          },
+          "fields": []
+        },
+        "hasDynamicType": false,
+        "description": "",
+        "modelProperties": {}
+      },
+      "transactional": false,
+      "requiresConnection": false,
+      "supportsStreaming": false,
+      "notifications": [],
+      "nestedComponents": [],
+      "errors": [],
+      "stereotype": {
+        "type": "LONG_DIGEST",
+        "namespace": "VEGAN",
+        "parent": {
+          "type": "PROCESSOR",
+          "namespace": "VEGAN",
+          "parent": {
+            "type": "PROCESSOR",
+            "namespace": "MULE"
+          }
+        }
+      },
+      "parameterGroupModels": [
+        {
+          "parameters": [
+            {
+              "type": {
+                "format": "java",
+                "type": "Number",
+                "annotations": {
+                  "classInformation": {
+                    "classname": "java.lang.Integer",
+                    "hasDefaultConstructor": false,
+                    "isInterface": false,
+                    "isInstantiable": false,
+                    "isAbstract": false,
+                    "isFinal": true,
+                    "implementedInterfaces": [
+                      "java.lang.Comparable"
+                    ],
+                    "parent": "java.lang.Number",
+                    "genericTypes": [],
+                    "isMap": false
+                  },
+                  "int": {}
+                }
+              },
+              "hasDynamicType": false,
+              "required": false,
+              "isConfigOverride": false,
+              "isComponentId": false,
+              "expressionSupport": "NOT_SUPPORTED",
+              "defaultValue": "2",
+              "role": "BEHAVIOUR",
+              "dslConfiguration": {
+                "allowsInlineDefinition": false,
+                "allowsReferences": false,
+                "allowTopLevelDefinition": false
+              },
+              "layoutModel": {
+                "password": false,
+                "text": false,
+                "query": false,
+                "order": 1
+              },
+              "allowedStereotypeModels": [],
+              "name": "eloquenceLevel",
+              "description": "",
+              "modelProperties": {}
+            }
+          ],
+          "exclusiveParametersModels": [],
+          "layoutModel": {
+            "password": false,
+            "text": false,
+            "query": false,
+            "order": 1
+          },
+          "showInDsl": false,
+          "name": "General",
+          "description": "",
+          "modelProperties": {}
+        },
+        {
+          "parameters": [
+            {
+              "type": {
+                "format": "java",
+                "type": "String"
+              },
+              "hasDynamicType": false,
+              "required": false,
+              "isConfigOverride": false,
+              "isComponentId": false,
+              "expressionSupport": "NOT_SUPPORTED",
+              "role": "BEHAVIOUR",
+              "dslConfiguration": {
+                "allowsInlineDefinition": false,
+                "allowsReferences": false,
+                "allowTopLevelDefinition": false
+              },
+              "layoutModel": {
+                "password": false,
+                "text": false,
+                "query": false,
+                "order": 2,
+                "tabName": "Advanced"
+              },
+              "allowedStereotypeModels": [],
+              "name": "target",
+              "displayModel": {
+                "displayName": "Target Variable"
+              },
+              "description": "The name of a variable on which the operation\u0027s output will be placed",
+              "modelProperties": {}
+            },
+            {
+              "type": {
+                "format": "java",
+                "type": "String"
+              },
+              "hasDynamicType": false,
+              "required": false,
+              "isConfigOverride": false,
+              "isComponentId": false,
+              "expressionSupport": "REQUIRED",
+              "defaultValue": "#[payload]",
+              "role": "BEHAVIOUR",
+              "dslConfiguration": {
+                "allowsInlineDefinition": false,
+                "allowsReferences": false,
+                "allowTopLevelDefinition": false
+              },
+              "layoutModel": {
+                "password": false,
+                "text": false,
+                "query": false,
+                "order": 3,
+                "tabName": "Advanced"
+              },
+              "allowedStereotypeModels": [],
+              "name": "targetValue",
+              "displayModel": {
+                "displayName": "Target Value"
+              },
+              "description": "An expression that will be evaluated against the operation\u0027s output and the outcome of that expression will be stored in the target variable",
+              "modelProperties": {}
+            }
+          ],
+          "exclusiveParametersModels": [],
+          "layoutModel": {
+            "password": false,
+            "text": false,
+            "query": false,
+            "order": 2
+          },
+          "showInDsl": false,
+          "name": "Output",
+          "description": "",
+          "modelProperties": {}
+        }
+      ],
+      "name": "longDigest",
+      "description": "",
+      "modelProperties": {},
       "kind": "operation"
     },
     {
@@ -9249,7 +11205,11 @@
               "allowedStereotypeModels": [],
               "name": "outputMimeType",
               "description": "The mime type of the payload that this operation outputs.",
-              "modelProperties": {}
+              "modelProperties": {
+                "sinceMuleVersion": {
+                  "version": "4.2.0"
+                }
+              }
             }
           ],
           "exclusiveParametersModels": [],
@@ -10177,6 +12137,14 @@
               },
               "typeAlias": {
                 "value": "FruitCleaner"
+              },
+              "stereotype": {
+                "allowedStereotypes": [
+                  {
+                    "type": "FRUIT_CLEANER",
+                    "namespace": "VEGAN"
+                  }
+                ]
               }
             },
             "fields": []
@@ -10392,6 +12360,14 @@
                     },
                     "typeAlias": {
                       "value": "Fruit"
+                    },
+                    "stereotype": {
+                      "allowedStereotypes": [
+                        {
+                          "type": "FRUIT",
+                          "namespace": "VEGAN"
+                        }
+                      ]
                     }
                   },
                   "fields": []
@@ -10496,6 +12472,14 @@
         },
         "typeAlias": {
           "value": "Fruit"
+        },
+        "stereotype": {
+          "allowedStereotypes": [
+            {
+              "type": "FRUIT",
+              "namespace": "VEGAN"
+            }
+          ]
         }
       },
       "fields": []
@@ -10701,6 +12685,14 @@
               },
               "typeAlias": {
                 "value": "HealthyFood"
+              },
+              "stereotype": {
+                "allowedStereotypes": [
+                  {
+                    "type": "HEALTHY_FOOD",
+                    "namespace": "VEGAN"
+                  }
+                ]
               }
             },
             "fields": [
@@ -10855,6 +12847,14 @@
               },
               "typeAlias": {
                 "value": "HealthyFood"
+              },
+              "stereotype": {
+                "allowedStereotypes": [
+                  {
+                    "type": "HEALTHY_FOOD",
+                    "namespace": "VEGAN"
+                  }
+                ]
               }
             },
             "fields": [
@@ -10950,6 +12950,14 @@
         },
         "typeAlias": {
           "value": "FarmedFood"
+        },
+        "stereotype": {
+          "allowedStereotypes": [
+            {
+              "type": "FARMED_FOOD",
+              "namespace": "VEGAN"
+            }
+          ]
         }
       },
       "fields": []
@@ -10977,6 +12985,14 @@
         },
         "typeAlias": {
           "value": "GroupedFood"
+        },
+        "stereotype": {
+          "allowedStereotypes": [
+            {
+              "type": "GROUPED_FOOD",
+              "namespace": "VEGAN"
+            }
+          ]
         }
       },
       "fields": [
@@ -11002,6 +13018,14 @@
               },
               "typeAlias": {
                 "value": "FarmedFood"
+              },
+              "stereotype": {
+                "allowedStereotypes": [
+                  {
+                    "type": "FARMED_FOOD",
+                    "namespace": "VEGAN"
+                  }
+                ]
               }
             },
             "fields": []
@@ -11141,6 +13165,18 @@
         },
         "typeAlias": {
           "value": "HealthyFood"
+        },
+        "stereotype": {
+          "allowedStereotypes": [
+            {
+              "type": "HEALTHY_FOOD",
+              "namespace": "VEGAN",
+              "parent": {
+                "type": "FARMED_FOOD",
+                "namespace": "VEGAN"
+              }
+            }
+          ]
         }
       },
       "fields": [

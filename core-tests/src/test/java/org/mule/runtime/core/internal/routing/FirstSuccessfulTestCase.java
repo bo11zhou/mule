@@ -8,15 +8,14 @@ package org.mule.runtime.core.internal.routing;
 
 import static java.util.Arrays.asList;
 import static org.hamcrest.Matchers.is;
-import static org.hamcrest.Matchers.nullValue;
 import static org.junit.Assert.assertThat;
-import static org.junit.Assert.fail;
+import static org.junit.rules.ExpectedException.none;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.withSettings;
 import static org.mule.runtime.api.message.Message.of;
 import static org.mule.tck.MuleTestUtils.createErrorMock;
-import static org.mule.tck.util.MuleContextUtils.eventBuilder;
+import static org.mule.tck.processor.ContextPropagationChecker.assertContextPropagation;
 
 import org.mule.runtime.api.component.Component;
 import org.mule.runtime.api.exception.DefaultMuleException;
@@ -26,20 +25,24 @@ import org.mule.runtime.api.message.Message;
 import org.mule.runtime.core.api.construct.FlowConstruct;
 import org.mule.runtime.core.api.event.CoreEvent;
 import org.mule.runtime.core.api.processor.Processor;
-import org.mule.runtime.core.internal.message.DefaultExceptionPayload;
 import org.mule.runtime.core.internal.message.InternalEvent;
 import org.mule.runtime.core.internal.message.InternalMessage;
 import org.mule.runtime.core.privileged.event.DefaultMuleSession;
 import org.mule.runtime.core.privileged.event.MuleSession;
 import org.mule.runtime.core.privileged.event.PrivilegedEvent;
-import org.mule.runtime.core.privileged.routing.CouldNotRouteOutboundMessageException;
 import org.mule.tck.junit4.AbstractMuleContextTestCase;
+import org.mule.tck.processor.ContextPropagationChecker;
 
+import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.ExpectedException;
 
 public class FirstSuccessfulTestCase extends AbstractMuleContextTestCase {
 
   private static final String EXCEPTION_SEEN = "EXCEPTION WAS SEEN";
+
+  @Rule
+  public ExpectedException expectedException = none();
 
   public FirstSuccessfulTestCase() {
     setStartContext(true);
@@ -63,28 +66,22 @@ public class FirstSuccessfulTestCase extends AbstractMuleContextTestCase {
   }
 
   @Test
-  public void testRouteReturnsNullEvent() throws Exception {
-    Processor nullReturningMp = event -> null;
-    FirstSuccessful fs = createFirstSuccessfulRouter(nullReturningMp);
-    fs.setAnnotations(getAppleFlowComponentLocationAnnotations());
-    fs.initialise();
-
-    assertThat(fs.process(testEvent()), nullValue());
-  }
-
-  @Test
   public void testRouteReturnsNullMessage() throws Exception {
     Processor nullEventMp = event -> CoreEvent.builder(event).message(c -> null).build();
     FirstSuccessful fs = createFirstSuccessfulRouter(nullEventMp);
     fs.setAnnotations(getAppleFlowComponentLocationAnnotations());
     fs.initialise();
+    expectedException.expect(NullPointerException.class);
+    fs.process(testEvent());
+  }
 
-    try {
-      fs.process(testEvent());
-      fail("Exception expected");
-    } catch (CouldNotRouteOutboundMessageException e) {
-      // this one was expected
-    }
+  @Test
+  public void subscriberContextPropagation() throws Exception {
+    final ContextPropagationChecker contextPropagationChecker = new ContextPropagationChecker();
+
+    FirstSuccessful fs = createFirstSuccessfulRouter(contextPropagationChecker);
+
+    assertContextPropagation(testEvent(), fs, contextPropagationChecker);
   }
 
   private FirstSuccessful createFirstSuccessfulRouter(Processor... processors) throws Exception {
@@ -117,7 +114,7 @@ public class FirstSuccessfulTestCase extends AbstractMuleContextTestCase {
 
   private static class TestProcessor implements Processor {
 
-    private String rejectIfMatches;
+    private final String rejectIfMatches;
 
     TestProcessor(String rejectIfMatches) {
       this.rejectIfMatches = rejectIfMatches;
@@ -134,11 +131,11 @@ public class FirstSuccessfulTestCase extends AbstractMuleContextTestCase {
         } else if (payload.toLowerCase().indexOf(rejectIfMatches) >= 0) {
           Exception exception = new Exception();
           error = createErrorMock(exception);
-          msg = InternalMessage.builder().nullValue().exceptionPayload(new DefaultExceptionPayload(exception)).build();
+          msg = InternalMessage.builder().nullValue().build();
         } else {
           msg = of("No " + rejectIfMatches);
         }
-        CoreEvent muleEvent = eventBuilder(muleContext).message(msg).error(error).build();
+        CoreEvent muleEvent = CoreEvent.builder(event).message(msg).error(error).build();
         return muleEvent;
       } catch (Exception e) {
         throw new DefaultMuleException(e);

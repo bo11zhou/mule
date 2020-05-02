@@ -9,6 +9,8 @@ package org.mule.runtime.module.deployment.internal;
 
 import static java.io.File.separator;
 import static java.lang.String.format;
+import static java.lang.System.currentTimeMillis;
+import static java.lang.System.getProperty;
 import static java.lang.Thread.currentThread;
 import static java.util.Arrays.asList;
 import static java.util.Collections.emptyMap;
@@ -32,6 +34,7 @@ import static org.junit.Assume.assumeThat;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.reset;
+import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mule.runtime.api.deployment.meta.Product.MULE;
@@ -54,6 +57,8 @@ import static org.mule.runtime.module.deployment.internal.DeploymentDirectoryWat
 import static org.mule.runtime.module.deployment.internal.TestApplicationFactory.createTestApplicationFactory;
 import static org.mule.runtime.module.extension.api.loader.java.DefaultJavaExtensionModelLoader.JAVA_LOADER_ID;
 import static org.mule.tck.MuleTestUtils.testWithSystemProperty;
+
+import org.junit.Rule;
 import org.mule.runtime.api.component.ConfigurationProperties;
 import org.mule.runtime.api.deployment.meta.MuleArtifactLoaderDescriptor;
 import org.mule.runtime.api.deployment.meta.MuleArtifactLoaderDescriptorBuilder;
@@ -63,17 +68,21 @@ import org.mule.runtime.api.exception.MuleFatalException;
 import org.mule.runtime.core.api.config.MuleConfiguration;
 import org.mule.runtime.core.api.config.MuleProperties;
 import org.mule.runtime.core.api.extension.ExtensionManager;
+import org.mule.runtime.core.api.util.func.CheckedRunnable;
 import org.mule.runtime.deployment.model.api.application.Application;
 import org.mule.runtime.deployment.model.api.application.ApplicationStatus;
 import org.mule.runtime.deployment.model.internal.application.MuleApplicationClassLoaderFactory;
 import org.mule.runtime.deployment.model.internal.nativelib.DefaultNativeLibraryFinderFactory;
 import org.mule.runtime.extension.api.loader.xml.XmlExtensionModelLoader;
 import org.mule.runtime.module.artifact.builder.TestArtifactDescriptor;
+import org.mule.runtime.module.deployment.api.DeploymentListener;
 import org.mule.runtime.module.deployment.impl.internal.builder.ApplicationFileBuilder;
 import org.mule.runtime.module.deployment.impl.internal.builder.ArtifactPluginFileBuilder;
 import org.mule.runtime.module.deployment.impl.internal.builder.JarFileBuilder;
 import org.mule.runtime.module.deployment.impl.internal.domain.DefaultDomainManager;
+import org.mule.tck.junit4.rule.SystemProperty;
 import org.mule.tck.util.CompilerUtils;
+import org.mule.tck.util.CompilerUtils.JarCompiler;
 import org.mule.tck.util.CompilerUtils.SingleClassCompiler;
 
 import java.io.File;
@@ -88,61 +97,49 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantLock;
 
 import io.qameta.allure.Description;
+import io.qameta.allure.Flaky;
 import io.qameta.allure.Issue;
 import org.apache.commons.io.IOUtils;
-import org.junit.BeforeClass;
+import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Test;
 
 /**
  * Contains test for application deployment on the default domain
  */
-public class ApplicationDeploymentTestCase extends AbstractDeploymentTestCase {
+public class ApplicationDeploymentTestCase extends AbstractApplicationDeploymentTestCase {
 
-  private static final String PRIVILEGED_EXTENSION_ARTIFACT_ID = "privilegedExtensionPlugin";
-  private static final String PRIVILEGED_EXTENSION_ARTIFACT_FULL_ID = "org.mule.test:" + PRIVILEGED_EXTENSION_ARTIFACT_ID;
-  private static final String APP_WITH_PRIVILEGED_EXTENSION_PLUGIN_CONFIG = "app-with-privileged-extension-plugin-config.xml";
-  private static final String BROKEN_CONFIG_XML = "/broken-config.xml";
+  private static final String OVERWRITTEN_PROPERTY = "configFile";
+  private static final String OVERWRITTEN_PROPERTY_SYSTEM_VALUE = "nonExistent.yaml";
+  private static final String OVERWRITTEN_PROPERTY_DEPLOYMENT_VALUE = "someProps.yaml";
 
-  // Classes and JAR resources
-  private static File pluginEcho3TestClassFile;
-  private static File pluginEcho2TestClassFile;
-  private static File privilegedExtensionV1JarFile;
+  protected ApplicationFileBuilder dummyAppDescriptorWithPropsDependencyFileBuilder;
 
-  // Application artifact builders
-  private final ApplicationFileBuilder incompleteAppFileBuilder =
-      new ApplicationFileBuilder("incomplete-app").definedBy("incomplete-app-config.xml");
-  private final ApplicationFileBuilder brokenAppFileBuilder = new ApplicationFileBuilder("broken-app").corrupted();
-  private final ApplicationFileBuilder brokenAppWithFunkyNameAppFileBuilder =
-      new ApplicationFileBuilder("broken-app+", brokenAppFileBuilder);
-  private final ApplicationFileBuilder waitAppFileBuilder =
-      new ApplicationFileBuilder("wait-app").definedBy("wait-app-config.xml");
-  private final ApplicationFileBuilder dummyAppDescriptorWithPropsFileBuilder = new ApplicationFileBuilder(
-                                                                                                           "dummy-app-with-props")
-                                                                                                               .definedBy("dummy-app-with-props-config.xml")
-                                                                                                               .containingClass(echoTestClassFile,
-                                                                                                                                "org/foo/EchoTest.class");;
-
-  // Application plugin artifact builders
-  private final ArtifactPluginFileBuilder echoPluginWithLib1 =
-      new ArtifactPluginFileBuilder("echoPlugin1").configuredWith(EXPORTED_CLASS_PACKAGES_PROPERTY, "org.foo")
-          .dependingOn(new JarFileBuilder("barUtils1", barUtils1_0JarFile))
-          .containingClass(pluginEcho1TestClassFile, "org/foo/Plugin1Echo.class");
-
-  @BeforeClass
-  public static void compileTestClasses() throws Exception {
-    pluginEcho2TestClassFile =
-        new CompilerUtils.SingleClassCompiler().dependingOn(barUtils2_0JarFile)
-            .compile(getResourceFile("/org/foo/echo/Plugin2Echo.java"));
-    pluginEcho3TestClassFile = new CompilerUtils.SingleClassCompiler().compile(getResourceFile("/org/foo/echo/Plugin3Echo.java"));
-
-    privilegedExtensionV1JarFile =
-        new CompilerUtils.ExtensionCompiler().compiling(getResourceFile("/org/foo/privileged/PrivilegedExtension.java"),
-                                                        getResourceFile("/org/foo/privileged/PrivilegedOperation.java"))
-            .compile("mule-module-privileged-1.0.jar", "1.0");
-  }
+  @Rule
+  public SystemProperty systemProperty = new SystemProperty(OVERWRITTEN_PROPERTY, OVERWRITTEN_PROPERTY_SYSTEM_VALUE);
 
   public ApplicationDeploymentTestCase(boolean parallelDeployment) {
     super(parallelDeployment);
+  }
+
+  @Before
+  public void before() {
+    incompleteAppFileBuilder = appFileBuilder("incomplete-app").definedBy("incomplete-app-config.xml");
+    brokenAppFileBuilder = appFileBuilder("broken-app").corrupted();
+    brokenAppWithFunkyNameAppFileBuilder = appFileBuilder("broken-app+", brokenAppFileBuilder);
+    waitAppFileBuilder = appFileBuilder("wait-app").definedBy("wait-app-config.xml");
+    dummyAppDescriptorWithPropsFileBuilder = appFileBuilder("dummy-app-with-props")
+        .definedBy("dummy-app-with-props-config.xml")
+        .containingClass(echoTestClassFile,
+                         "org/foo/EchoTest.class");
+    dummyAppDescriptorWithPropsDependencyFileBuilder = appFileBuilder("dummy-app-with-props-dependencies")
+        .definedBy("dummy-app-with-props-dependencies-config.xml");
+
+    // Application plugin artifact builders
+    echoPluginWithLib1 = new ArtifactPluginFileBuilder("echoPlugin1")
+        .configuredWith(EXPORTED_CLASS_PACKAGES_PROPERTY, "org.foo")
+        .dependingOn(new JarFileBuilder("barUtils1", barUtils1_0JarFile))
+        .containingClass(pluginEcho1TestClassFile, "org/foo/Plugin1Echo.class");
   }
 
   @Test
@@ -179,7 +176,7 @@ public class ApplicationDeploymentTestCase extends AbstractDeploymentTestCase {
   @Test
   public void appHomePropertyIsPresent() throws Exception {
     final ApplicationFileBuilder globalPropertyAppFileBuilder =
-        new ApplicationFileBuilder("property-app").definedBy("app-properties-config.xml");
+        appFileBuilder("property-app").definedBy("app-properties-config.xml");
 
     addExplodedAppFromBuilder(globalPropertyAppFileBuilder);
 
@@ -218,7 +215,7 @@ public class ApplicationDeploymentTestCase extends AbstractDeploymentTestCase {
   @Test
   public void deploysAppZipWithExtensionUpperCaseAfterStartup() throws Exception {
     final ApplicationFileBuilder dummyAppDescriptorFileBuilderWithUpperCaseInExtension =
-        new ApplicationFileBuilder("dummy-app", true)
+        appFileBuilder("dummy-app", true)
             .definedBy("dummy-app-config.xml").configuredWith("myCustomProp", "someValue")
             .containingClass(echoTestClassFile, "org/foo/EchoTest.class");
 
@@ -227,7 +224,7 @@ public class ApplicationDeploymentTestCase extends AbstractDeploymentTestCase {
 
   @Test
   public void deploysAppWithNonExistentConfigResourceOnDeclaration() throws Exception {
-    ApplicationFileBuilder appBundleNonExistentConfigResource = new ApplicationFileBuilder("non-existent-app-config-resource")
+    ApplicationFileBuilder appBundleNonExistentConfigResource = appFileBuilder("non-existent-app-config-resource")
         .definedBy("empty-config.xml").deployedWith(PROPERTY_CONFIG_RESOURCES, "mule-non-existent-config.xml");
 
     addPackedAppFromBuilder(appBundleNonExistentConfigResource);
@@ -271,6 +268,17 @@ public class ApplicationDeploymentTestCase extends AbstractDeploymentTestCase {
     redeployAndVerifyPropertyInRegistry(dummyAppDescriptorWithPropsFileBuilder.getId(), deploymentProperties,
                                         (registry) -> registry.lookupByName(FLOW_PROPERTY_NAME).get()
                                             .equals(FLOW_PROPERTY_NAME_VALUE_ON_REDEPLOY));
+  }
+
+  @Test
+  public void deploymentPropertiesUsedInConfigurationProperties() throws Exception {
+    Properties deploymentProperties = new Properties();
+    deploymentProperties.put(OVERWRITTEN_PROPERTY, OVERWRITTEN_PROPERTY_DEPLOYMENT_VALUE);
+    startDeployment();
+    deployAndVerifyPropertyInRegistry(dummyAppDescriptorWithPropsDependencyFileBuilder.getArtifactFile().toURI(),
+                                      deploymentProperties,
+                                      (registry) -> registry.lookupByName(OVERWRITTEN_PROPERTY).get()
+                                          .equals(OVERWRITTEN_PROPERTY_DEPLOYMENT_VALUE));
   }
 
   /**
@@ -352,7 +360,7 @@ public class ApplicationDeploymentTestCase extends AbstractDeploymentTestCase {
     reset(applicationDeploymentListener);
 
     ApplicationFileBuilder emptyAppFileBuilder =
-        new ApplicationFileBuilder("empty-app").usingResource("empty-config.xml", "empty-config.xml")
+        appFileBuilder("empty-app").usingResource("empty-config.xml", "empty-config.xml")
             .deployedWith(PROPERTY_CONFIG_RESOURCES, "empty-config.xml");
 
     addPackedAppFromBuilder(emptyAppFileBuilder);
@@ -367,7 +375,7 @@ public class ApplicationDeploymentTestCase extends AbstractDeploymentTestCase {
     addExplodedAppFromBuilder(emptyAppFileBuilder);
 
     ApplicationFileBuilder emptyAppFileBuilder =
-        new ApplicationFileBuilder("empty-app").usingResource("empty-config.xml", "empty-config.xml")
+        appFileBuilder("empty-app").usingResource("empty-config.xml", "empty-config.xml")
             .deployedWith(PROPERTY_CONFIG_RESOURCES, "empty-config.xml");
 
     addPackedAppFromBuilder(emptyAppFileBuilder);
@@ -625,6 +633,8 @@ public class ApplicationDeploymentTestCase extends AbstractDeploymentTestCase {
   }
 
   @Test
+  @Ignore("MULE-16403")
+  @Flaky
   public void redeploysInvalidExplodedAppAfterSuccessfulDeploymentAfterStartup() throws Exception {
     startDeployment();
 
@@ -726,7 +736,7 @@ public class ApplicationDeploymentTestCase extends AbstractDeploymentTestCase {
   public void removesZombieFilesAfterremovesZombieFilesAfterFailedAppIsDeleted() throws Exception {
     final String appName = "bad-config-app";
 
-    final ApplicationFileBuilder badConfigAppFileBuilder = new ApplicationFileBuilder(appName).definedBy("bad-app-config.xml");
+    final ApplicationFileBuilder badConfigAppFileBuilder = appFileBuilder(appName).definedBy("bad-app-config.xml");
 
     addPackedAppFromBuilder(badConfigAppFileBuilder);
     startDeployment();
@@ -784,7 +794,7 @@ public class ApplicationDeploymentTestCase extends AbstractDeploymentTestCase {
 
   @Test
   public void deployAppNameWithZipSuffix() throws Exception {
-    final ApplicationFileBuilder applicationFileBuilder = new ApplicationFileBuilder("empty-app.jar", emptyAppFileBuilder);
+    final ApplicationFileBuilder applicationFileBuilder = appFileBuilder("empty-app.jar", emptyAppFileBuilder);
     addPackedAppFromBuilder(applicationFileBuilder);
 
     startDeployment();
@@ -830,18 +840,18 @@ public class ApplicationDeploymentTestCase extends AbstractDeploymentTestCase {
   }
 
   private ApplicationFileBuilder createEmptyApp() {
-    return new ApplicationFileBuilder("empty-app").definedBy("empty-config.xml");
+    return appFileBuilder("empty-app").definedBy("empty-config.xml");
   }
 
   @Test
   public void deploysExplodedAppsInOrderWhenAppArgumentIsUsed() throws Exception {
     assumeThat(parallelDeployment, is(false));
 
-    ApplicationFileBuilder appFileBuilder1 = new ApplicationFileBuilder("1").definedBy("empty-config.xml");
+    ApplicationFileBuilder appFileBuilder1 = appFileBuilder("1").definedBy("empty-config.xml");
     addExplodedAppFromBuilder(appFileBuilder1);
-    ApplicationFileBuilder appFileBuilder2 = new ApplicationFileBuilder("2").definedBy("empty-config.xml");
+    ApplicationFileBuilder appFileBuilder2 = appFileBuilder("2").definedBy("empty-config.xml");
     addExplodedAppFromBuilder(appFileBuilder2);
-    ApplicationFileBuilder appFileBuilder3 = new ApplicationFileBuilder("3").definedBy("empty-config.xml");
+    ApplicationFileBuilder appFileBuilder3 = appFileBuilder("3").definedBy("empty-config.xml");
     addExplodedAppFromBuilder(appFileBuilder3);
 
     String apps = format("%s:%s:%s", appFileBuilder3.getId(), appFileBuilder1.getId(), appFileBuilder2.getId());
@@ -890,7 +900,7 @@ public class ApplicationDeploymentTestCase extends AbstractDeploymentTestCase {
     // Sets a modification time in the future
     File appFolder = new File(appsDir.getPath(), emptyAppFileBuilder.getId());
     File configFile = new File(appFolder, MULE_CONFIG_XML_FILE);
-    configFile.setLastModified(System.currentTimeMillis() + ONE_HOUR_IN_MILLISECONDS);
+    configFile.setLastModified(currentTimeMillis() + ONE_HOUR_IN_MILLISECONDS);
 
     startDeployment();
     assertApplicationDeploymentSuccess(applicationDeploymentListener, emptyAppFileBuilder.getId());
@@ -985,6 +995,48 @@ public class ApplicationDeploymentTestCase extends AbstractDeploymentTestCase {
 
     assertAppFolderIsDeleted(emptyAppFileBuilder.getId());
     assertStatus(app, DESTROYED);
+  }
+
+  @Test
+  public void deploymentFailureWhenDomainNotFound() throws Exception {
+    final DefaultDomainManager emptyDomainManager = new DefaultDomainManager();
+    TestApplicationFactory appFactory =
+        createTestApplicationFactory(new MuleApplicationClassLoaderFactory(new DefaultNativeLibraryFinderFactory()),
+                                     emptyDomainManager, serviceManager, extensionModelLoaderManager, moduleRepository,
+                                     createDescriptorLoaderRepository());
+    appFactory.setFailOnStopApplication(true);
+    deploymentService.setAppFactory(appFactory);
+
+    addPackedAppFromBuilder(emptyAppFileBuilder);
+    startDeployment();
+    assertDeploymentFailure(applicationDeploymentListener, emptyAppFileBuilder.getId());
+
+    reset(applicationDeploymentListener);
+    emptyDomainManager.addDomain(createDefaultDomain());
+    addPackedAppFromBuilder(emptyAppFileBuilder);
+    assertDeploymentSuccess(applicationDeploymentListener, emptyAppFileBuilder.getId());
+  }
+
+  @Test
+  public void deploymentSuccessWhenUsingDefaultDomain() throws Exception {
+    final DefaultDomainManager domainManager = new DefaultDomainManager();
+    TestApplicationFactory appFactory =
+        createTestApplicationFactory(new MuleApplicationClassLoaderFactory(new DefaultNativeLibraryFinderFactory()),
+                                     domainManager, serviceManager, extensionModelLoaderManager, moduleRepository,
+                                     createDescriptorLoaderRepository());
+    appFactory.setFailOnStopApplication(true);
+    deploymentService.setAppFactory(appFactory);
+
+    domainManager.addDomain(createDefaultDomain());
+    addPackedAppFromBuilder(emptyAppFileBuilder);
+    startDeployment();
+
+    assertDeploymentSuccess(applicationDeploymentListener, emptyAppFileBuilder.getId());
+  }
+
+  @Test
+  public void zaraza() {
+
   }
 
   @Test
@@ -1183,7 +1235,7 @@ public class ApplicationDeploymentTestCase extends AbstractDeploymentTestCase {
   @Test
   public void deploysAppZipWithPlugin() throws Exception {
     final ApplicationFileBuilder echoPluginAppFileBuilder =
-        new ApplicationFileBuilder("dummyWithEchoPlugin").definedBy("app-with-echo-plugin-config.xml").dependingOn(echoPlugin);
+        appFileBuilder("dummyWithEchoPlugin").definedBy("app-with-echo-plugin-config.xml").dependingOn(echoPlugin);
 
     addPackedAppFromBuilder(echoPluginAppFileBuilder);
 
@@ -1198,7 +1250,7 @@ public class ApplicationDeploymentTestCase extends AbstractDeploymentTestCase {
         .configuredWith(EXPORTED_CLASS_PACKAGES_PROPERTY, "org.foo")
         .containingClass(pluginEcho1TestClassFile, "org/foo/Plugin1Echo.class");
 
-    final ApplicationFileBuilder sharedLibPluginAppFileBuilder = new ApplicationFileBuilder("shared-plugin-lib-app")
+    final ApplicationFileBuilder sharedLibPluginAppFileBuilder = appFileBuilder("shared-plugin-lib-app")
         .definedBy("app-with-echo1-plugin-config.xml").dependingOn(echoPluginWithoutLib1)
         .dependingOnSharedLibrary(new JarFileBuilder("barUtils", barUtils1_0JarFile));
 
@@ -1220,7 +1272,7 @@ public class ApplicationDeploymentTestCase extends AbstractDeploymentTestCase {
         .configuredWith(EXPORTED_CLASS_PACKAGES_PROPERTY, "org.foo,org.bar")
         .containingClass(pluginEcho1TestClassFile, "org/foo/Plugin1Echo.class");
 
-    ApplicationFileBuilder sharedLibPluginAppFileBuilder = new ApplicationFileBuilder("shared-plugin-lib-app")
+    ApplicationFileBuilder sharedLibPluginAppFileBuilder = appFileBuilder("shared-plugin-lib-app")
         .definedBy("app-with-echo1-plugin-config.xml").dependingOn(echoPluginWithoutLib1)
         .dependingOnSharedLibrary(new JarFileBuilder("barUtils", barUtils1_0JarFile));
 
@@ -1239,11 +1291,11 @@ public class ApplicationDeploymentTestCase extends AbstractDeploymentTestCase {
   public void deploysAppWithExportedPackagePrecedenceOverPlugin() throws Exception {
     // Defines a plugin that contains org.bar package, which is also exported on the application
     ArtifactPluginFileBuilder echoPluginWithoutLib1 = new ArtifactPluginFileBuilder("echoPlugin1")
-        .configuredWith(EXPORTED_CLASS_PACKAGES_PROPERTY, "org.foo")
+        .configuredWith(EXPORTED_CLASS_PACKAGES_PROPERTY, "org.foo,org.bar")
         .containingClass(pluginEcho1TestClassFile, "org/foo/Plugin1Echo.class")
         .dependingOn(new JarFileBuilder("barUtils2_0", barUtils2_0JarFile));
 
-    ApplicationFileBuilder sharedLibPluginAppFileBuilder = new ApplicationFileBuilder("shared-plugin-lib-app")
+    ApplicationFileBuilder sharedLibPluginAppFileBuilder = appFileBuilder("shared-plugin-lib-app")
         .definedBy("app-with-echo1-plugin-config.xml").dependingOn(echoPluginWithoutLib1)
         .dependingOnSharedLibrary(new JarFileBuilder("barUtils", barUtils1_0JarFile));
 
@@ -1259,116 +1311,107 @@ public class ApplicationDeploymentTestCase extends AbstractDeploymentTestCase {
   }
 
   @Test
-  @Issue("MULE-13756")
-  @Description("Tests that code called form plugin's Processor cannot access internal resources/packages of the application")
-  public void deploysAppWithNotExportedPackageAndPlugin() throws Exception {
-    ArtifactPluginFileBuilder loadsAppResourcePlugin = new ArtifactPluginFileBuilder("loadsAppResourcePlugin")
-        .configuredWith(EXPORTED_CLASS_PACKAGES_PROPERTY, "org.foo")
-        .containingClass(loadsAppResourceCallbackClassFile, "org/foo/LoadsAppResourceCallback.class");
+  @Issue("MULE-17112")
+  @Description("If a plugin uses a library and the application sets another version of that library as a sharedLib, the plugin internally uses its own version of the lib and not the app's. "
+      + "Similar to deploysAppWithLibDifferentThanPlugin, but the bar2 dep in the app is shared in this case")
+  public void pluginWithDependencyAndConflictingVersionSharedByApp() throws Exception {
+    final ApplicationFileBuilder differentLibPluginAppFileBuilder = appFileBuilder("appWithLibDifferentThanPlugin")
+        .definedBy("app-plugin-different-lib-config.xml")
+        .dependingOn(echoPluginWithLib1)
+        .dependingOnSharedLibrary(new JarFileBuilder("barUtils2_0", barUtils2_0JarFile))
+        .containingClass(pluginEcho2TestClassFile, "org/foo/echo/Plugin2Echo.class");
 
-    ApplicationFileBuilder nonExposingAppFileBuilder = new ApplicationFileBuilder("non-exposing-app")
-        .configuredWith(EXPORTED_PACKAGES, "org.bar1")
-        .configuredWith(EXPORTED_RESOURCES, "test-resource.txt")
-        .definedBy("app-with-loads-app-resource-plugin-config.xml")
-        .containingClass(barUtils1ClassFile, "org/bar1/BarUtils.class")
-        .containingClass(barUtils2ClassFile, "org/bar2/BarUtils.class")
-        .containingResource("test-resource.txt", "test-resource.txt")
-        .containingResource("test-resource.txt", "test-resource-not-exported.txt")
-        .dependingOn(loadsAppResourcePlugin);
-
-    addPackedAppFromBuilder(nonExposingAppFileBuilder);
+    addPackedAppFromBuilder(differentLibPluginAppFileBuilder);
 
     startDeployment();
 
-    assertApplicationDeploymentSuccess(applicationDeploymentListener, nonExposingAppFileBuilder.getId());
+    assertDeploymentSuccess(applicationDeploymentListener, differentLibPluginAppFileBuilder.getId());
 
     executeApplicationFlow("main");
   }
 
   @Test
-  @Issue("MULE-13756")
-  @Description("Tests that code called form application's Processor can access internal resources/packages of the application")
-  public void deploysAppWithNotExportedPackage() throws Exception {
-    ApplicationFileBuilder nonExposingAppFileBuilder = new ApplicationFileBuilder("non-exposing-app")
-        .configuredWith(EXPORTED_PACKAGES, "org.bar1")
-        .configuredWith(EXPORTED_RESOURCES, "test-resource.txt")
-        .definedBy("app-with-loads-app-resource-plugin-config.xml")
-        .containingClass(loadsAppResourceCallbackClassFile, "org/foo/LoadsAppResourceCallback.class")
-        .containingClass(barUtils1ClassFile, "org/bar1/BarUtils.class")
-        .containingClass(barUtils2ClassFile, "org/bar2/BarUtils.class")
-        .containingResource("test-resource.txt", "test-resource.txt")
-        .containingResource("test-resource.txt", "test-resource-not-exported.txt");
+  @Issue("MULE-17225")
+  public void appOverridingContainerClassAlsoPluginLocal() throws Exception {
+    File pluginEchoJavaxTestClassFile =
+        new SingleClassCompiler().dependingOn(barUtilsJavaxJarFile)
+            .compile(getResourceFile("/org/foo/echo/PluginJavaxEcho.java"));
 
-    addPackedAppFromBuilder(nonExposingAppFileBuilder);
+    ArtifactPluginFileBuilder echoPluginWithJavaxLib = new ArtifactPluginFileBuilder("echoPlugin1")
+        .configuredWith(EXPORTED_CLASS_PACKAGES_PROPERTY, "org.foo.echo")
+        .dependingOn(new JarFileBuilder("barUtilsJavax", barUtilsJavaxJarFile))
+        .containingClass(pluginEchoJavaxTestClassFile, "org/foo/echo/PluginJavaxEcho.class");
+
+    final ApplicationFileBuilder withJavaxEchoPlugin = appFileBuilder("appWithJavaxEchoPlugin")
+        .definedBy("app-with-javax-echo-plugin-config.xml")
+        .configuredWith(EXPORTED_CLASS_PACKAGES_PROPERTY, "javax.annotation")
+        .dependingOn(echoPluginWithJavaxLib)
+        .dependingOn(new JarFileBuilder("barUtilsJavaxB",
+                                        new JarCompiler().compiling(getResourceFile("/javax/annotation/BarUtils.java"))
+                                            .compile("bar-javax-b.jar")));
+
+    addPackedAppFromBuilder(withJavaxEchoPlugin);
 
     startDeployment();
 
-    assertApplicationDeploymentSuccess(applicationDeploymentListener, nonExposingAppFileBuilder.getId());
+    assertDeploymentSuccess(applicationDeploymentListener, withJavaxEchoPlugin.getId());
 
     executeApplicationFlow("main");
   }
 
   @Test
-  @Issue("MULE-13756")
-  @Description("Tests that code called form plugin's ProcessorInterceptor cannot access internal resources/packages of the application")
-  public void deploysAppWithNotExportedPackageAndPluginWithInterceptors() throws Exception {
-    File loadsAppResourceInterceptorFactoryClassFile =
-        new SingleClassCompiler().compile(getResourceFile("/org/foo/LoadsAppResourceInterceptorFactory.java"));
-    File loadsAppResourceInterceptorClassFile =
-        new SingleClassCompiler().compile(getResourceFile("/org/foo/LoadsAppResourceInterceptor.java"));
+  @Description("Ensure that when a plugin2 depends on plugin1, when using something exported from plugin1, that is used")
+  public void pluginDependingAndExportingFromOtherPlugin() throws Exception {
+    ArtifactPluginFileBuilder echoPluginWithLib1 = new ArtifactPluginFileBuilder("echoPlugin1")
+        .configuredWith(EXPORTED_CLASS_PACKAGES_PROPERTY, "org.foo,org.bar")
+        .dependingOn(new JarFileBuilder("barUtils2", barUtils2_0JarFile))
+        .containingClass(pluginEcho1TestClassFile, "org/foo/Plugin1Echo.class");
 
-    ArtifactPluginFileBuilder loadsAppResourceInterceptorPlugin =
-        new ArtifactPluginFileBuilder("loadsAppResourceInterceptorPlugin")
-            .configuredWith(EXPORTED_CLASS_PACKAGES_PROPERTY, "org.lalala")
-            .containingClass(loadsAppResourceInterceptorFactoryClassFile, "org/foo/LoadsAppResourceInterceptorFactory.class")
-            .containingClass(loadsAppResourceInterceptorClassFile, "org/foo/LoadsAppResourceInterceptor.class")
-            .containingResource("registry-bootstrap-loads-app-resource-pif.properties",
-                                "META-INF/org/mule/runtime/core/config/registry-bootstrap.properties");
+    // this plugin depends on a version of bar but will actually use the one from the dependant plugin
+    ArtifactPluginFileBuilder echoPluginWithLib2 = new ArtifactPluginFileBuilder("echoPlugin2")
+        // org.foo and org.bar are exported because plugin1 exports them.
+        // Similar to how the dependency beteween http and sockets work.
+        .configuredWith(EXPORTED_CLASS_PACKAGES_PROPERTY, "org.foo.echo,org.foo,org.bar")
+        .dependingOn(echoPluginWithLib1)
+        .containingClass(pluginEcho2TestClassFile, "org/foo/echo/Plugin2Echo.class");
 
-    ApplicationFileBuilder nonExposingAppFileBuilder = new ApplicationFileBuilder("non-exposing-app")
-        .configuredWith(EXPORTED_PACKAGES, "org.bar1")
-        .configuredWith(EXPORTED_RESOURCES, "test-resource.txt")
-        .definedBy("app-with-plugin-bootstrap.xml")
-        .containingClass(barUtils1ClassFile, "org/bar1/BarUtils.class")
-        .containingClass(barUtils2ClassFile, "org/bar2/BarUtils.class")
-        .containingResource("test-resource.txt", "test-resource.txt")
-        .containingResource("test-resource.txt", "test-resource-not-exported.txt")
-        .dependingOn(loadsAppResourceInterceptorPlugin);
+    final ApplicationFileBuilder usesPlugin2 = appFileBuilder("usesPlugin3")
+        .definedBy("app-with-echo2-plugin-config.xml")
+        .dependingOn(echoPluginWithLib2);
 
-    addPackedAppFromBuilder(nonExposingAppFileBuilder);
+    addPackedAppFromBuilder(usesPlugin2);
 
     startDeployment();
 
-    assertApplicationDeploymentSuccess(applicationDeploymentListener, nonExposingAppFileBuilder.getId());
+    assertDeploymentSuccess(applicationDeploymentListener, usesPlugin2.getId());
 
     executeApplicationFlow("main");
   }
 
   @Test
-  @Issue("MULE-13756")
-  @Description("Tests that code called form application's ProcessorInterceptor can access internal resources/packages of the application")
-  public void deploysAppWithInterceptorsAndNotExportedPackage() throws Exception {
-    File loadsOwnResourceInterceptorFactoryClassFile =
-        new SingleClassCompiler().compile(getResourceFile("/org/foo/LoadsOwnResourceInterceptorFactory.java"));
-    File loadsOwnResourceInterceptorClassFile =
-        new SingleClassCompiler().compile(getResourceFile("/org/foo/LoadsOwnResourceInterceptor.java"));
+  @Description("Similar to pluginDependingAndExportingFromOtherPlugin, but for the case when there is no dependency between plugins. When plugin2 wants to use something local that is also exported by plugin1, the dependency local to plugin2 is used")
+  public void pluginNotDependingAndExportingFromOtherPlugin() throws Exception {
+    ArtifactPluginFileBuilder echoPluginWithLib1 = new ArtifactPluginFileBuilder("echoPlugin1")
+        .configuredWith(EXPORTED_CLASS_PACKAGES_PROPERTY, "org.foo,org.bar")
+        .dependingOn(new JarFileBuilder("barUtils1", barUtils1_0JarFile))
+        .containingClass(pluginEcho1TestClassFile, "org/foo/Plugin1Echo.class");
 
-    ApplicationFileBuilder nonExposingAppFileBuilder = new ApplicationFileBuilder("non-exposing-app")
-        .configuredWith(EXPORTED_PACKAGES, "org.bar1")
-        .configuredWith(EXPORTED_RESOURCES, "test-resource.txt")
-        .definedBy("app-with-interceptor.xml")
-        .containingClass(loadsOwnResourceInterceptorFactoryClassFile, "org/foo/LoadsOwnResourceInterceptorFactory.class")
-        .containingClass(loadsOwnResourceInterceptorClassFile, "org/foo/LoadsOwnResourceInterceptor.class")
-        .containingClass(barUtils1ClassFile, "org/bar1/BarUtils.class")
-        .containingClass(barUtils2ClassFile, "org/bar2/BarUtils.class")
-        .containingResource("test-resource.txt", "test-resource.txt")
-        .containingResource("test-resource.txt", "test-resource-not-exported.txt");
+    // this plugin depends on a version of bar but will actually use the one from the dependant plugin
+    ArtifactPluginFileBuilder echoPluginWithLib2 = new ArtifactPluginFileBuilder("echoPlugin2")
+        .configuredWith(EXPORTED_CLASS_PACKAGES_PROPERTY, "org.foo.echo")
+        .dependingOn(new JarFileBuilder("barUtils2", barUtils2_0JarFile))
+        .containingClass(pluginEcho2TestClassFile, "org/foo/echo/Plugin2Echo.class");
 
-    addPackedAppFromBuilder(nonExposingAppFileBuilder);
+    final ApplicationFileBuilder usesPlugin2 = appFileBuilder("usesPlugin3")
+        .definedBy("app-with-echo2-plugin-config.xml")
+        .dependingOn(echoPluginWithLib1)
+        .dependingOn(echoPluginWithLib2);
+
+    addPackedAppFromBuilder(usesPlugin2);
 
     startDeployment();
 
-    assertApplicationDeploymentSuccess(applicationDeploymentListener, nonExposingAppFileBuilder.getId());
+    assertDeploymentSuccess(applicationDeploymentListener, usesPlugin2.getId());
 
     executeApplicationFlow("main");
   }
@@ -1388,7 +1431,7 @@ public class ApplicationDeploymentTestCase extends AbstractDeploymentTestCase {
   public void deploysAppZipWithPrivilegedExtensionPlugin() throws Exception {
     ArtifactPluginFileBuilder privilegedExtensionPlugin = createPrivilegedExtensionPlugin();
 
-    ApplicationFileBuilder applicationFileBuilder = new ApplicationFileBuilder("privilegedPluginApp")
+    ApplicationFileBuilder applicationFileBuilder = appFileBuilder("privilegedPluginApp")
         .definedBy(APP_WITH_PRIVILEGED_EXTENSION_PLUGIN_CONFIG).dependingOn(privilegedExtensionPlugin);
     addPackedAppFromBuilder(applicationFileBuilder);
 
@@ -1404,7 +1447,7 @@ public class ApplicationDeploymentTestCase extends AbstractDeploymentTestCase {
             .dependingOn(new JarFileBuilder("privilegedExtensionV1", privilegedExtensionV1JarFile))
             .configuredWith(EXPORTED_RESOURCE_PROPERTY, "/");
 
-    ApplicationFileBuilder applicationFileBuilder = new ApplicationFileBuilder("invalidPrivilegedPluginApp")
+    ApplicationFileBuilder applicationFileBuilder = appFileBuilder("invalidPrivilegedPluginApp")
         .definedBy(APP_WITH_PRIVILEGED_EXTENSION_PLUGIN_CONFIG).dependingOn(invalidPrivilegedPlugin);
     addPackedAppFromBuilder(applicationFileBuilder);
 
@@ -1415,7 +1458,7 @@ public class ApplicationDeploymentTestCase extends AbstractDeploymentTestCase {
 
   @Test
   public void deploysWithExtensionXmlPlugin() throws Exception {
-    ApplicationFileBuilder applicationFileBuilder = new ApplicationFileBuilder("appWithExtensionXmlPlugin")
+    ApplicationFileBuilder applicationFileBuilder = appFileBuilder("appWithExtensionXmlPlugin")
         .definedBy("app-with-extension-xml-plugin-module-bye.xml").dependingOn(byeXmlExtensionPlugin);
     addPackedAppFromBuilder(applicationFileBuilder);
 
@@ -1435,7 +1478,7 @@ public class ApplicationDeploymentTestCase extends AbstractDeploymentTestCase {
 
   @Test
   public void deploysWithExtensionXmlPluginWithXmlDependencies() throws Exception {
-    ApplicationFileBuilder applicationFileBuilder = new ApplicationFileBuilder("appWithExtensionXmlPluginWithXmlDependencies")
+    ApplicationFileBuilder applicationFileBuilder = appFileBuilder("appWithExtensionXmlPluginWithXmlDependencies")
         .definedBy("app-with-extension-xml-plugin-module-using-bye.xml")
         .dependingOn(moduleUsingByeXmlExtensionPlugin);
     addPackedAppFromBuilder(applicationFileBuilder);
@@ -1475,7 +1518,7 @@ public class ApplicationDeploymentTestCase extends AbstractDeploymentTestCase {
         .dependingOn(new JarFileBuilder("echoTestJar", echoTestJarFile))
         .describedBy(builder.build());
 
-    ApplicationFileBuilder applicationFileBuilder = new ApplicationFileBuilder("appWithExtensionXmlPluginWithDependencies")
+    ApplicationFileBuilder applicationFileBuilder = appFileBuilder("appWithExtensionXmlPluginWithDependencies")
         .definedBy("app-with-extension-xml-plugin-module-using-java.xml")
         .dependingOn(byeXmlExtensionPlugin);
     addPackedAppFromBuilder(applicationFileBuilder);
@@ -1518,7 +1561,7 @@ public class ApplicationDeploymentTestCase extends AbstractDeploymentTestCase {
         .containingResource(dwlResourceTestFile, dwExportedFile)
         .describedBy(builder.build());
 
-    ApplicationFileBuilder applicationFileBuilder = new ApplicationFileBuilder("appWithExtensionResourcesXmlPlugin")
+    ApplicationFileBuilder applicationFileBuilder = appFileBuilder("appWithExtensionResourcesXmlPlugin")
         .definedBy("app-with-extension-xml-plugin-module-resources.xml").dependingOn(resourcesXmlPluginFileBuilder);
     addPackedAppFromBuilder(applicationFileBuilder);
 
@@ -1534,8 +1577,8 @@ public class ApplicationDeploymentTestCase extends AbstractDeploymentTestCase {
     startDeployment();
     assertDeploymentSuccess(applicationDeploymentListener, applicationFileBuilder.getId());
 
-    //final assertion is to guarantee the DWL file can be accessed in the app classloader (cannot evaluate the expression as the
-    //test uses a mocked expression evaluator
+    // final assertion is to guarantee the DWL file can be accessed in the app classloader (cannot evaluate the expression as the
+    // test uses a mocked expression evaluator
     final ClassLoader appClassLoader = deploymentService.getApplications().get(0).getArtifactClassLoader().getClassLoader();
     final URL appDwlResource = appClassLoader.getResource(dwExportedFile);
     assertThat(appDwlResource, not(nullValue()));
@@ -1557,7 +1600,7 @@ public class ApplicationDeploymentTestCase extends AbstractDeploymentTestCase {
     final ArtifactPluginFileBuilder byeXmlExtensionPlugin = new ArtifactPluginFileBuilder(extensionName)
         .describedBy(builder.build());
 
-    ApplicationFileBuilder applicationFileBuilder = new ApplicationFileBuilder("appWithExtensionXmlPluginFails")
+    ApplicationFileBuilder applicationFileBuilder = appFileBuilder("appWithExtensionXmlPluginFails")
         .definedBy("app-with-extension-xml-plugin-module-bye.xml").dependingOn(byeXmlExtensionPlugin);
     addPackedAppFromBuilder(applicationFileBuilder);
 
@@ -1580,7 +1623,7 @@ public class ApplicationDeploymentTestCase extends AbstractDeploymentTestCase {
     final ArtifactPluginFileBuilder byeXmlExtensionPlugin = new ArtifactPluginFileBuilder(extensionName)
         .describedBy(builder.build());
 
-    ApplicationFileBuilder applicationFileBuilder = new ApplicationFileBuilder("appWithExtensionXmlPluginFails")
+    ApplicationFileBuilder applicationFileBuilder = appFileBuilder("appWithExtensionXmlPluginFails")
         .definedBy("app-with-extension-xml-plugin-module-bye.xml").dependingOn(byeXmlExtensionPlugin);
     addPackedAppFromBuilder(applicationFileBuilder);
 
@@ -1596,7 +1639,7 @@ public class ApplicationDeploymentTestCase extends AbstractDeploymentTestCase {
         .containingClass(echoTestClassFile, "org/foo/EchoTest.class")
         .configuredWith(EXPORTED_RESOURCE_PROPERTY, BOOTSTRAP_PROPERTIES);
 
-    ApplicationFileBuilder applicationFileBuilder = new ApplicationFileBuilder("app-with-plugin-bootstrap")
+    ApplicationFileBuilder applicationFileBuilder = appFileBuilder("app-with-plugin-bootstrap")
         .definedBy("app-with-plugin-bootstrap.xml").dependingOn(pluginFileBuilder);
     addPackedAppFromBuilder(applicationFileBuilder);
 
@@ -1615,7 +1658,7 @@ public class ApplicationDeploymentTestCase extends AbstractDeploymentTestCase {
     ArtifactPluginFileBuilder extensionPlugin = new ArtifactPluginFileBuilder("extensionPlugin")
         .dependingOn(new JarFileBuilder("bundleExtensionv1", helloExtensionV1JarFile))
         .configuredWith(EXPORTED_RESOURCE_PROPERTY, "/, META-INF");
-    ApplicationFileBuilder applicationFileBuilder = new ApplicationFileBuilder("appWithExtensionPlugin")
+    ApplicationFileBuilder applicationFileBuilder = appFileBuilder("appWithExtensionPlugin")
         .definedBy(APP_WITH_EXTENSION_PLUGIN_CONFIG).dependingOn(extensionPlugin);
     addPackedAppFromBuilder(applicationFileBuilder);
 
@@ -1631,7 +1674,7 @@ public class ApplicationDeploymentTestCase extends AbstractDeploymentTestCase {
             .dependingOn(new JarFileBuilder("barUtils2", barUtils2_0JarFile))
             .containingClass(pluginEcho2TestClassFile, "org/foo/echo/Plugin2Echo.class");
 
-    final ApplicationFileBuilder multiLibPluginAppFileBuilder = new ApplicationFileBuilder("multiPluginLibVersion")
+    final ApplicationFileBuilder multiLibPluginAppFileBuilder = appFileBuilder("multiPluginLibVersion")
         .definedBy("multi-plugin-app-config.xml").dependingOn(echoPluginWithLib1).dependingOn(echoPluginWithLib2);
 
     addPackedAppFromBuilder(multiLibPluginAppFileBuilder);
@@ -1651,7 +1694,7 @@ public class ApplicationDeploymentTestCase extends AbstractDeploymentTestCase {
             .containingClass(pluginEcho3TestClassFile, "org/foo/echo/Plugin3Echo.class")
             .dependingOn(echoPlugin);
 
-    final TestArtifactDescriptor artifactFileBuilder = new ApplicationFileBuilder("plugin-depending-on-plugin-app")
+    final TestArtifactDescriptor artifactFileBuilder = appFileBuilder("plugin-depending-on-plugin-app")
         .definedBy("plugin-depending-on-plugin-app-config.xml").dependingOn(dependantPlugin);
     addPackedAppFromBuilder(artifactFileBuilder);
 
@@ -1693,7 +1736,7 @@ public class ApplicationDeploymentTestCase extends AbstractDeploymentTestCase {
                        "dependantPlugin-1.0.0-mule-plugin.jar")
                  .toFile());
 
-    final TestArtifactDescriptor artifactFileBuilder = new ApplicationFileBuilder("plugin-depending-on-plugin-app")
+    final TestArtifactDescriptor artifactFileBuilder = appFileBuilder("plugin-depending-on-plugin-app")
         .definedBy("plugin-depending-on-plugin-app-config.xml").dependingOn(dependantPlugin).usingLightWeightPackage();
     addPackedAppFromBuilder(artifactFileBuilder);
 
@@ -1716,7 +1759,7 @@ public class ApplicationDeploymentTestCase extends AbstractDeploymentTestCase {
             .containingClass(pluginEcho3TestClassFile, "org/foo/echo/Plugin3Echo.class")
             .dependingOn(echoPlugin);
 
-    final TestArtifactDescriptor artifactFileBuilder = new ApplicationFileBuilder("plugin-depending-on-plugin-app")
+    final TestArtifactDescriptor artifactFileBuilder = appFileBuilder("plugin-depending-on-plugin-app")
         .definedBy("plugin-depending-on-plugin-app-config.xml").dependingOn(dependantPlugin);
     addPackedAppFromBuilder(artifactFileBuilder);
 
@@ -1734,7 +1777,7 @@ public class ApplicationDeploymentTestCase extends AbstractDeploymentTestCase {
         new ArtifactPluginFileBuilder("dependantPlugin").configuredWith(EXPORTED_CLASS_PACKAGES_PROPERTY, "org.foo.echo")
             .containingClass(pluginEcho3TestClassFile, "org/foo/echo/Plugin3Echo.class");
 
-    final TestArtifactDescriptor artifactFileBuilder = new ApplicationFileBuilder("plugin-depending-on-plugin-app")
+    final TestArtifactDescriptor artifactFileBuilder = appFileBuilder("plugin-depending-on-plugin-app")
         .definedBy("plugin-depending-on-plugin-app-config.xml").dependingOn(dependantPlugin);
     addPackedAppFromBuilder(artifactFileBuilder);
 
@@ -1758,7 +1801,7 @@ public class ApplicationDeploymentTestCase extends AbstractDeploymentTestCase {
         new ArtifactPluginFileBuilder("dependantPlugin")
             .dependingOn(echoPlugin);
 
-    final TestArtifactDescriptor artifactFileBuilder = new ApplicationFileBuilder("plugin-depending-on-plugin-app")
+    final TestArtifactDescriptor artifactFileBuilder = appFileBuilder("plugin-depending-on-plugin-app")
         .definedBy("plugin-depending-on-plugin-app-config.xml").dependingOn(dependantPlugin);
     addPackedAppFromBuilder(artifactFileBuilder);
 
@@ -1770,7 +1813,7 @@ public class ApplicationDeploymentTestCase extends AbstractDeploymentTestCase {
   @Test
   public void deploysAppWithLibDifferentThanPlugin() throws Exception {
     final ApplicationFileBuilder differentLibPluginAppFileBuilder =
-        new ApplicationFileBuilder("appWithLibDifferentThanPlugin").definedBy("app-plugin-different-lib-config.xml")
+        appFileBuilder("appWithLibDifferentThanPlugin").definedBy("app-plugin-different-lib-config.xml")
             .dependingOn(echoPluginWithLib1).dependingOn(new JarFileBuilder("barUtils2_0", barUtils2_0JarFile))
             .containingClass(pluginEcho2TestClassFile, "org/foo/echo/Plugin2Echo.class");
 
@@ -1789,7 +1832,7 @@ public class ApplicationDeploymentTestCase extends AbstractDeploymentTestCase {
         new ArtifactPluginFileBuilder("resourcePlugin").configuredWith(EXPORTED_RESOURCE_PROPERTY, "/pluginResource.properties")
             .containingResource("pluginResourceSource.properties", "pluginResource.properties");
 
-    final ApplicationFileBuilder resourcePluginAppFileBuilder = new ApplicationFileBuilder("dummyWithPluginResource")
+    final ApplicationFileBuilder resourcePluginAppFileBuilder = appFileBuilder("dummyWithPluginResource")
         .definedBy("plugin-resource-app-config.xml").dependingOn(pluginWithResource);
 
     addPackedAppFromBuilder(resourcePluginAppFileBuilder);
@@ -1809,7 +1852,7 @@ public class ApplicationDeploymentTestCase extends AbstractDeploymentTestCase {
             .containingClass(resourceConsumerClassFile, "org/foo/resource/ResourceConsumer.class");
 
     final TestArtifactDescriptor artifactFileBuilder =
-        new ApplicationFileBuilder("appProvidingResourceForPlugin")
+        appFileBuilder("appProvidingResourceForPlugin")
             .definedBy("app-providing-resource-for-plugin.xml")
             .dependingOn(pluginUsingAppResource)
             .configuredWith(EXPORTED_RESOURCES, "META-INF/app-resource.txt")
@@ -1829,14 +1872,14 @@ public class ApplicationDeploymentTestCase extends AbstractDeploymentTestCase {
     final int totalApps = 20;
 
     for (int i = 1; i <= totalApps; i++) {
-      addExplodedAppFromBuilder(new ApplicationFileBuilder(Integer.toString(i), emptyAppFileBuilder));
+      addExplodedAppFromBuilder(appFileBuilder(Integer.toString(i), emptyAppFileBuilder));
     }
 
     startDeployment();
 
     for (int i = 1; i <= totalApps; i++) {
       assertDeploymentSuccess(applicationDeploymentListener,
-                              new ApplicationFileBuilder(Integer.toString(i), emptyAppFileBuilder).getId());
+                              appFileBuilder(Integer.toString(i), emptyAppFileBuilder).getId());
     }
   }
 
@@ -1932,11 +1975,10 @@ public class ApplicationDeploymentTestCase extends AbstractDeploymentTestCase {
     assertDeploymentSuccess(applicationDeploymentListener, dummyAppDescriptorFileBuilder.getId());
     final Application app = findApp(dummyAppDescriptorFileBuilder.getId(), 1);
 
-    File appTemporaryFolder = new File(app.getRegistry().<MuleConfiguration>lookupByName(MuleProperties.OBJECT_MULE_CONFIGURATION)
-        .get().getWorkingDirectory());
+    File metaFolder = getAppMetaFolder(app);
 
     // As this app has a plugin, the tmp directory must exist
-    assertThat(appTemporaryFolder.exists(), is(true));
+    assertThat(metaFolder, exists);
 
     // Remove the anchor file so undeployment starts
     assertTrue("Unable to remove anchor file", removeAppAnchorFile(dummyAppDescriptorFileBuilder.getId()));
@@ -1945,7 +1987,334 @@ public class ApplicationDeploymentTestCase extends AbstractDeploymentTestCase {
     assertStatus(app, DESTROYED);
 
     // Check the tmp directory was effectively removed
-    assertThat(appTemporaryFolder.exists(), is(false));
+    assertThat(metaFolder, not(exists));
+  }
+
+  @Test
+  public void explodedAppRedeploymentDoesNotDeleteTempFile() throws Exception {
+    testTempFileOnRedeployment(() -> addExplodedAppFromBuilder(emptyAppFileBuilder),
+                               () -> addExplodedAppFromBuilder(emptyAppFileBuilder));
+  }
+
+  @Test
+  public void packedAppRedeploymentDoesNotDeleteTempFile() throws Exception {
+    testTempFileOnRedeployment(() -> addPackedAppFromBuilder(emptyAppFileBuilder),
+                               () -> addPackedAppFromBuilder(emptyAppFileBuilder));
+  }
+
+  @Test
+  public void packedAppRedeploymentWithExplodedDoesNotDeleteTempFile() throws Exception {
+    testTempFileOnRedeployment(() -> addPackedAppFromBuilder(emptyAppFileBuilder),
+                               () -> addExplodedAppFromBuilder(emptyAppFileBuilder));
+  }
+
+  @Test
+  public void explodedAppRedeploymentWithPackedDoesNotDeleteTempFile() throws Exception {
+    testTempFileOnRedeployment(() -> addExplodedAppFromBuilder(emptyAppFileBuilder),
+                               () -> addPackedAppFromBuilder(emptyAppFileBuilder));
+  }
+
+  @Test
+  @Issue("MULE-16995")
+  @Description("This test covers an scenario where an app declares extensions-api as a shared library while using a privileged extension.")
+  public void appWithUnneededExtensionsApiDepDeploys() throws Exception {
+    String extensionsApiLib = getProperty("extensionsApiLib");
+    assumeThat(extensionsApiLib == null, is(false));
+
+    final ApplicationFileBuilder applicationFileBuilder = appFileBuilder("privilegedPluginApp")
+        .definedBy(APP_WITH_PRIVILEGED_EXTENSION_PLUGIN_CONFIG)
+        .dependingOn(createPrivilegedExtensionPlugin())
+        .dependingOnSharedLibrary(new JarFileBuilder("mule-extensions-api", new File(extensionsApiLib))
+            .withGroupId("org.mule.runtime")
+            .withVersion("1.1.6"));
+    addPackedAppFromBuilder(applicationFileBuilder);
+
+    startDeployment();
+    assertDeploymentSuccess(applicationDeploymentListener, applicationFileBuilder.getId());
+  }
+
+  @Test
+  public void appIncludingForbiddenJavaClass() throws Exception {
+    final ApplicationFileBuilder forbidden = appFileBuilder("forbidden")
+        .definedBy("app-with-forbidden-java-echo-plugin-config.xml")
+        .containingClass(pluginForbiddenJavaEchoTestClassFile, "org/foo/echo/PluginForbiddenJavaEcho.class")
+        .dependingOn(new JarFileBuilder("barUtilsForbiddenJavaJarFile", barUtilsForbiddenJavaJarFile));
+
+    addPackedAppFromBuilder(forbidden);
+
+    startDeployment();
+
+    assertDeploymentSuccess(applicationDeploymentListener, forbidden.getId());
+
+    try {
+      executeApplicationFlow("main");
+      fail("Expected to fail as there should be a missing class");
+    } catch (Exception e) {
+      assertThat(e.getCause().getCause(), instanceOf(MuleFatalException.class));
+      assertThat(e.getCause().getCause().getCause(), instanceOf(NoClassDefFoundError.class));
+      assertThat(e.getCause().getCause().getCause().getMessage(), containsString("java/lang/BarUtils"));
+    }
+  }
+
+  @Test
+  public void appIncludingForbiddenMuleContainerClass() throws Exception {
+    final ApplicationFileBuilder forbidden = appFileBuilder("forbidden")
+        .definedBy("app-with-forbidden-mule-echo-plugin-config.xml")
+        .containingClass(pluginForbiddenMuleContainerEchoTestClassFile, "org/foo/echo/PluginForbiddenMuleContainerEcho.class")
+        .dependingOn(new JarFileBuilder("barUtilsForbiddenMuleContainerJarFile", barUtilsForbiddenMuleContainerJarFile));
+
+    addPackedAppFromBuilder(forbidden);
+
+    startDeployment();
+
+    assertDeploymentSuccess(applicationDeploymentListener, forbidden.getId());
+
+    try {
+      executeApplicationFlow("main");
+      fail("Expected to fail as there should be a missing class");
+    } catch (Exception e) {
+      assertThat(e.getCause().getCause(), instanceOf(MuleFatalException.class));
+      assertThat(e.getCause().getCause().getCause(), instanceOf(NoClassDefFoundError.class));
+      assertThat(e.getCause().getCause().getCause().getMessage(), containsString("org/mule/runtime/api/util/BarUtils"));
+    }
+  }
+
+  @Test
+  public void appIncludingForbiddenMuleContainerThirdParty() throws Exception {
+    final ApplicationFileBuilder forbidden = appFileBuilder("forbidden")
+        .definedBy("app-with-forbidden-mule3rd-echo-plugin-config.xml")
+        .containingClass(pluginForbiddenMuleThirdPartyEchoTestClassFile, "org/foo/echo/PluginForbiddenMuleThirdPartyEcho.class")
+        .dependingOn(new JarFileBuilder("barUtilsForbiddenMuleThirdPartyJarFile", barUtilsForbiddenMuleThirdPartyJarFile));
+
+    addPackedAppFromBuilder(forbidden);
+
+    startDeployment();
+
+    assertDeploymentSuccess(applicationDeploymentListener, forbidden.getId());
+
+    try {
+      executeApplicationFlow("main");
+      fail("Expected to fail as there should be a missing class");
+    } catch (Exception e) {
+      assertThat(e.getCause().getCause(), instanceOf(MuleFatalException.class));
+      assertThat(e.getCause().getCause().getCause(), instanceOf(NoClassDefFoundError.class));
+      assertThat(e.getCause().getCause().getCause().getMessage(), containsString("org/slf4j/BarUtils"));
+    }
+  }
+
+  @Test
+  public void pluginIncludingForbiddenJavaClass() throws Exception {
+    ArtifactPluginFileBuilder echoPluginWithLib = new ArtifactPluginFileBuilder("echoPlugin2")
+        .configuredWith(EXPORTED_CLASS_PACKAGES_PROPERTY, "org.foo.echo")
+        .containingClass(pluginForbiddenJavaEchoTestClassFile, "org/foo/echo/PluginForbiddenJavaEcho.class")
+        .dependingOn(new JarFileBuilder("barUtilsForbiddenJavaJarFile", barUtilsForbiddenJavaJarFile));
+
+    final ApplicationFileBuilder usesPlugin2 = appFileBuilder("usesPlugin2")
+        .definedBy("app-with-forbidden-java-echo-plugin-config.xml")
+        .dependingOn(echoPluginWithLib);
+
+    addPackedAppFromBuilder(usesPlugin2);
+
+    startDeployment();
+
+    assertDeploymentSuccess(applicationDeploymentListener, usesPlugin2.getId());
+
+    try {
+      executeApplicationFlow("main");
+      fail("Expected to fail as there should be a missing class");
+    } catch (Exception e) {
+      assertThat(e.getCause().getCause(), instanceOf(MuleFatalException.class));
+      assertThat(e.getCause().getCause().getCause(), instanceOf(NoClassDefFoundError.class));
+      assertThat(e.getCause().getCause().getCause().getMessage(), containsString("java/lang/BarUtils"));
+    }
+  }
+
+  @Test
+  public void pluginIncludingForbiddenMuleContainerClass() throws Exception {
+    ArtifactPluginFileBuilder echoPluginWithLib = new ArtifactPluginFileBuilder("echoPlugin2")
+        .configuredWith(EXPORTED_CLASS_PACKAGES_PROPERTY, "org.foo.echo")
+        .containingClass(pluginForbiddenMuleContainerEchoTestClassFile, "org/foo/echo/PluginForbiddenMuleContainerEcho.class")
+        .dependingOn(new JarFileBuilder("barUtilsForbiddenMuleContainerJarFile", barUtilsForbiddenMuleContainerJarFile));
+
+    final ApplicationFileBuilder usesPlugin2 = appFileBuilder("usesPlugin2")
+        .definedBy("app-with-forbidden-mule-echo-plugin-config.xml")
+        .dependingOn(echoPluginWithLib);
+
+    addPackedAppFromBuilder(usesPlugin2);
+
+    startDeployment();
+
+    assertDeploymentSuccess(applicationDeploymentListener, usesPlugin2.getId());
+
+    try {
+      executeApplicationFlow("main");
+      fail("Expected to fail as there should be a missing class");
+    } catch (Exception e) {
+      assertThat(e.getCause().getCause(), instanceOf(MuleFatalException.class));
+      assertThat(e.getCause().getCause().getCause(), instanceOf(NoClassDefFoundError.class));
+      assertThat(e.getCause().getCause().getCause().getMessage(), containsString("org/mule/runtime/api/util/BarUtils"));
+    }
+  }
+
+  @Test
+  public void pluginIncludingForbiddenMuleContainerThirdParty() throws Exception {
+    ArtifactPluginFileBuilder echoPluginWithLib = new ArtifactPluginFileBuilder("echoPlugin2")
+        .configuredWith(EXPORTED_CLASS_PACKAGES_PROPERTY, "org.foo.echo")
+        .containingClass(pluginForbiddenMuleThirdPartyEchoTestClassFile, "org/foo/echo/PluginForbiddenMuleThirdPartyEcho.class")
+        .dependingOn(new JarFileBuilder("barUtilsForbiddenMuleThirdPartyJarFile", barUtilsForbiddenMuleThirdPartyJarFile));
+
+    final ApplicationFileBuilder usesPlugin2 = appFileBuilder("usesPlugin2")
+        .definedBy("app-with-forbidden-mule3rd-echo-plugin-config.xml")
+        .dependingOn(echoPluginWithLib);
+
+    addPackedAppFromBuilder(usesPlugin2);
+
+    startDeployment();
+
+    assertDeploymentSuccess(applicationDeploymentListener, usesPlugin2.getId());
+
+    try {
+      executeApplicationFlow("main");
+      fail("Expected to fail as there should be a missing class");
+    } catch (Exception e) {
+      assertThat(e.getCause().getCause(), instanceOf(MuleFatalException.class));
+      assertThat(e.getCause().getCause().getCause(), instanceOf(NoClassDefFoundError.class));
+      assertThat(e.getCause().getCause().getCause().getMessage(), containsString("org/slf4j/BarUtils"));
+    }
+  }
+
+  @Test
+  public void redeployMethodRedeploysIfApplicationIsAlreadyDeployedPacked() throws Exception {
+    DeploymentListener mockDeploymentListener = spy(new DeploymentStatusTracker());
+    deploymentService.addDeploymentListener(mockDeploymentListener);
+
+    // Deploy an application (packed)
+    addPackedAppFromBuilder(dummyAppDescriptorFileBuilder);
+    startDeployment();
+
+    // Application was deployed
+    assertApplicationDeploymentSuccess(applicationDeploymentListener, dummyAppDescriptorFileBuilder.getId());
+    verify(mockDeploymentListener, times(1)).onDeploymentSuccess(dummyAppDescriptorFileBuilder.getId());
+    verify(mockDeploymentListener, times(0)).onRedeploymentSuccess(dummyAppDescriptorFileBuilder.getId());
+
+    reset(mockDeploymentListener);
+
+    // Redeploy by using redeploy method
+    deploymentService.redeploy(dummyAppDescriptorFileBuilder.getArtifactFile().toURI());
+
+    // Application was redeployed
+    verify(mockDeploymentListener, times(1)).onRedeploymentSuccess(dummyAppDescriptorFileBuilder.getId());
+  }
+
+  @Test
+  public void redeployMethodRedeploysIfApplicationIsAlreadyDeployedExploded() throws Exception {
+    DeploymentListener mockDeploymentListener = spy(new DeploymentStatusTracker());
+    deploymentService.addDeploymentListener(mockDeploymentListener);
+
+    // Deploy an application (exploded)
+    addExplodedAppFromBuilder(dummyAppDescriptorFileBuilder);
+    startDeployment();
+
+    // Application was deployed
+    assertApplicationDeploymentSuccess(applicationDeploymentListener, dummyAppDescriptorFileBuilder.getId());
+    verify(mockDeploymentListener, times(1)).onDeploymentSuccess(dummyAppDescriptorFileBuilder.getId());
+    verify(mockDeploymentListener, times(0)).onRedeploymentSuccess(dummyAppDescriptorFileBuilder.getId());
+
+    // Redeploy by using redeploy method
+    deploymentService.redeploy(dummyAppDescriptorFileBuilder.getArtifactFile().toURI());
+
+    // Application was redeployed
+    verify(mockDeploymentListener, times(1)).onRedeploymentSuccess(dummyAppDescriptorFileBuilder.getId());
+  }
+
+  @Test
+  public void deployMethodRedeploysIfApplicationIsAlreadyDeployedPacked() throws Exception {
+    DeploymentListener mockDeploymentListener = spy(new DeploymentStatusTracker());
+    deploymentService.addDeploymentListener(mockDeploymentListener);
+
+    // Deploy an application (packed)
+    addPackedAppFromBuilder(dummyAppDescriptorFileBuilder);
+    startDeployment();
+
+    // Application was deployed
+    assertApplicationDeploymentSuccess(applicationDeploymentListener, dummyAppDescriptorFileBuilder.getId());
+    verify(mockDeploymentListener, times(1)).onDeploymentSuccess(
+                                                                 dummyAppDescriptorFileBuilder.getId());
+    verify(mockDeploymentListener, times(0)).onRedeploymentSuccess(
+                                                                   dummyAppDescriptorFileBuilder.getId());
+
+    reset(mockDeploymentListener);
+
+    // Redeploy by using deploy method
+    deploymentService.deploy(dummyAppDescriptorFileBuilder.getArtifactFile().toURI());
+
+    // Application was redeployed
+    verify(mockDeploymentListener, times(1)).onRedeploymentSuccess(
+                                                                   dummyAppDescriptorFileBuilder.getId());
+  }
+
+  @Test
+  public void deployMethodRedeploysIfApplicationIsAlreadyDeployedExploded() throws Exception {
+    DeploymentListener mockDeploymentListener = spy(new DeploymentStatusTracker());
+    deploymentService.addDeploymentListener(mockDeploymentListener);
+
+    // Deploy an application (exploded)
+    addExplodedAppFromBuilder(dummyAppDescriptorFileBuilder);
+    startDeployment();
+
+    // Application was deployed
+    assertApplicationDeploymentSuccess(applicationDeploymentListener, dummyAppDescriptorFileBuilder.getId());
+    verify(mockDeploymentListener, times(1)).onDeploymentSuccess(
+                                                                 dummyAppDescriptorFileBuilder.getId());
+    verify(mockDeploymentListener, times(0)).onRedeploymentSuccess(
+                                                                   dummyAppDescriptorFileBuilder.getId());
+
+    // Redeploy by using deploy method
+    deploymentService.deploy(dummyAppDescriptorFileBuilder.getArtifactFile().toURI());
+
+    // Application was redeployed
+    verify(mockDeploymentListener, times(1)).onRedeploymentSuccess(
+                                                                   dummyAppDescriptorFileBuilder.getId());
+  }
+
+  private void testTempFileOnRedeployment(CheckedRunnable deployApp, CheckedRunnable redeployApp) throws Exception {
+    final String TEST_FILE_NAME = "testFile";
+    startDeployment();
+    deployApp.run();
+    assertDeploymentSuccess(applicationDeploymentListener, emptyAppFileBuilder.getId());
+
+    Application app = findApp(emptyAppFileBuilder.getId(), 1);
+
+    final File preRedeploymentMetaFolder = getAppMetaFolder(app);
+
+    // Add test files to check if any of them was deleted
+    final File preRedeploymentMetaTestFile = new File(preRedeploymentMetaFolder, TEST_FILE_NAME);
+    preRedeploymentMetaTestFile.createNewFile();
+
+    assertThat(preRedeploymentMetaTestFile, exists);
+
+    reset(applicationDeploymentListener);
+
+    // file.lastModified() has seconds precision(it truncates the milliseconds timestamp, adding 3 zeroes at the end).
+    // This forces the first none-zero digit (from the right) to be different and trigger redeployment.
+    Thread.sleep(1000);
+
+
+    redeployApp.run();
+
+    assertApplicationRedeploymentSuccess(emptyAppFileBuilder.getId());
+
+    app = findApp(emptyAppFileBuilder.getId(), 1);
+    final File postRedeploymentMetaFolder = getAppMetaFolder(app);
+    final File postRedeploymentMetaTestFile = new File(postRedeploymentMetaFolder, TEST_FILE_NAME);
+
+    assertThat(postRedeploymentMetaFolder, exists);
+    assertThat(postRedeploymentMetaTestFile, exists);
+  }
+
+  private File getAppMetaFolder(Application app) {
+    return new File((app.getRegistry().<MuleConfiguration>lookupByName(MuleProperties.OBJECT_MULE_CONFIGURATION).get()
+        .getWorkingDirectory()));
   }
 
   private ArtifactPluginFileBuilder createPrivilegedExtensionPlugin() {

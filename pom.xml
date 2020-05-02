@@ -5,7 +5,7 @@
     <groupId>org.mule.runtime</groupId>
     <artifactId>mule</artifactId>
     <packaging>pom</packaging>
-    <version>4.2.0-SNAPSHOT</version>
+    <version>4.4.0-SNAPSHOT</version>
 
     <!-- Organization -->
     <organization>
@@ -138,7 +138,6 @@
 
         <project.build.sourceEncoding>ISO-8859-1</project.build.sourceEncoding>
         <vmtype>org.eclipse.jdt.internal.debug.ui.launcher.StandardVMType</vmtype>
-        <xDocLint>-Xdoclint:none</xDocLint>
         <!--
             The above project.url will not be picked up in the manifest,
             instead a module artifact id is erroneously substituted.
@@ -153,20 +152,20 @@
         <jdk8Name>JavaSE-${javaVersion}</jdk8Name>
 
         <activemqVersion>5.11.1</activemqVersion>
-        <antVersion>1.9.6</antVersion>
+        <antVersion>1.9.14</antVersion>
         <assertJVersion>3.5.2</assertJVersion>
         <aspectjVersion>1.9.2</aspectjVersion>
         <apacheHttpClientVersion>4.5.3</apacheHttpClientVersion>
         <awaitilityVersion>1.7.0</awaitilityVersion>
-        <bouncycastleVersion>1.60</bouncycastleVersion>
-        <c3p0Version>0.9.5.2-MULE-001</c3p0Version>
-        <caffeineVersion>2.6.2</caffeineVersion>
-        <cglibVersion>3.2.6</cglibVersion>
+        <bouncycastleVersion>1.61</bouncycastleVersion>
+        <c3p0Version>0.9.5.4</c3p0Version>
+        <caffeineVersion>2.8.0</caffeineVersion>
+        <cglibVersion>3.2.10</cglibVersion>
         <cometdVersion>6.1.26</cometdVersion>
-        <commonsBeanUtilsVersion>1.9.3</commonsBeanUtilsVersion>
+        <commonsBeanUtilsVersion>1.9.4</commonsBeanUtilsVersion>
         <commonsExecVersion>1.2</commonsExecVersion>
         <commonsCliVersion>1.2</commonsCliVersion>
-        <commonsCodecVersion>1.11</commonsCodecVersion>
+        <commonsCodecVersion>1.13</commonsCodecVersion>
         <commonsCollectionsVersion>3.2.2</commonsCollectionsVersion>
         <commonsDbcpVersion>1.4</commonsDbcpVersion>
         <commonsDbUtilsVersion>1.7</commonsDbUtilsVersion>
@@ -176,12 +175,11 @@
         <commonsLangVersion>3.8.1</commonsLangVersion>
         <commonsNetVersion>3.6</commonsNetVersion>
         <commonsPoolVersion>1.6</commonsPoolVersion>
-        <commonsPool2Version>2.5.0</commonsPool2Version>
+        <commonsPool2Version>2.6.2</commonsPool2Version>
         <commonsMath3Version>3.6.1</commonsMath3Version>
-        <corbaVersion>4.1.0</corbaVersion>
         <derbyVersion>10.13.1.1</derbyVersion>
-        <dom4jVersion>1.6.1</dom4jVersion>
-        <eaioUuidVersion>3.4.2</eaioUuidVersion>
+        <dom4jVersion>2.1.1</dom4jVersion>
+        <eaioUuidVersion>3.4.2-MULE-001</eaioUuidVersion>
         <fastUtilVersion>8.1.1</fastUtilVersion>
         <everitJsonSchemaVersion>1.5.1</everitJsonSchemaVersion>
         <geronimoSpecsJ2eeVersion>2.0.0</geronimoSpecsJ2eeVersion>
@@ -191,55 +189,57 @@
         <groovyVersion>2.4.15</groovyVersion>
         <guavaVersion>25.1-jre</guavaVersion>
         <hamcrestVersion>1.3</hamcrestVersion>
-        <jacksonVersion>1.9.11</jacksonVersion>
+        <jacksonVersion>1.9.14-MULE-002</jacksonVersion>
         <javax.annotation.version>1.3.2</javax.annotation.version>
         <javax.inject.version>1</javax.inject.version>
-        <javax.transaction.version>1.2</javax.transaction.version>
+        <javax.transaction.version>1.3</javax.transaction.version>
         <jerseyVersion>2.11</jerseyVersion>
         <javassistVersion>3.7.ga</javassistVersion>
         <javaMailVersion>1.6.2</javaMailVersion>
-        <javaXmlBindVersion>2.3.0-MULE-001</javaXmlBindVersion>
-        <jaxenVersion>1.1.1</jaxenVersion>
+        <javaXmlBindVersion>2.3.1-MULE-001</javaXmlBindVersion>
         <jdomVersion>1.1.3</jdomVersion>
         <jettyVersion>9.0.7.v20131107</jettyVersion>
+        <jgraphtVersion>1.3.1</jgraphtVersion>
         <jodaTimeVersion>2.9.1</jodaTimeVersion>
         <jsonVersion>20140107</jsonVersion>
         <junitVersion>4.12</junitVersion>
-        <log4jVersion>2.11.0</log4jVersion>
+        <log4jVersion>2.13.1</log4jVersion>
         <disruptorVersion>3.3.7</disruptorVersion>
-        <mockitoVersion>1.10.19</mockitoVersion>
+        <mockitoVersion>2.26.0</mockitoVersion>
+        <byteBuddyVersion>1.10.7</byteBuddyVersion>
         <multithreadedtcVersion>1.01</multithreadedtcVersion>
         <mysqlDriverVersion>5.1.33</mysqlDriverVersion>
-        <projectReactorVersion>3.2.0.RELEASE</projectReactorVersion>
-        <projectReactorExtraVersion>3.1.6.RELEASE</projectReactorExtraVersion>
+        <projectReactorVersion>3.2.12.RELEASE</projectReactorVersion>
+        <projectReactorExtraVersion>3.2.3.RELEASE</projectReactorExtraVersion>
         <reflectionsVersion>0.9.10</reflectionsVersion>
         <typesafeConfigVersion>1.3.1</typesafeConfigVersion>
-        <saxonVersion>9.7.0-15</saxonVersion>
-        <slf4jVersion>1.7.25</slf4jVersion>
-        <snakeYamlVersion>1.21</snakeYamlVersion>
-        <springVersion>5.1.0.RELEASE</springVersion>
+        <saxonVersion>9.9.1-1</saxonVersion>
+        <slf4jVersion>1.7.30</slf4jVersion>
+        <snakeYamlVersion>1.23</snakeYamlVersion>
+        <springVersion>5.1.6.RELEASE</springVersion>
         <sshCoreVersion>1.4.0</sshCoreVersion>
         <staxUtilsVersion>20080702</staxUtilsVersion>
         <testFtpServerVersion>1.0.6</testFtpServerVersion>
         <unirestVersion>1.4.9</unirestVersion>
-        <weaveVersion>2.2.0-SNAPSHOT</weaveVersion>
+        <weaveVersion>2.3.0-SNAPSHOT</weaveVersion>
         <woodstoxVersion>4.4.1</woodstoxVersion>
         <wrapperVersion>3.2.3</wrapperVersion>
         <xaPoolVersion>1.5.0</xaPoolVersion>
-        <allureJunitVersion>2.6.0</allureJunitVersion>
-        <allureReportVersion>2.6.0</allureReportVersion>
-        <muleMvelVersion>2.1.9-MULE-018</muleMvelVersion>
+        <allureJunitVersion>2.8.1</allureJunitVersion>
+        <allureReportVersion>2.8.1</allureReportVersion>
+        <muleMvelVersion>2.1.9-MULE-020</muleMvelVersion>
 
         <!-- Mule Snapshot Dependencies -->
-        <muleDslApiVersion>1.2.0-SNAPSHOT</muleDslApiVersion>
-        <muleExtensionsApiVersion>1.2.0-SNAPSHOT</muleExtensionsApiVersion>
-        <muleHttpPolicyApiVersion>1.2.0-SNAPSHOT</muleHttpPolicyApiVersion>
-        <muleMavenClientApi>1.2.0-SNAPSHOT</muleMavenClientApi>
-        <muleMavenClientImpl>1.2.0-SNAPSHOT</muleMavenClientImpl>
-        <muleMavenClientTest>1.2.0-SNAPSHOT</muleMavenClientTest>
-        <mulePolicyApiVersion>1.2.0-SNAPSHOT</mulePolicyApiVersion>
-        <muleApiVersion>1.2.0-SNAPSHOT</muleApiVersion>
-        <muleMetadataModelVersion>1.2.0-SNAPSHOT</muleMetadataModelVersion>
+        <muleDslApiVersion>1.4.0-SNAPSHOT</muleDslApiVersion>
+        <muleAstVersion>1.0.0-SNAPSHOT</muleAstVersion>
+        <muleExtensionsApiVersion>1.4.0-SNAPSHOT</muleExtensionsApiVersion>
+        <muleHttpPolicyApiVersion>1.4.0-SNAPSHOT</muleHttpPolicyApiVersion>
+        <muleMavenClientApi>1.6.0-SNAPSHOT</muleMavenClientApi>
+        <muleMavenClientImpl>1.6.0-SNAPSHOT</muleMavenClientImpl>
+        <muleMavenClientTest>1.6.0-SNAPSHOT</muleMavenClientTest>
+        <mulePolicyApiVersion>1.4.0-SNAPSHOT</mulePolicyApiVersion>
+        <muleApiVersion>1.4.0-SNAPSHOT</muleApiVersion>
+        <muleMetadataModelVersion>1.4.0-SNAPSHOT</muleMetadataModelVersion>
         <metadataModelApiVersion>${muleMetadataModelVersion}</metadataModelApiVersion>
 
         <!-- Test Extensions -->
@@ -254,7 +254,7 @@
         <rar.plugin.version>2.4</rar.plugin.version>
         <release.plugin.version>2.5.3</release.plugin.version>
         <resources.plugin.version>3.0.2</resources.plugin.version>
-        <site.plugin.version>3.6</site.plugin.version>
+        <site.plugin.version>3.8.2</site.plugin.version>
         <source.plugin.version>3.0.1</source.plugin.version>
         <war.plugin.version>3.2.0</war.plugin.version>
         <shade.plugin.version>3.1.0</shade.plugin.version>
@@ -268,20 +268,20 @@
         <license.maven.plugin.version>2.11</license.maven.plugin.version>
         <gpg.plugin.version>1.6</gpg.plugin.version>
         <gmavenPluginVersion>1.5</gmavenPluginVersion>
-        <javadocPluginVersion>3.0.0</javadocPluginVersion>
+        <javadocPluginVersion>3.1.1</javadocPluginVersion>
         <mavenCompilerVersion>3.7.0</mavenCompilerVersion>
         <eclipsePluginVersion>2.10</eclipsePluginVersion>
         <maven.buildnumber.plugin.version>1.4</maven.buildnumber.plugin.version>
-        <maven.surefire.plugin.version>2.21.0</maven.surefire.plugin.version>
+        <maven.surefire.plugin.version>2.22.2</maven.surefire.plugin.version>
         <maven.enforcer.plugin.version>1.4.1</maven.enforcer.plugin.version>
 
-        <mule.module.maven.plugin.version>1.2.0-SNAPSHOT</mule.module.maven.plugin.version>
+        <mule.module.maven.plugin.version>1.3.0-SNAPSHOT</mule.module.maven.plugin.version>
         <revapi-maven-plugin.version>0.9.5</revapi-maven-plugin.version>
-        <muleRevapiExtensionVersion>1.2.0-SNAPSHOT</muleRevapiExtensionVersion>
-        <mule.extensions.maven.plugin.version>1.2.0-SNAPSHOT</mule.extensions.maven.plugin.version>
-        <mule.app.plugins.maven.plugin.version>1.2.0-SNAPSHOT</mule.app.plugins.maven.plugin.version>
+        <muleRevapiExtensionVersion>1.4.0-SNAPSHOT</muleRevapiExtensionVersion>
+        <mule.extensions.maven.plugin.version>1.4.0-SNAPSHOT</mule.extensions.maven.plugin.version>
+        <mule.app.plugins.maven.plugin.version>1.4.0-SNAPSHOT</mule.app.plugins.maven.plugin.version>
         <mule.jmh.elasticsearch.maven.plugin.version>1.0.0-SNAPSHOT</mule.jmh.elasticsearch.maven.plugin.version>
-        <mule.classloader.model.version>3.2.1-SNAPSHOT</mule.classloader.model.version>
+        <mule.classloader.model.version>3.4.0-SNAPSHOT</mule.classloader.model.version>
         <maven.replacer.plugin>1.5.3</maven.replacer.plugin>
 
         <!-- v1.1.0 has an issue with Optional dependencies, whenjbpmVersion resolving the graph it overrides the optionality of a transitive
@@ -290,15 +290,18 @@
         <aetherVersion>1.0.2.v20150114</aetherVersion>
         <aetherProviderVersion>3.3.9</aetherProviderVersion>
         <plexusUtilsVersion>3.0.24</plexusUtilsVersion>
-        <semver4jVersion>2.0.3</semver4jVersion>
-        <powermockVersion>1.6.5</powermockVersion>
+        <semver4jVersion>3.1.0</semver4jVersion>
+        <powermockVersion>2.0.0</powermockVersion>
         <allure.maven.plugin.version>2.9</allure.maven.plugin.version>
         <jacoco.version>0.8.2</jacoco.version>
         <javaxJmsApiVersion>2.0.1</javaxJmsApiVersion>
 
         <formatterConfigPath>formatter.xml</formatterConfigPath>
         <formatterGoal>validate</formatterGoal>
-        <oldMuleArtifactVersion>4.1.2</oldMuleArtifactVersion>
+        <oldMuleArtifactVersion>4.3.0-SNAPSHOT</oldMuleArtifactVersion>
+        
+        <surefire.args.base>-Dfile.encoding=UTF-8 -javaagent:${settings.localRepository}/org/aspectj/aspectjweaver/${aspectjVersion}/aspectjweaver-${aspectjVersion}.jar -javaagent:${settings.localRepository}/org/jacoco/org.jacoco.agent/${jacoco.version}/org.jacoco.agent-${jacoco.version}-runtime.jar=destfile='${session.executionRootDirectory}/target/jacoco.exec'</surefire.args.base>
+        <surefire.args>${surefire.args.base}</surefire.args>
     </properties>
 
     <dependencies>
@@ -475,6 +478,11 @@
                         <groupId>commons-logging</groupId>
                     </exclusion>
                 </exclusions>
+            </dependency>
+            <dependency>
+                <groupId>org.jgrapht</groupId>
+                <artifactId>jgrapht-core</artifactId>
+                <version>${jgraphtVersion}</version>
             </dependency>
             <dependency>
                 <groupId>org.eclipse.jetty</groupId>
@@ -726,10 +734,21 @@
                 <version>${weaveVersion}</version>
             </dependency>
 
+            <dependency>
+                <groupId>org.mule.runtime</groupId>
+                <artifactId>mule-dwb-api</artifactId>                
+                <version>${weaveVersion}</version>
+            </dependency>
+
             <!--Logging-->
             <dependency>
                 <groupId>org.slf4j</groupId>
                 <artifactId>slf4j-api</artifactId>
+                <version>${slf4jVersion}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.slf4j</groupId>
+                <artifactId>slf4j-ext</artifactId>
                 <version>${slf4jVersion}</version>
             </dependency>
             <dependency>
@@ -774,6 +793,19 @@
                     </exclusion>
                 </exclusions>
             </dependency>
+
+            <!-- Added to avoid conflicting transitive versions from Mockito and PowerMock -->
+            <dependency>
+                <groupId>net.bytebuddy</groupId>
+                <artifactId>byte-buddy</artifactId>
+                <version>${byteBuddyVersion}</version>
+            </dependency>
+            <dependency>
+                <groupId>net.bytebuddy</groupId>
+                <artifactId>byte-buddy-agent</artifactId>
+                <version>${byteBuddyVersion}</version>
+            </dependency>
+
             <dependency>
                 <!-- More info: http://www.cs.umd.edu/projects/PL/multithreadedtc/overview.html  -->
                 <groupId>com.googlecode.multithreadedtc</groupId>
@@ -1040,40 +1072,9 @@
                 <version>${jdomVersion}</version>
             </dependency>
             <dependency>
-                <groupId>dom4j</groupId>
+                <groupId>org.dom4j</groupId>
                 <artifactId>dom4j</artifactId>
                 <version>${dom4jVersion}</version>
-                <exclusions>
-                    <exclusion>
-                        <groupId>xml-apis</groupId>
-                        <artifactId>xml-apis</artifactId>
-                    </exclusion>
-                    <exclusion>
-                        <groupId>jaxen</groupId>
-                        <artifactId>jaxen</artifactId>
-                    </exclusion>
-                    <exclusion>
-                        <groupId>relaxngDatatype</groupId>
-                        <artifactId>relaxngDatatype</artifactId>
-                    </exclusion>
-                    <exclusion>
-                        <groupId>isorelax</groupId>
-                        <artifactId>isorelax</artifactId>
-                    </exclusion>
-                    <exclusion>
-                        <groupId>saxpath</groupId>
-                        <artifactId>saxpath</artifactId>
-                    </exclusion>
-                    <exclusion>
-                        <groupId>msv</groupId>
-                        <artifactId>msv</artifactId>
-                    </exclusion>
-                </exclusions>
-            </dependency>
-            <dependency>
-                <groupId>jaxen</groupId>
-                <artifactId>jaxen</artifactId>
-                <version>${jaxenVersion}</version>
             </dependency>
 
             <dependency>
@@ -1109,6 +1110,16 @@
                 <groupId>org.mule.runtime</groupId>
                 <artifactId>mule-module-dsl-api</artifactId>
                 <version>${muleDslApiVersion}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.mule.runtime</groupId>
+                <artifactId>mule-artifact-ast</artifactId>
+                <version>${muleAstVersion}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.mule.runtime</groupId>
+                <artifactId>mule-artifact-ast-dependency-graph</artifactId>
+                <version>${muleAstVersion}</version>
             </dependency>
             <dependency>
                 <groupId>org.mule.runtime</groupId>
@@ -1162,7 +1173,6 @@
                 <artifactId>guava</artifactId>
                 <version>${guavaVersion}</version>
             </dependency>
-
             <dependency>
                 <groupId>commons-dbcp</groupId>
                 <artifactId>commons-dbcp</artifactId>
@@ -1236,7 +1246,7 @@
             </dependency>
 
             <dependency>
-                <groupId>org.mule.mchange</groupId>
+                <groupId>com.mchange</groupId>
                 <artifactId>c3p0</artifactId>
                 <version>${c3p0Version}</version>
             </dependency>
@@ -1319,7 +1329,7 @@
             </dependency>
             <dependency>
                 <groupId>org.powermock</groupId>
-                <artifactId>powermock-api-mockito</artifactId>
+                <artifactId>powermock-api-mockito2</artifactId>
                 <exclusions>
                     <exclusion>
                         <groupId>org.mockito</groupId>
@@ -1363,11 +1373,6 @@
             <name>Mule Repository</name>
             <url>https://repository.mulesoft.org/nexus/content/repositories/public/</url>
         </repository>
-        <repository>
-            <id>spring-snapshot</id>
-            <name>Spring Snapshot Repository</name>
-            <url>http://repo.spring.io/snapshot/</url>
-        </repository>
     </repositories>
 
     <pluginRepositories>
@@ -1410,6 +1415,17 @@
                     <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-javadoc-plugin</artifactId>
                     <version>${javadocPluginVersion}</version>
+                    <executions>
+                        <execution>
+                            <id>attach-javadocs</id>
+                            <goals>
+                                <goal>jar</goal>
+                            </goals>
+                        </execution>
+                    </executions>
+                    <configuration>
+                        <doclint>none</doclint>
+                    </configuration>
                 </plugin>
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
@@ -1564,7 +1580,7 @@
                     <version>${maven.surefire.plugin.version}</version>
                     <configuration>
                         <workingDirectory>${project.build.directory}</workingDirectory>
-                        <argLine>-Dfile.encoding=UTF-8 -javaagent:${settings.localRepository}/org/aspectj/aspectjweaver/${aspectjVersion}/aspectjweaver-${aspectjVersion}.jar -javaagent:${settings.localRepository}/org/jacoco/org.jacoco.agent/${jacoco.version}/org.jacoco.agent-${jacoco.version}-runtime.jar=destfile='${session.executionRootDirectory}/target/jacoco.exec'</argLine>
+                        <argLine>${surefire.args}</argLine>
                         <trimStackTrace>false</trimStackTrace>
                         <excludes>
                             <!-- Surefire should be able to detect that classes are abstract but it seems it isn't -->
@@ -1654,7 +1670,7 @@
 
                     <executions>
                         <execution>
-                            <phase>verify</phase>
+                            <phase>package</phase>
                             <goals>
                                 <goal>verify</goal>
                             </goals>
@@ -1945,13 +1961,13 @@
                     <encoding>ISO-8859-1</encoding>
                     <source>${javaVersion}</source>
                     <configuration>
-                        <additionalparam>${xDocLint}</additionalparam>
+                        <doclint>none</doclint>
                     </configuration>
                     <!-- Link to the external online JavaDoc -->
                     <links>
                         <link>http://docs.oracle.com/javase/7/docs/api/</link>
                         <link>http://java.sun.com/j2ee/sdk_1.3/techdocs/api/</link>
-                        <link>http://jakarta.apache.org/commons/beanutils/commons-beanutils-1.9.3/docs/api/</link>
+                        <link>http://jakarta.apache.org/commons/beanutils/commons-beanutils-1.9.4/docs/api/</link>
                         <link>http://jakarta.apache.org/commons/collections/api-3.2/</link>
                         <link>http://jakarta.apache.org/httpcomponents/httpclient-3.x/apidocs/</link>
                         <link>http://jakarta.apache.org/commons/io/api-1.2/</link>
@@ -1995,6 +2011,15 @@
                 <vmtype>org.eclipse.jdt.internal.launching.macosx.MacOSXType</vmtype>
             </properties>
         </profile>
+        <profile>
+            <id>yourkit-agent</id>
+            <properties>
+                <!-- When using this profile, the location of the YourKit agent has to be provided with a vm argument -->
+                <!-- A typical agent location in OSX is like: -->
+                <!-- -Dyourkit.agent.path=/Applications/YourKit-Java-Profiler-2019.8.app/Contents/Resources/bin/mac/libyjpagent.dylib -->
+                <surefire.args>-agentpath:'${yourkit.agent.path}'=disablestacktelemetry,exceptions=disable,probe_disable=*,listen=all ${surefire.args.base}</surefire.args>
+            </properties>
+        </profile>
 		<profile>
             <id>release</id>
             <properties>
@@ -2006,21 +2031,6 @@
             <build>
                 <defaultGoal>deploy</defaultGoal>
                 <plugins>
-                    <plugin>
-                        <groupId>org.apache.maven.plugins</groupId>
-                        <artifactId>maven-javadoc-plugin</artifactId>
-                        <executions>
-                            <execution>
-                                <id>attach-javadocs</id>
-                                <goals>
-                                    <goal>jar</goal>
-                                </goals>
-                            </execution>
-                        </executions>
-                        <configuration>
-                            <additionalparam>${xDocLint}</additionalparam>
-                        </configuration>
-                    </plugin>
                     <plugin>
                         <groupId>org.apache.maven.plugins</groupId>
                         <artifactId>maven-gpg-plugin</artifactId>
@@ -2096,6 +2106,9 @@
                                                 <exclude>org.mule.weave:*</exclude>
                                                 <exclude>org.mule.services:*</exclude>
                                                 <exclude>org.mule.tools.maven:mule-classloader-model</exclude>
+
+                                                <exclude>org.raml:raml-parser-2</exclude>
+                                                <exclude>org.raml:yagi</exclude>
                                             </excludes>
                                         </requireReleaseDeps>
                                     </rules>

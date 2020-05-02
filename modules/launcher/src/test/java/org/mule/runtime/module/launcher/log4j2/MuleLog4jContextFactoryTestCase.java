@@ -7,6 +7,7 @@
 package org.mule.runtime.module.launcher.log4j2;
 
 import static java.lang.System.getProperty;
+import static java.lang.System.setProperty;
 import static org.hamcrest.CoreMatchers.equalTo;
 import static org.junit.Assert.assertThat;
 import static org.mockito.Mockito.mock;
@@ -42,7 +43,7 @@ public class MuleLog4jContextFactoryTestCase extends AbstractMuleTestCase {
   public void after() {
     for (Map.Entry<String, String> entry : originalSystemProperties.entrySet()) {
       if (entry.getValue() != null) {
-        System.setProperty(entry.getKey(), entry.getValue());
+        setProperty(entry.getKey(), entry.getValue());
       } else {
         System.clearProperty(entry.getKey());
       }
@@ -51,17 +52,19 @@ public class MuleLog4jContextFactoryTestCase extends AbstractMuleTestCase {
 
   @Test
   public void systemProperties() {
-    new MuleLog4jContextFactory();
+    MuleLog4jContextFactory factory = new MuleLog4jContextFactory(true);
     assertThat(XmlConfigurationFactory.class.getName(), equalTo(getProperty(LOG_CONFIGURATION_FACTORY_PROPERTY)));
     assertThat(AsyncLoggerExceptionHandler.class.getName(), equalTo(getProperty(ASYNC_LOGGER_EXCEPTION_HANDLER_PROPERTY)));
+    factory.dispose();
   }
 
   @Test
   public void customExceptionHandler() {
     final String customHandler = "custom";
-    System.setProperty(ASYNC_LOGGER_EXCEPTION_HANDLER_PROPERTY, customHandler);
-    new MuleLog4jContextFactory();
+    setProperty(ASYNC_LOGGER_EXCEPTION_HANDLER_PROPERTY, customHandler);
+    MuleLog4jContextFactory factory = new MuleLog4jContextFactory(true);
     assertThat(customHandler, equalTo(getProperty(ASYNC_LOGGER_EXCEPTION_HANDLER_PROPERTY)));
+    factory.dispose();
   }
 
   @Test

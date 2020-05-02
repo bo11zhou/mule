@@ -13,12 +13,10 @@ import static org.hamcrest.CoreMatchers.instanceOf;
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.CoreMatchers.notNullValue;
 import static org.hamcrest.CoreMatchers.sameInstance;
-import static org.hamcrest.Matchers.containsInAnyOrder;
 import static org.junit.Assert.assertThat;
 import static org.mockito.Answers.RETURNS_DEEP_STUBS;
 import static org.mockito.Mockito.when;
 import static org.mule.test.module.extension.internal.util.ExtensionsTestUtils.mockConfigurationInstance;
-import static org.mule.test.module.extension.internal.util.ExtensionsTestUtils.mockInterceptors;
 
 import org.mule.runtime.api.connection.ConnectionException;
 import org.mule.runtime.api.connection.ConnectionProvider;
@@ -30,29 +28,26 @@ import org.mule.runtime.api.meta.model.operation.OperationModel;
 import org.mule.runtime.api.meta.model.source.SourceCallbackModel;
 import org.mule.runtime.api.meta.model.source.SourceModel;
 import org.mule.runtime.core.api.MuleContext;
+import org.mule.runtime.core.api.el.ExpressionManager;
 import org.mule.runtime.core.api.event.CoreEvent;
-import org.mule.runtime.extension.api.runtime.Interceptable;
 import org.mule.runtime.extension.api.runtime.config.ConfigurationInstance;
-import org.mule.runtime.extension.api.runtime.operation.Interceptor;
 import org.mule.runtime.module.extension.internal.loader.java.property.ConnectivityModelProperty;
 import org.mule.runtime.module.extension.internal.runtime.execution.ConfigurationObjectBuilderTestCase;
 import org.mule.runtime.module.extension.internal.runtime.execution.ConfigurationObjectBuilderTestCase.TestConfig;
 import org.mule.runtime.module.extension.internal.runtime.resolver.ConnectionProviderValueResolver;
 import org.mule.runtime.module.extension.internal.runtime.resolver.ResolverSet;
 import org.mule.runtime.module.extension.internal.runtime.resolver.ResolverSetResult;
-import org.mule.runtime.module.extension.internal.util.ReflectionCache;
 import org.mule.tck.junit4.AbstractMuleTestCase;
 import org.mule.tck.size.SmallTest;
 import org.mule.tck.testmodels.fruit.Banana;
 import org.mule.tck.testmodels.fruit.Kiwi;
 
+import com.google.common.collect.ImmutableList;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
-import org.mockito.runners.MockitoJUnitRunner;
-
-import com.google.common.collect.ImmutableList;
+import org.mockito.junit.MockitoJUnitRunner;
 
 @SmallTest
 @RunWith(MockitoJUnitRunner.class)
@@ -61,37 +56,34 @@ public class ConfigurationInstanceFactoryTestCase extends AbstractMuleTestCase {
   private static final String CONFIG_NAME = "config";
   private static final String ENCODING = "UTF-8";
 
-  @Mock(answer = RETURNS_DEEP_STUBS)
+  @Mock(answer = RETURNS_DEEP_STUBS, lenient = true)
   private ConfigurationModel configurationModel;
 
-  @Mock
+  @Mock(lenient = true)
   private OperationModel operationModel;
 
-  @Mock
+  @Mock(lenient = true)
   private ExtensionModel extensionModel;
 
-  @Mock
+  @Mock(lenient = true)
   private SourceModel sourceModel;
 
-  @Mock
+  @Mock(lenient = true)
   private SourceCallbackModel sourceCallbackModel;
 
-  @Mock
+  @Mock(lenient = true)
   private ComponentModel componentModel;
 
-  @Mock
-  private Interceptor interceptor1;
-
-  @Mock
-  private Interceptor interceptor2;
-
-  @Mock(answer = RETURNS_DEEP_STUBS)
+  @Mock(answer = RETURNS_DEEP_STUBS, lenient = true)
   private CoreEvent event;
 
-  @Mock
+  @Mock(lenient = true)
   private ConnectionProviderValueResolver<Object> connectionProviderValueResolver;
 
-  @Mock(answer = RETURNS_DEEP_STUBS)
+  @Mock(answer = RETURNS_DEEP_STUBS, lenient = true)
+  private ExpressionManager expressionManager;
+
+  @Mock(answer = RETURNS_DEEP_STUBS, lenient = true)
   private MuleContext muleContext;
 
   private ResolverSet resolverSet;
@@ -100,7 +92,6 @@ public class ConfigurationInstanceFactoryTestCase extends AbstractMuleTestCase {
   @Before
   public void before() throws Exception {
     mockConfigurationInstance(configurationModel, new TestConfig());
-    mockInterceptors(configurationModel, asList(() -> interceptor1, () -> interceptor2));
     when(configurationModel.getOperationModels()).thenReturn(ImmutableList.of());
     when(configurationModel.getSourceModels()).thenReturn(ImmutableList.of());
     when(extensionModel.getOperationModels()).thenReturn(asList(operationModel));
@@ -112,9 +103,9 @@ public class ConfigurationInstanceFactoryTestCase extends AbstractMuleTestCase {
     when(sourceModel.getErrorCallback()).thenReturn(of(sourceCallbackModel));
     when(sourceModel.getSuccessCallback()).thenReturn(of(sourceCallbackModel));
     when(muleContext.getConfiguration().getDefaultEncoding()).thenReturn(ENCODING);
+
     resolverSet = ConfigurationObjectBuilderTestCase.createResolverSet();
-    factory =
-        new ConfigurationInstanceFactory<>(extensionModel, configurationModel, resolverSet, new ReflectionCache(), muleContext);
+    factory = new ConfigurationInstanceFactory<>(extensionModel, configurationModel, resolverSet, expressionManager, muleContext);
   }
 
   @Test
@@ -139,9 +130,6 @@ public class ConfigurationInstanceFactoryTestCase extends AbstractMuleTestCase {
     assertThat(configurationInstance.getName(), is(CONFIG_NAME));
     assertThat(configurationInstance.getModel(), is(sameInstance(configurationModel)));
     assertThat(configurationInstance.getValue(), is(instanceOf(TestConfig.class)));
-
-    assertThat(configurationInstance, is(instanceOf(Interceptable.class)));
-    assertThat(((Interceptable) configurationInstance).getInterceptors(), containsInAnyOrder(interceptor1, interceptor2));
   }
 
   public static class InvalidConfigTestConnectionProvider implements ConnectionProvider<Banana> {

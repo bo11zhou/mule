@@ -11,6 +11,8 @@ import static java.lang.Integer.compare;
 import static java.lang.String.format;
 import static java.util.Optional.of;
 import static org.mule.runtime.api.util.Preconditions.checkArgument;
+import static org.mule.runtime.http.policy.api.SourcePolicyAwareAttributes.noAttributes;
+
 import org.mule.runtime.api.lifecycle.Disposable;
 import org.mule.runtime.core.api.policy.Policy;
 import org.mule.runtime.core.api.policy.PolicyParametrization;
@@ -22,6 +24,8 @@ import org.mule.runtime.deployment.model.api.policy.PolicyTemplateDescriptor;
 import org.mule.runtime.module.deployment.impl.internal.policy.ApplicationPolicyInstance;
 import org.mule.runtime.module.deployment.impl.internal.policy.PolicyInstanceProviderFactory;
 import org.mule.runtime.module.deployment.impl.internal.policy.PolicyTemplateFactory;
+import org.mule.runtime.policy.api.AttributeAwarePointcut;
+import org.mule.runtime.policy.api.PolicyAwareAttributes;
 import org.mule.runtime.policy.api.PolicyPointcutParameters;
 
 import java.util.ArrayList;
@@ -38,7 +42,11 @@ public class MuleApplicationPolicyProvider implements ApplicationPolicyProvider,
   private final PolicyInstanceProviderFactory policyInstanceProviderFactory;
   private final List<RegisteredPolicyTemplate> registeredPolicyTemplates = new LinkedList<>();
   private final List<RegisteredPolicyInstanceProvider> registeredPolicyInstanceProviders = new LinkedList<>();
+  private PolicyAwareAttributes sourcePolicyAwareAttributes = noAttributes();
   private Application application;
+
+  private Runnable policiesChangedCallback = () -> {
+  };
 
   /**
    * Creates a new provider
@@ -65,8 +73,13 @@ public class MuleApplicationPolicyProvider implements ApplicationPolicyProvider,
       }
 
       Optional<RegisteredPolicyTemplate> registeredPolicyTemplate = registeredPolicyTemplates.stream()
-          .filter(p -> p.policyTemplate.getDescriptor().getBundleDescriptor().getArtifactId()
-              .equals(policyTemplateDescriptor.getBundleDescriptor().getArtifactId()))
+          .filter(p -> p.policyTemplate.getDescriptor().getBundleDescriptor().getGroupId()
+              .equals(policyTemplateDescriptor.getBundleDescriptor().getGroupId()) &&
+              p.policyTemplate.getDescriptor().getBundleDescriptor().getArtifactId()
+                  .equals(policyTemplateDescriptor.getBundleDescriptor().getArtifactId())
+              &&
+              p.policyTemplate.getDescriptor().getBundleDescriptor().getVersion()
+                  .equals(policyTemplateDescriptor.getBundleDescriptor().getVersion()))
           .findAny();
 
       if (!registeredPolicyTemplate.isPresent()) {
@@ -84,6 +97,9 @@ public class MuleApplicationPolicyProvider implements ApplicationPolicyProvider,
           .add(new RegisteredPolicyInstanceProvider(applicationPolicyInstance, parametrization.getId()));
       registeredPolicyInstanceProviders.sort(null);
       registeredPolicyTemplate.get().count++;
+
+      policiesChangedCallback.run();
+
     } catch (Exception e) {
       throw new PolicyRegistrationException(createPolicyRegistrationError(parametrization.getId()), e);
     }
@@ -95,8 +111,13 @@ public class MuleApplicationPolicyProvider implements ApplicationPolicyProvider,
         .filter(p -> p.getPolicyId().equals(parametrizedPolicyId)).findFirst();
 
     registeredPolicyInstanceProvider.ifPresent(provider -> {
-      provider.getApplicationPolicyInstance().dispose();
+
       registeredPolicyInstanceProviders.remove(provider);
+
+      // Run callback before disposing the policy to be able to dispose Composite Policies before policy schedulers are shutdown
+      policiesChangedCallback.run();
+
+      provider.getApplicationPolicyInstance().dispose();
 
       Optional<RegisteredPolicyTemplate> registeredPolicyTemplate = registeredPolicyTemplates.stream()
           .filter(p -> p.policyTemplate.equals(provider.getApplicationPolicyInstance().getPolicyTemplate()))
@@ -105,6 +126,7 @@ public class MuleApplicationPolicyProvider implements ApplicationPolicyProvider,
       if (!registeredPolicyTemplate.isPresent()) {
         throw new IllegalStateException("Cannot find registered policy template");
       }
+
       registeredPolicyTemplate.get().count--;
       if (registeredPolicyTemplate.get().count == 0) {
         application.getRegionClassLoader()
@@ -115,6 +137,40 @@ public class MuleApplicationPolicyProvider implements ApplicationPolicyProvider,
     });
 
     return registeredPolicyInstanceProvider.isPresent();
+  }
+
+  @Override
+  public synchronized boolean isPoliciesAvailable() {
+    return !registeredPolicyInstanceProviders.isEmpty();
+  }
+
+  @Override
+  public boolean isSourcePoliciesAvailable() {
+    return registeredPolicyInstanceProviders
+        .stream()
+        .anyMatch(pip -> pip.getApplicationPolicyInstance().getSourcePolicy().isPresent());
+  }
+
+  @Override
+  public boolean isOperationPoliciesAvailable() {
+    return registeredPolicyInstanceProviders
+        .stream()
+        .anyMatch(pip -> pip.getApplicationPolicyInstance().getOperationPolicy().isPresent());
+  }
+
+  @Override
+  public void onPoliciesChanged(Runnable policiesChangedCallback) {
+    this.policiesChangedCallback = () -> {
+      policiesChangedCallback.run();
+      updatePolicyAwareAttributes();
+    };
+  }
+
+  private synchronized void updatePolicyAwareAttributes() {
+    sourcePolicyAwareAttributes = registeredPolicyInstanceProviders.stream()
+        .filter(pip -> pip.getApplicationPolicyInstance().getPointcut() instanceof AttributeAwarePointcut)
+        .map(pip -> ((AttributeAwarePointcut) pip.getApplicationPolicyInstance().getPointcut()).sourcePolicyAwareAttributes())
+        .reduce(noAttributes(), PolicyAwareAttributes::merge);
   }
 
   @Override
@@ -132,6 +188,11 @@ public class MuleApplicationPolicyProvider implements ApplicationPolicyProvider,
     }
 
     return policies;
+  }
+
+  @Override
+  public synchronized PolicyAwareAttributes sourcePolicyAwareAttributes() {
+    return sourcePolicyAwareAttributes;
   }
 
   @Override

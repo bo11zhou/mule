@@ -7,15 +7,18 @@
 package org.mule.runtime.core.internal.processor.strategy;
 
 import org.mule.runtime.api.lifecycle.Disposable;
+import org.mule.runtime.core.api.construct.BackPressureReason;
 import org.mule.runtime.core.api.construct.Flow;
 import org.mule.runtime.core.api.event.CoreEvent;
 import org.mule.runtime.core.api.processor.Sink;
+import org.mule.runtime.core.internal.processor.strategy.AbstractProcessingStrategy.DefaultReactorSink;
 import org.mule.runtime.core.internal.processor.strategy.AbstractProcessingStrategy.ReactorSink;
 
 import java.util.function.Consumer;
 import java.util.function.Function;
 
 import org.reactivestreams.Publisher;
+
 import reactor.core.publisher.EmitterProcessor;
 
 /**
@@ -25,7 +28,7 @@ import reactor.core.publisher.EmitterProcessor;
  */
 class DirectSink implements Sink, Disposable {
 
-  private ReactorSink reactorSink;
+  private final ReactorSink reactorSink;
 
   /**
    * Create new {@link DirectSink}.
@@ -37,9 +40,9 @@ class DirectSink implements Sink, Disposable {
   public DirectSink(Function<Publisher<CoreEvent>, Publisher<CoreEvent>> function,
                     Consumer<CoreEvent> eventConsumer, int bufferSize) {
     EmitterProcessor<CoreEvent> emitterProcessor = EmitterProcessor.create(bufferSize);
-    reactorSink =
-        new ReactorSink(emitterProcessor.sink(), emitterProcessor.transform(function).doOnError(throwable -> {
-        }).subscribe(), eventConsumer, bufferSize);
+    final reactor.core.Disposable disposable = emitterProcessor.transform(function).doOnError(throwable -> {
+    }).subscribe();
+    reactorSink = new DefaultReactorSink(emitterProcessor.sink(), millis -> disposable.dispose(), eventConsumer, bufferSize);
   }
 
   @Override
@@ -48,12 +51,13 @@ class DirectSink implements Sink, Disposable {
   }
 
   @Override
-  public boolean emit(CoreEvent event) {
+  public BackPressureReason emit(CoreEvent event) {
     return reactorSink.emit(event);
   }
 
   @Override
   public void dispose() {
+    reactorSink.prepareDispose();
     reactorSink.dispose();
   }
 }

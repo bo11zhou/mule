@@ -6,19 +6,21 @@
  */
 package org.mule.runtime.core.internal.context.notification;
 
-import static java.lang.System.identityHashCode;
+import static java.lang.Integer.getInteger;
 import static java.lang.System.lineSeparator;
-import static org.slf4j.LoggerFactory.getLogger;
+import static org.mule.runtime.api.util.MuleSystemProperties.MULE_FLOW_STACK_MAX_DEPTH;
 
 import org.mule.runtime.core.api.context.notification.FlowCallStack;
 import org.mule.runtime.core.api.context.notification.FlowStackElement;
+import org.mule.runtime.core.internal.event.EventContextDeepNestingException;
+import org.mule.runtime.core.privileged.event.BaseEventContext;
 
-import org.slf4j.Logger;
-
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.EmptyStackException;
 import java.util.List;
-import java.util.Stack;
+import java.util.function.Function;
 
 /**
  * Keeps context information about the executing flows and its callers in order to provide augmented troubleshooting information
@@ -28,9 +30,19 @@ public class DefaultFlowCallStack implements FlowCallStack {
 
   private static final long serialVersionUID = -8683711977929802819L;
 
-  private static final Logger LOGGER = getLogger(DefaultFlowCallStack.class);
+  // BaseEventContext.class.getName() is here for backwards compatibility, since it was the equivalent property until 4.2.x
+  private static final int MAX_DEPTH =
+      getInteger(MULE_FLOW_STACK_MAX_DEPTH, getInteger(BaseEventContext.class.getName() + ".maxDepth", 45));
 
-  private Stack<FlowStackElement> innerStack = new Stack<>();
+  private final Deque<FlowStackElement> innerStack;
+
+  public DefaultFlowCallStack() {
+    this.innerStack = new ArrayDeque<>(4);
+  }
+
+  private DefaultFlowCallStack(final Deque<FlowStackElement> innerStack) {
+    this.innerStack = ((ArrayDeque) innerStack).clone();
+  }
 
   /**
    * Adds an element to the top of this stack
@@ -38,10 +50,19 @@ public class DefaultFlowCallStack implements FlowCallStack {
    * @param flowStackElement the element to add
    */
   public void push(FlowStackElement flowStackElement) {
-    if (LOGGER.isTraceEnabled()) {
-      LOGGER.trace("push ({}): {}", identityHashCode(this), flowStackElement.toString());
+    if (innerStack.size() >= MAX_DEPTH) {
+      StringBuilder messageBuilder = new StringBuilder();
+
+      messageBuilder.append("Too many nested child contexts.")
+          .append(lineSeparator())
+          .append(toString());
+
+      throw new EventContextDeepNestingException(messageBuilder.toString());
     }
-    innerStack.push(flowStackElement);
+
+    synchronized (innerStack) {
+      innerStack.push(flowStackElement);
+    }
   }
 
   /**
@@ -51,12 +72,10 @@ public class DefaultFlowCallStack implements FlowCallStack {
    * @throws EmptyStackException if this stack is empty.
    */
   public void setCurrentProcessorPath(String processorPath) {
-    if (!innerStack.empty()) {
-      if (LOGGER.isTraceEnabled()) {
-        LOGGER.trace("setCurrentProcessorPath({}): {}", identityHashCode(this), processorPath);
+    if (!innerStack.isEmpty()) {
+      synchronized (innerStack) {
+        innerStack.push(new FlowStackElement(innerStack.pop().getFlowName(), processorPath));
       }
-      FlowStackElement topElement = innerStack.pop();
-      innerStack.push(new FlowStackElement(topElement.getFlowName(), processorPath));
     }
   }
 
@@ -67,39 +86,56 @@ public class DefaultFlowCallStack implements FlowCallStack {
    * @throws EmptyStackException if this stack is empty.
    */
   public FlowStackElement pop() {
-    FlowStackElement element = innerStack.pop();
-    if (LOGGER.isTraceEnabled()) {
-      LOGGER.trace("pop({}): {}", identityHashCode(this), element.toString());
+    synchronized (innerStack) {
+      return innerStack.pop();
     }
-    return element;
+  }
+
+  /**
+   * Retrieves, but does not remove, the top-most element from this stack.
+   *
+   * @return the top-most element of this stack.
+   * @throws EmptyStackException if this stack is empty.
+   */
+  public FlowStackElement peek() {
+    synchronized (innerStack) {
+      return innerStack.peek();
+    }
   }
 
   @Override
   public List<FlowStackElement> getElements() {
-    List<FlowStackElement> elementsCloned = new ArrayList<>();
-    for (int i = innerStack.size() - 1; i >= 0; --i) {
-      elementsCloned.add(innerStack.get(i));
+    synchronized (innerStack) {
+      return new ArrayList<>(innerStack);
     }
-    return elementsCloned;
   }
 
   @Override
   public DefaultFlowCallStack clone() {
-    DefaultFlowCallStack cloned = new DefaultFlowCallStack();
-    for (int i = 0; i < innerStack.size(); ++i) {
-      cloned.innerStack.push(innerStack.get(i));
+    synchronized (innerStack) {
+      return new DefaultFlowCallStack(innerStack);
     }
-
-    return cloned;
   }
 
   @Override
   public String toString() {
-    StringBuilder stackString = new StringBuilder();
-    for (int i = innerStack.size() - 1; i >= 0; --i) {
-      stackString.append("at ").append(innerStack.get(i).toString());
-      if (i != 0) {
-        stackString.append(lineSeparator());
+    return doToString(FlowStackElement::toString);
+  }
+
+  public String toStringWithElapsedTime() {
+    return doToString(FlowStackElement::toStringWithElapsedTime);
+  }
+
+  private String doToString(Function<FlowStackElement, String> toString) {
+    StringBuilder stackString = new StringBuilder(256);
+
+    int i = 0;
+    synchronized (innerStack) {
+      for (FlowStackElement flowStackElement : innerStack) {
+        stackString.append("at ").append(toString.apply(flowStackElement));
+        if (++i != innerStack.size()) {
+          stackString.append(lineSeparator());
+        }
       }
     }
     return stackString.toString();

@@ -9,6 +9,7 @@ package org.mule.runtime.core.internal.event;
 import static java.util.Arrays.asList;
 import static java.util.Optional.empty;
 import static java.util.Optional.of;
+import static java.util.concurrent.Executors.newSingleThreadExecutor;
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.CoreMatchers.nullValue;
 import static org.hamcrest.Matchers.contains;
@@ -22,9 +23,12 @@ import static org.mule.runtime.core.internal.event.DefaultEventContext.child;
 import static org.mule.runtime.internal.dsl.DslConstants.CORE_PREFIX;
 import static org.mule.tck.MuleTestUtils.getTestFlow;
 import static org.mule.tck.probe.PollingProber.DEFAULT_POLLING_INTERVAL;
+import static org.mule.tck.probe.PollingProber.probe;
 import static org.mule.test.allure.AllureConstants.EventContextFeature.EVENT_CONTEXT;
 import static org.mule.test.allure.AllureConstants.EventContextFeature.EventContextStory.RESPONSE_AND_COMPLETION_PUBLISHERS;
 import static reactor.core.publisher.Mono.from;
+import static reactor.core.scheduler.Schedulers.fromExecutor;
+
 import org.mule.runtime.api.component.TypedComponentIdentifier;
 import org.mule.runtime.api.component.location.ComponentLocation;
 import org.mule.runtime.api.event.EventContext;
@@ -33,7 +37,6 @@ import org.mule.runtime.api.message.Message;
 import org.mule.runtime.api.scheduler.Scheduler;
 import org.mule.runtime.api.util.concurrent.Latch;
 import org.mule.runtime.core.api.event.CoreEvent;
-import org.mule.runtime.core.api.exception.NullExceptionHandler;
 import org.mule.runtime.core.api.util.func.CheckedFunction;
 import org.mule.runtime.core.api.util.func.CheckedSupplier;
 import org.mule.runtime.core.privileged.event.BaseEventContext;
@@ -46,16 +49,14 @@ import java.lang.ref.PhantomReference;
 import java.lang.ref.ReferenceQueue;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 import java.util.function.Supplier;
 
-import io.qameta.allure.Description;
-import io.qameta.allure.Feature;
-import io.qameta.allure.Story;
 import org.hamcrest.Matcher;
 import org.junit.Before;
 import org.junit.Rule;
@@ -65,6 +66,13 @@ import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 import org.junit.runners.Parameterized.Parameters;
 import org.reactivestreams.Publisher;
+
+import io.qameta.allure.Description;
+import io.qameta.allure.Feature;
+import io.qameta.allure.Issue;
+import io.qameta.allure.Story;
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
 
 /**
  * TODO MULE-14000 Create hamcrest matchers to assert EventContext state
@@ -79,24 +87,24 @@ public class DefaultEventContextTestCase extends AbstractMuleContextTestCase {
   @Rule
   public ExpectedException expectedException = ExpectedException.none();
 
-  private Supplier<DefaultEventContext> context;
-  private Function<CompletableFuture<Void>, BaseEventContext> contextWithCompletion;
-  private Function<ComponentLocation, BaseEventContext> contextWithComponentLocation;
+  private final Supplier<DefaultEventContext> context;
+  private final Function<CompletableFuture<Void>, BaseEventContext> contextWithCompletion;
+  private final Function<ComponentLocation, BaseEventContext> contextWithComponentLocation;
 
   private BaseEventContext parent;
   private BaseEventContext child;
 
-  private AtomicReference<CoreEvent> parentResultValue = new AtomicReference<>();
-  private AtomicReference<Throwable> parentErrorValue = new AtomicReference<>();
-  private AtomicBoolean parentCompletion = new AtomicBoolean();
-  private AtomicBoolean parentTerminated = new AtomicBoolean();
+  private final AtomicReference<CoreEvent> parentResultValue = new AtomicReference<>();
+  private final AtomicReference<Throwable> parentErrorValue = new AtomicReference<>();
+  private final AtomicBoolean parentCompletion = new AtomicBoolean();
+  private final AtomicBoolean parentTerminated = new AtomicBoolean();
 
-  private AtomicReference<CoreEvent> childResultValue = new AtomicReference<>();
-  private AtomicReference<Throwable> childErrorValue = new AtomicReference<>();
-  private AtomicBoolean childCompletion = new AtomicBoolean();
+  private final AtomicReference<CoreEvent> childResultValue = new AtomicReference<>();
+  private final AtomicReference<Throwable> childErrorValue = new AtomicReference<>();
+  private final AtomicBoolean childCompletion = new AtomicBoolean();
 
 
-  public DefaultEventContextTestCase(Supplier<DefaultEventContext> context,
+  public DefaultEventContextTestCase(String name, Supplier<DefaultEventContext> context,
                                      Function<CompletableFuture<Void>, BaseEventContext> contextWithCompletion,
                                      Function<ComponentLocation, BaseEventContext> contextWithComponentLocation) {
     this.context = context;
@@ -133,10 +141,11 @@ public class DefaultEventContextTestCase extends AbstractMuleContextTestCase {
     child.onTerminated((response, throwable) -> childCompletion.set(true));
   }
 
-  @Parameters
+  @Parameters(name = "{0}")
   public static List<Object[]> data() {
     return asList(new Object[][] {
         {
+            "FlowContext",
             (CheckedSupplier<EventContext>) () -> create(getTestFlow(muleContext), TEST_CONNECTOR_LOCATION),
             (CheckedFunction<CompletableFuture<Void>, EventContext>) externalCompletion -> create(getTestFlow(muleContext),
                                                                                                   TEST_CONNECTOR_LOCATION,
@@ -145,21 +154,19 @@ public class DefaultEventContextTestCase extends AbstractMuleContextTestCase {
             (CheckedFunction<ComponentLocation, EventContext>) location -> create(getTestFlow(muleContext), location)
         },
         {
+            "RawContext",
             (CheckedSupplier<EventContext>) () -> create("id", DefaultEventContextTestCase.class.getName(),
-                                                         TEST_CONNECTOR_LOCATION, NullExceptionHandler.getInstance()),
+                                                         TEST_CONNECTOR_LOCATION, null, empty()),
             (CheckedFunction<CompletableFuture<Void>, EventContext>) externalCompletion -> create("id",
                                                                                                   DefaultEventContextTestCase.class
                                                                                                       .getName(),
                                                                                                   TEST_CONNECTOR_LOCATION,
                                                                                                   null,
-                                                                                                  of(externalCompletion),
-                                                                                                  NullExceptionHandler
-                                                                                                      .getInstance()),
+                                                                                                  of(externalCompletion)),
             (CheckedFunction<ComponentLocation, EventContext>) location -> create("id",
                                                                                   DefaultEventContextTestCase.class
                                                                                       .getName(),
-                                                                                  location,
-                                                                                  NullExceptionHandler.getInstance())
+                                                                                  location, null, empty())
         }
     });
   }
@@ -259,6 +266,53 @@ public class DefaultEventContextTestCase extends AbstractMuleContextTestCase {
   }
 
   @Test
+  public void multipleResponsePublisherSubscriptions() throws MuleException {
+    CoreEvent event = getEventBuilder().message(Message.of(TEST_PAYLOAD)).build();
+
+    AtomicInteger responseCounter = new AtomicInteger();
+
+    final reactor.core.scheduler.Scheduler singleScheduler = fromExecutor(newSingleThreadExecutor());
+
+    try {
+      // Call getResponsePublisher twice to receive the response in 2 different places
+      Flux.from(parent.getResponsePublisher())
+          .mergeWith(parent.getResponsePublisher())
+          .subscribeOn(singleScheduler)
+          .subscribe(e -> responseCounter.incrementAndGet());
+
+      parent.success(event);
+
+      probe(() -> responseCounter.get() == 2);
+    } finally {
+      singleScheduler.dispose();
+    }
+  }
+
+  @Test
+  @Issue("MULE-15257")
+  public void parentResponseConsumerCalledWithChildContext() throws MuleException {
+    AtomicBoolean parentResponse = new AtomicBoolean();
+    AtomicBoolean childResponse = new AtomicBoolean();
+
+    parent.onResponse((e, t) -> parentResponse.set(true));
+
+    child = addChild(parent);
+
+    Mono.from(child.getResponsePublisher())
+        .doOnNext(e -> childResponse.set(true))
+        .subscribe();
+
+    child.success(getEventBuilder().message(Message.of(TEST_PAYLOAD)).build());
+
+    probe(() -> childResponse.get());
+    probe(() -> !parentResponse.get());
+
+    parent.success(getEventBuilder().message(Message.of(TEST_PAYLOAD)).build());
+
+    probe(() -> parentResponse.get());
+  }
+
+  @Test
   public void terminatedChildContextsCleared() {
     child = addChild(parent);
     child.success();
@@ -289,13 +343,10 @@ public class DefaultEventContextTestCase extends AbstractMuleContextTestCase {
     final Object referencedInCallback = new Object();
 
     parent.onResponse((e, t) -> {
-      System.out.println(referencedInCallback.toString());
     });
     parent.onComplete((e, t) -> {
-      System.out.println(referencedInCallback.toString());
     });
     parent.onTerminated((e, t) -> {
-      System.out.println(referencedInCallback.toString());
     });
 
     parent.success();
@@ -582,7 +633,8 @@ public class DefaultEventContextTestCase extends AbstractMuleContextTestCase {
         .build();
     ComponentLocation location = mock(ComponentLocation.class);
     when(location.getComponentIdentifier()).thenReturn(typedComponentIdentifier);
-    when(location.getParts()).thenReturn(asList(new DefaultLocationPart("flow", empty(), empty(), empty(), empty())));
+    when(location.getParts())
+        .thenReturn(asList(new DefaultLocationPart("flow", empty(), empty(), OptionalInt.empty(), OptionalInt.empty())));
     BaseEventContext context = contextWithComponentLocation.apply(location);
 
     assertThat(context.getOriginatingLocation().getComponentIdentifier().getIdentifier().getNamespace(), is("http"));
@@ -641,17 +693,6 @@ public class DefaultEventContextTestCase extends AbstractMuleContextTestCase {
     eventContext.error(new NullPointerException());
 
     assertThat(callbacks, contains("onResponse", "onComplete", "onTerminated"));
-  }
-
-  @Test
-  public void deepNesting() {
-    BaseEventContext lastContext = context.get();
-
-    expectedException.expect(EventContextDeepNestingException.class);
-
-    while (true) {
-      lastContext = DefaultEventContext.child(lastContext, Optional.empty());
-    }
   }
 
   private void assertParent(Matcher<Object> eventMatcher, Matcher<Object> errorMatcher, boolean complete, boolean terminated) {

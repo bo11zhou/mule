@@ -16,14 +16,19 @@ import static org.mule.runtime.api.metadata.DataType.STRING;
 import static org.mule.runtime.core.api.config.MuleProperties.COMPATIBILITY_PLUGIN_INSTALLED;
 import static org.mule.runtime.core.api.config.MuleProperties.OBJECT_EXPRESSION_LANGUAGE;
 import static org.mule.runtime.core.api.config.MuleProperties.isMelDefault;
+import static org.mule.runtime.core.api.lifecycle.LifecycleUtils.isLazyInitMode;
 import static org.mule.runtime.core.api.util.ClassUtils.isInstance;
 import static org.mule.runtime.core.api.util.StreamingUtils.updateTypedValueForStreaming;
 import static org.slf4j.LoggerFactory.getLogger;
+
 import org.mule.runtime.api.artifact.Registry;
+import org.mule.runtime.api.component.ConfigurationProperties;
 import org.mule.runtime.api.component.location.ComponentLocation;
 import org.mule.runtime.api.el.BindingContext;
+import org.mule.runtime.api.el.CompiledExpression;
 import org.mule.runtime.api.el.DefaultExpressionLanguageFactoryService;
 import org.mule.runtime.api.el.DefaultValidationResult;
+import org.mule.runtime.api.el.ExpressionCompilationException;
 import org.mule.runtime.api.el.ExpressionExecutionException;
 import org.mule.runtime.api.el.ValidationResult;
 import org.mule.runtime.api.lifecycle.Initialisable;
@@ -31,6 +36,7 @@ import org.mule.runtime.api.lifecycle.InitialisationException;
 import org.mule.runtime.api.message.Message;
 import org.mule.runtime.api.metadata.DataType;
 import org.mule.runtime.api.metadata.TypedValue;
+import org.mule.runtime.api.util.LazyValue;
 import org.mule.runtime.core.api.MuleContext;
 import org.mule.runtime.core.api.el.ExpressionManagerSession;
 import org.mule.runtime.core.api.el.ExtendedExpressionManager;
@@ -61,10 +67,13 @@ public class DefaultExpressionManager implements ExtendedExpressionManager, Init
   public static final int DW_PREFIX_LENGTH = (DW_PREFIX + PREFIX_EXPR_SEPARATOR).length();
   private static final Logger LOGGER = getLogger(DefaultExpressionManager.class);
 
+  @Inject
+  private ConfigurationProperties properties;
+
   private final OneTimeWarning parseWarning = new OneTimeWarning(LOGGER,
                                                                  "Expression parsing is deprecated, regular expressions should be used instead.");
 
-  private AtomicBoolean initialized = new AtomicBoolean();
+  private final AtomicBoolean initialized = new AtomicBoolean();
 
   private MuleContext muleContext;
   private StreamingManager streamingManager;
@@ -77,45 +86,58 @@ public class DefaultExpressionManager implements ExtendedExpressionManager, Init
 
   @Override
   public void initialise() throws InitialisationException {
-    if (!initialized.getAndSet(true)) {
-
-      final DataWeaveExpressionLanguageAdaptor dwExpressionLanguage =
-          registry.lookupByType(DefaultExpressionLanguageFactoryService.class)
-              .map(s -> new DataWeaveExpressionLanguageAdaptor(muleContext, registry, s))
-              .orElse(null);
-
-
-      if (isMelDefault() || registry.lookupByName(COMPATIBILITY_PLUGIN_INSTALLED).isPresent()) {
-        MVELExpressionLanguage mvelExpressionLanguage =
-            registry.<MVELExpressionLanguage>lookupByName(OBJECT_EXPRESSION_LANGUAGE).get();
-
-        ExtendedExpressionLanguageAdaptor exprLangAdaptorHandler = dwExpressionLanguage != null
-            ? new ExpressionLanguageAdaptorHandler(dwExpressionLanguage, mvelExpressionLanguage)
-            : mvelExpressionLanguage;
-
-        this.melDefault = dwExpressionLanguage == null || isMelDefault();
-        this.expressionLanguage = exprLangAdaptorHandler;
-      } else {
-        if (dwExpressionLanguage == null) {
-          throw new IllegalStateException("No expression language installed");
-        }
-        this.expressionLanguage = dwExpressionLanguage;
-      }
-
-      BindingContext.Builder contextBuilder = BindingContext.builder();
-
-      registry.lookupAllByType(GlobalBindingContextProvider.class).stream()
-          .map(GlobalBindingContextProvider::getBindingContext)
-          .forEach(contextBuilder::addAll);
-
-      expressionLanguage.addGlobalBindings(contextBuilder instanceof DefaultBindingContextBuilder
-          ? ((DefaultBindingContextBuilder) contextBuilder).flattenAndBuild()
-          : contextBuilder.build());
-
-      if (melDefault) {
-        LOGGER.warn("Using MEL as the default expression language.");
-      }
+    if (!initialized.compareAndSet(false, true)) {
+      return;
     }
+
+    final ExtendedExpressionLanguageAdaptor dwExpressionLanguage =
+        registry.lookupByType(DefaultExpressionLanguageFactoryService.class)
+            .map(this::createExpressionLanguageAdaptor)
+            .orElse(null);
+
+    if (isMelDefault() || registry.lookupByName(COMPATIBILITY_PLUGIN_INSTALLED).isPresent()) {
+      MVELExpressionLanguage mvelExpressionLanguage =
+          registry.<MVELExpressionLanguage>lookupByName(OBJECT_EXPRESSION_LANGUAGE).get();
+
+      ExtendedExpressionLanguageAdaptor exprLangAdaptorHandler = dwExpressionLanguage != null
+          ? new ExpressionLanguageAdaptorHandler(dwExpressionLanguage, mvelExpressionLanguage)
+          : mvelExpressionLanguage;
+
+      this.melDefault = dwExpressionLanguage == null || isMelDefault();
+      this.expressionLanguage = exprLangAdaptorHandler;
+    } else {
+      if (dwExpressionLanguage == null) {
+        throw new IllegalStateException("No expression language installed");
+      }
+      this.expressionLanguage = dwExpressionLanguage;
+    }
+
+    BindingContext.Builder contextBuilder = BindingContext.builder();
+
+    registry.lookupAllByType(GlobalBindingContextProvider.class).stream()
+        .map(GlobalBindingContextProvider::getBindingContext)
+        .forEach(contextBuilder::addAll);
+
+    expressionLanguage.addGlobalBindings(contextBuilder instanceof DefaultBindingContextBuilder
+        ? ((DefaultBindingContextBuilder) contextBuilder).flattenAndBuild()
+        : contextBuilder.build());
+
+    if (melDefault) {
+      LOGGER.warn("Using MEL as the default expression language.");
+    }
+  }
+
+  private ExtendedExpressionLanguageAdaptor createExpressionLanguageAdaptor(DefaultExpressionLanguageFactoryService service) {
+    if (isLazyInitMode(properties)) {
+      return new LazyExpressionLanguageAdaptor(() -> createWeaveExpressionLanguageAdaptor(service));
+    }
+
+    return createWeaveExpressionLanguageAdaptor(service);
+  }
+
+  private DataWeaveExpressionLanguageAdaptor createWeaveExpressionLanguageAdaptor(
+                                                                                  DefaultExpressionLanguageFactoryService service) {
+    return new DataWeaveExpressionLanguageAdaptor(muleContext, registry, service);
   }
 
   @Override
@@ -199,11 +221,16 @@ public class DefaultExpressionManager implements ExtendedExpressionManager, Init
   private TypedValue transform(TypedValue target, DataType sourceType, DataType outputType) throws TransformerException {
     if (target.getValue() != null && !isInstance(outputType.getType(), target.getValue())) {
       Object result = ((MuleContextWithRegistry) muleContext).getRegistry().lookupTransformer(sourceType, outputType)
-          .transform(target.getValue());
+          .transform(target);
       return new TypedValue<>(result, outputType);
     } else {
       return target;
     }
+  }
+
+  @Override
+  public CompiledExpression compile(String expression, BindingContext context) throws ExpressionCompilationException {
+    return expressionLanguage.compile(expression, context);
   }
 
   @Override
@@ -401,13 +428,14 @@ public class DefaultExpressionManager implements ExtendedExpressionManager, Init
 
   @Override
   public ExpressionManagerSession openSession(BindingContext context) {
-    return new DefaultExpressionManagerSession(expressionLanguage.openSession(null, null, context),
+    return new DefaultExpressionManagerSession(new LazyValue<>(() -> expressionLanguage.openSession(null, null, context)),
                                                currentThread().getContextClassLoader());
   }
 
   @Override
   public ExpressionManagerSession openSession(ComponentLocation componentLocation, CoreEvent event, BindingContext context) {
-    return new DefaultExpressionManagerSession(expressionLanguage.openSession(componentLocation, event, context),
+    return new DefaultExpressionManagerSession(new LazyValue<>(() -> expressionLanguage.openSession(componentLocation, event,
+                                                                                                    context)),
                                                currentThread().getContextClassLoader());
   }
 

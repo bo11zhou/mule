@@ -13,6 +13,7 @@ import static org.mule.runtime.api.serialization.ObjectSerializer.DEFAULT_OBJECT
 import static org.mule.runtime.api.store.ObjectStoreManager.BASE_IN_MEMORY_OBJECT_STORE_KEY;
 import static org.mule.runtime.api.store.ObjectStoreManager.BASE_PERSISTENT_OBJECT_STORE_KEY;
 import static org.mule.runtime.api.value.ValueProviderService.VALUE_PROVIDER_SERVICE_KEY;
+import static org.mule.runtime.core.api.config.MuleProperties.OBJECT_CLUSTER_SERVICE;
 import static org.mule.runtime.core.api.config.MuleProperties.OBJECT_CONNECTION_MANAGER;
 import static org.mule.runtime.core.api.config.MuleProperties.OBJECT_CONVERTER_RESOLVER;
 import static org.mule.runtime.core.api.config.MuleProperties.OBJECT_DEFAULT_MESSAGE_PROCESSING_MANAGER;
@@ -30,6 +31,7 @@ import static org.mule.runtime.core.api.config.MuleProperties.OBJECT_SCHEDULER_B
 import static org.mule.runtime.core.api.config.MuleProperties.OBJECT_SCHEDULER_POOLS_CONFIG;
 import static org.mule.runtime.core.api.config.MuleProperties.OBJECT_SECURITY_MANAGER;
 import static org.mule.runtime.core.api.config.MuleProperties.OBJECT_STORE_MANAGER;
+import static org.mule.runtime.core.api.config.MuleProperties.OBJECT_STREAMING_GHOST_BUSTER;
 import static org.mule.runtime.core.api.config.MuleProperties.OBJECT_STREAMING_MANAGER;
 import static org.mule.runtime.core.api.config.MuleProperties.OBJECT_TIME_SUPPLIER;
 import static org.mule.runtime.core.api.config.MuleProperties.OBJECT_TRANSACTION_FACTORY_LOCATOR;
@@ -50,8 +52,8 @@ import org.mule.runtime.core.api.context.MuleContextAware;
 import org.mule.runtime.core.api.context.thread.notification.ThreadNotificationService;
 import org.mule.runtime.core.api.event.EventContextService;
 import org.mule.runtime.core.api.streaming.DefaultStreamingManager;
-import org.mule.runtime.core.api.streaming.StreamingManager;
 import org.mule.runtime.core.api.util.queue.QueueManager;
+import org.mule.runtime.core.internal.cluster.DefaultClusterService;
 import org.mule.runtime.core.internal.config.bootstrap.SimpleRegistryBootstrap;
 import org.mule.runtime.core.internal.connection.DefaultConnectionManager;
 import org.mule.runtime.core.internal.context.MuleContextWithRegistry;
@@ -70,6 +72,7 @@ import org.mule.runtime.core.internal.processor.interceptor.DefaultProcessorInte
 import org.mule.runtime.core.internal.registry.MuleRegistry;
 import org.mule.runtime.core.internal.security.DefaultMuleSecurityManager;
 import org.mule.runtime.core.internal.serialization.JavaObjectSerializer;
+import org.mule.runtime.core.internal.streaming.StreamingGhostBuster;
 import org.mule.runtime.core.internal.time.LocalTimeSupplier;
 import org.mule.runtime.core.internal.transaction.TransactionFactoryLocator;
 import org.mule.runtime.core.internal.transformer.DynamicDataTypeConversionResolver;
@@ -130,8 +133,8 @@ public class DefaultsConfigurationBuilder extends AbstractConfigurationBuilder {
 
     registerObject(DEFAULT_OBJECT_SERIALIZER_NAME, new JavaObjectSerializer(), muleContext);
     registerObject(OBJECT_EXPRESSION_LANGUAGE, new MVELExpressionLanguage(muleContext), muleContext);
-    StreamingManager streamingManager = new DefaultStreamingManager();
-    registerObject(OBJECT_STREAMING_MANAGER, streamingManager, muleContext);
+    registerObject(OBJECT_STREAMING_GHOST_BUSTER, new StreamingGhostBuster(), muleContext);
+    registerObject(OBJECT_STREAMING_MANAGER, new DefaultStreamingManager(), muleContext);
     registerObject(OBJECT_EXPRESSION_MANAGER, new DefaultExpressionManager(), muleContext);
     registerObject(OBJECT_TIME_SUPPLIER, new LocalTimeSupplier(), muleContext);
     registerObject(OBJECT_CONNECTION_MANAGER, new DefaultConnectionManager(muleContext), muleContext);
@@ -143,6 +146,8 @@ public class DefaultsConfigurationBuilder extends AbstractConfigurationBuilder {
     registerObject(EventContextService.REGISTRY_KEY, new DefaultEventContextService(), muleContext);
     registerObject(ThreadNotificationService.REGISTRY_KEY, new DefaultThreadNotificationService(), muleContext);
     registerObject(OBJECT_TRANSACTION_FACTORY_LOCATOR, new TransactionFactoryLocator(), muleContext);
+    registerObject(OBJECT_CLUSTER_SERVICE, new DefaultClusterService(), muleContext);
+
     registerObject(ComponentInitialStateManager.SERVICE_ID, new ComponentInitialStateManager() {
 
       @Override

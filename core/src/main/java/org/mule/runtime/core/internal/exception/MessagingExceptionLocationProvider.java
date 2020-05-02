@@ -10,10 +10,9 @@ import static org.mule.runtime.api.exception.MuleException.INFO_LOCATION_KEY;
 import static org.mule.runtime.api.exception.MuleException.INFO_SOURCE_XML_KEY;
 
 import org.mule.runtime.api.component.Component;
-import org.mule.runtime.core.api.MuleContext;
-import org.mule.runtime.core.api.context.MuleContextAware;
-import org.mule.runtime.core.privileged.execution.LocationExecutionContextProvider;
+import org.mule.runtime.api.exception.MuleExceptionInfo;
 import org.mule.runtime.api.notification.EnrichedNotificationInfo;
+import org.mule.runtime.core.privileged.execution.LocationExecutionContextProvider;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -21,29 +20,27 @@ import java.util.Map;
 /**
  * Generates location info to augment MessagingExceptions with.
  */
-public class MessagingExceptionLocationProvider extends LocationExecutionContextProvider implements MuleContextAware {
-
-  private MuleContext muleContext;
-
-  @Override
-  public void setMuleContext(MuleContext context) {
-    this.muleContext = context;
-  }
+public class MessagingExceptionLocationProvider extends LocationExecutionContextProvider {
 
   @Override
   public Map<String, Object> getContextInfo(EnrichedNotificationInfo notificationInfo, Component lastProcessed) {
-    Map<String, Object> contextInfo = new HashMap<>();
+    final Map<String, Object> info = new HashMap<>();
+    info.put(INFO_LOCATION_KEY, lastProcessed.getRepresentation());
 
-    contextInfo.put(INFO_LOCATION_KEY, resolveProcessorRepresentation(muleContext.getConfiguration().getId(),
-                                                                      lastProcessed.getLocation() != null
-                                                                          ? lastProcessed.getLocation().getLocation()
-                                                                          : null,
-                                                                      lastProcessed));
-    String sourceXML = getSourceXML(lastProcessed);
-    if (sourceXML != null) {
-      contextInfo.put(INFO_SOURCE_XML_KEY, sourceXML);
+    final String source = lastProcessed.getDslSource();
+    if (source != null) {
+      info.put(INFO_SOURCE_XML_KEY, source);
     }
+    return info;
+  }
 
-    return contextInfo;
+  @Override
+  public void putContextInfo(MuleExceptionInfo info, EnrichedNotificationInfo notificationInfo, Component lastProcessed) {
+    info.setLocation(lastProcessed.getRepresentation());
+
+    final String source = lastProcessed.getDslSource();
+    if (source != null) {
+      info.setDslSource(source);
+    }
   }
 }

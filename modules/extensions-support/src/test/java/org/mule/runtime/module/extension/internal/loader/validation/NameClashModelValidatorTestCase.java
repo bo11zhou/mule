@@ -14,7 +14,7 @@ import static java.util.Collections.singletonList;
 import static java.util.Optional.empty;
 import static java.util.Optional.of;
 import static org.mockito.Answers.RETURNS_DEEP_STUBS;
-import static org.mockito.Matchers.any;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 import static org.mule.metadata.api.model.MetadataFormat.JAVA;
@@ -72,7 +72,7 @@ import org.junit.Test;
 import org.junit.rules.ExpectedException;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
-import org.mockito.runners.MockitoJUnitRunner;
+import org.mockito.junit.MockitoJUnitRunner;
 
 @SmallTest
 @RunWith(MockitoJUnitRunner.class)
@@ -102,25 +102,25 @@ public class NameClashModelValidatorTestCase extends AbstractMuleTestCase {
   private static final String REPEATED_NAME = "repeatedName";
   private static final String UNIQUE_PARAM_NAME = "uniqueParam";
 
-  @Mock
+  @Mock(lenient = true)
   private ExtensionModel extensionModel;
 
-  @Mock(answer = RETURNS_DEEP_STUBS)
+  @Mock(answer = RETURNS_DEEP_STUBS, lenient = true)
   private ConfigurationModel configurationModel;
 
-  @Mock
+  @Mock(lenient = true)
   private OperationModel operationModel;
 
-  @Mock
+  @Mock(lenient = true)
   private ConnectionProviderModel connectionProviderModel;
 
-  @Mock
+  @Mock(lenient = true)
   private SourceModel sourceModel;
 
-  @Mock
+  @Mock(lenient = true)
   private ConstructModel constructModel;
 
-  @Mock
+  @Mock(lenient = true)
   private FunctionModel functionModel;
 
   private XmlDslModel xmlDslModel = new XmlDslModel();
@@ -379,14 +379,12 @@ public class NameClashModelValidatorTestCase extends AbstractMuleTestCase {
     mockParameters(sourceCallbackModel, simpleConfigParam);
 
     ParameterGroupModel group = mock(ParameterGroupModel.class);
-    when(group.getName()).thenReturn(DEFAULT_GROUP_NAME);
-    when(group.getModelProperty(ParameterGroupModelProperty.class)).thenReturn(empty());
     when(group.isShowInDsl()).thenReturn(false);
     when(group.getParameterModels()).thenReturn(asList(offending));
 
     SourceModel sourceModel = new ImmutableSourceModel(SOURCE_NAME, "", false, false, asList(group), emptyList(), null, null,
                                                        of(sourceCallbackModel), empty(), empty(), false, false, false,
-                                                       null, SOURCE, emptySet(), emptySet(), emptySet());
+                                                       null, SOURCE, emptySet(), emptySet(), emptySet(), null);
     when(extensionModel.getSourceModels()).thenReturn(asList(sourceModel));
     validate();
   }
@@ -394,11 +392,9 @@ public class NameClashModelValidatorTestCase extends AbstractMuleTestCase {
   @Test
   public void sourceWithRepeatedParameterNameAmongCallbacks() {
     SourceCallbackModel errorCallBack = mock(SourceCallbackModel.class);
-    when(errorCallBack.getAllParameterModels()).thenReturn(asList(simpleConnectionProviderParam));
     when(sourceModel.getErrorCallback()).thenReturn(of(errorCallBack));
 
     SourceCallbackModel successCallback = mock(SourceCallbackModel.class);
-    when(successCallback.getAllParameterModels()).thenReturn(asList(simpleConnectionProviderParam));
     when(sourceModel.getSuccessCallback()).thenReturn(of(successCallback));
     validate();
   }
@@ -879,7 +875,6 @@ public class NameClashModelValidatorTestCase extends AbstractMuleTestCase {
     ParameterGroupModel group = mock(ParameterGroupModel.class);
 
     when(group.getName()).thenReturn(DEFAULT_GROUP_NAME);
-    when(group.getModelProperty(ParameterGroupModelProperty.class)).thenReturn(empty());
     when(group.getParameterModels()).thenReturn(parameters);
     when(group.isShowInDsl()).thenReturn(true);
 
@@ -890,8 +885,6 @@ public class NameClashModelValidatorTestCase extends AbstractMuleTestCase {
     ParameterGroupModel group = mock(ParameterGroupModel.class);
     ParameterModel parameterModel = getParameter(SIMPLE_PARAM_NAME, Object.class);
 
-    when(group.getName()).thenReturn(DEFAULT_GROUP_NAME);
-    when(group.getModelProperty(ParameterGroupModelProperty.class)).thenReturn(empty());
     when(group.getParameterModels()).thenReturn(asList(parameterModel));
 
     ParameterGroupModel anotherGroup = mock(ParameterGroupModel.class);

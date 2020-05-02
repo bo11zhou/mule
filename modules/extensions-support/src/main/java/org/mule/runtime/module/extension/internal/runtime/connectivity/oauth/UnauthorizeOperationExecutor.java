@@ -7,35 +7,29 @@
 package org.mule.runtime.module.extension.internal.runtime.connectivity.oauth;
 
 import static org.mule.runtime.extension.api.connectivity.oauth.ExtensionOAuthConstants.RESOURCE_OWNER_ID_PARAMETER_NAME;
+import static org.mule.runtime.module.extension.internal.runtime.connectivity.oauth.ExtensionsOAuthUtils.getOAuthConnectionProvider;
 import static org.mule.runtime.oauth.api.state.ResourceOwnerOAuthContext.DEFAULT_RESOURCE_OWNER_ID;
 import org.mule.runtime.api.meta.model.ComponentModel;
-import org.mule.runtime.extension.api.runtime.config.ConfigurationInstance;
+import org.mule.runtime.extension.api.runtime.operation.CompletableComponentExecutor;
 import org.mule.runtime.extension.api.runtime.operation.ExecutionContext;
-import org.mule.runtime.extension.api.runtime.operation.ComponentExecutor;
-
-import javax.inject.Inject;
-
-import org.reactivestreams.Publisher;
-import reactor.core.publisher.Mono;
+import org.mule.runtime.module.extension.api.runtime.privileged.ExecutionContextAdapter;
 
 /**
- * Synthetic {@link ComponentExecutor} which invalidates a given user's OAuth context.
+ * Synthetic {@link CompletableComponentExecutor} which invalidates a given user's OAuth context.
  *
  * @since 4.0
  */
-public class UnauthorizeOperationExecutor implements ComponentExecutor<ComponentModel> {
-
-  @Inject
-  private ExtensionsOAuthManager oauthManager;
+public class UnauthorizeOperationExecutor implements CompletableComponentExecutor<ComponentModel> {
 
   @Override
-  public Publisher<Object> execute(ExecutionContext<ComponentModel> executionContext) {
-    ConfigurationInstance config = executionContext.getConfiguration().get();
+  public void execute(ExecutionContext<ComponentModel> executionContext, ExecutorCallback callback) {
     String ownerId = executionContext.hasParameter(RESOURCE_OWNER_ID_PARAMETER_NAME)
         ? executionContext.getParameter(RESOURCE_OWNER_ID_PARAMETER_NAME)
         : DEFAULT_RESOURCE_OWNER_ID;
-    oauthManager.invalidate(config.getName(), ownerId);
 
-    return Mono.empty();
+    OAuthConnectionProviderWrapper provider = getOAuthConnectionProvider((ExecutionContextAdapter) executionContext);
+    provider.invalidate(ownerId);
+
+    callback.complete(null);
   }
 }

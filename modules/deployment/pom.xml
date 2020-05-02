@@ -6,7 +6,7 @@
     <parent>
         <artifactId>mule-modules</artifactId>
         <groupId>org.mule.runtime</groupId>
-        <version>4.2.0-SNAPSHOT</version>
+        <version>4.4.0-SNAPSHOT</version>
     </parent>
 
     <artifactId>mule-module-deployment</artifactId>
@@ -49,6 +49,11 @@
             <groupId>org.mule</groupId>
             <artifactId>mule-maven-client-impl</artifactId>
             <scope>runtime</scope>
+        </dependency>
+        <dependency>
+            <!--for the extensions configuration builder-->
+            <groupId>org.mule.runtime</groupId>
+            <artifactId>mule-extensions-api</artifactId>
         </dependency>
         <dependency>
             <!--for the extensions configuration builder-->
@@ -172,7 +177,7 @@
         </dependency>
         <dependency>
             <groupId>org.powermock</groupId>
-            <artifactId>powermock-api-mockito</artifactId>
+            <artifactId>powermock-api-mockito2</artifactId>
             <version>${powermockVersion}</version>
             <scope>test</scope>
         </dependency>
@@ -180,6 +185,18 @@
             <groupId>org.powermock</groupId>
             <artifactId>powermock-module-junit4</artifactId>
             <version>${powermockVersion}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.mule.glassfish.jaxb</groupId>
+            <artifactId>jaxb-runtime</artifactId>
+            <version>${javaXmlBindVersion}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.mule.tests</groupId>
+            <artifactId>mule-tests-allure</artifactId>
+            <version>${project.version}</version>
             <scope>test</scope>
         </dependency>
     </dependencies>
@@ -203,6 +220,7 @@
                 <configuration>
                     <systemPropertyVariables>
                         <testComponentPlugin>${org.mule.tests.plugin:mule-tests-component-plugin:jar:mule-plugin}</testComponentPlugin>
+                        <extensionsApiLib>${org.mule.runtime:mule-extensions-api:jar}</extensionsApiLib>
                     </systemPropertyVariables>
                 </configuration>
             </plugin>

@@ -69,12 +69,10 @@ public class SpringConfigurationComponentLocator implements ConfigurationCompone
   }
 
   /**
-   * Removes a component from the locator
-   *
-   * @param location the location of the component to be removed
+   * Removes the components from the locator
    */
-  public void removeComponent(Location location) {
-    this.componentsMap.remove(location.toString());
+  public void removeComponents() {
+    this.componentsMap.clear();
   }
 
   /**
@@ -82,7 +80,7 @@ public class SpringConfigurationComponentLocator implements ConfigurationCompone
    */
   @Override
   public Optional<Component> find(Location location) {
-    if (isTemplateLocationFunction.apply(location.getGlobalName())) {
+    if (location == null || isTemplateLocationFunction.apply(location.getGlobalName())) {
       return empty();
     }
     return ofNullable(componentsMap.get(location.toString()));

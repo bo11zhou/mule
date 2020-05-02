@@ -8,18 +8,10 @@ package org.mule.runtime.core.api.retry.policy;
 
 import org.mule.runtime.core.internal.retry.policies.SimpleRetryPolicy;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 /**
  * This policy allows the user to configure how many times a retry should be attempted and how long to wait between retries.
  */
 public final class SimpleRetryPolicyTemplate extends AbstractPolicyTemplate {
-
-  /**
-   * logger used by this class
-   */
-  protected transient final Logger logger = LoggerFactory.getLogger(SimpleRetryPolicyTemplate.class);
 
   public static final int DEFAULT_FREQUENCY = 2000;
   public static final int DEFAULT_RETRY_COUNT = 2;
@@ -53,6 +45,7 @@ public final class SimpleRetryPolicyTemplate extends AbstractPolicyTemplate {
     this.count = count;
   }
 
+  @Override
   public RetryPolicy createRetryInstance() {
     return new SimpleRetryPolicy(frequency, count);
   }

@@ -7,23 +7,26 @@
 package org.mule.runtime.module.deployment.impl.internal.maven;
 
 import static com.vdurmont.semver4j.Semver.SemverType.LOOSE;
+import static java.util.Arrays.asList;
 import static java.util.Collections.emptyMap;
+import static java.util.Collections.emptySet;
 import static java.util.stream.Collectors.toList;
+import static org.mule.runtime.module.deployment.impl.internal.maven.AbstractMavenClassLoaderModelLoader.CLASS_LOADER_MODEL_VERSION_120;
+import static org.mule.runtime.module.deployment.impl.internal.plugin.PluginLocalDependenciesBlacklist.isBlacklisted;
+
 import org.mule.runtime.module.artifact.api.descriptor.BundleDependency;
 import org.mule.runtime.module.artifact.api.descriptor.BundleDescriptor;
 import org.mule.runtime.module.artifact.api.descriptor.BundleScope;
 import org.mule.tools.api.classloader.model.AppClassLoaderModel;
 import org.mule.tools.api.classloader.model.Artifact;
 
-import com.vdurmont.semver4j.Semver;
-
 import java.io.File;
 import java.net.URI;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
-import java.util.stream.Collectors;
 
+import com.vdurmont.semver4j.Semver;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.maven.model.Plugin;
 
@@ -35,14 +38,17 @@ import org.apache.maven.model.Plugin;
  */
 public class HeavyweightClassLoaderModelBuilder extends ArtifactClassLoaderModelBuilder {
 
-  private static final Semver CLASS_LOADER_MODEL_VERSION_110 = new Semver("1.1.0", LOOSE);
+  public static final Semver CLASS_LOADER_MODEL_VERSION_110 = new Semver("1.1.0", LOOSE);
 
-  private org.mule.tools.api.classloader.model.ClassLoaderModel packagerClassLoaderModel;
+  private final org.mule.tools.api.classloader.model.ClassLoaderModel packagerClassLoaderModel;
 
-  public HeavyweightClassLoaderModelBuilder(File applicationFolder,
+  private Semver classLoaderModelVersion;
+
+  public HeavyweightClassLoaderModelBuilder(File applicationFolder, BundleDescriptor artifactBundleDescriptor,
                                             org.mule.tools.api.classloader.model.ClassLoaderModel packagerClassLoaderModel) {
-    super(applicationFolder);
+    super(applicationFolder, artifactBundleDescriptor);
     this.packagerClassLoaderModel = packagerClassLoaderModel;
+    this.classLoaderModelVersion = new Semver(packagerClassLoaderModel.getVersion(), LOOSE);
   }
 
   /**
@@ -58,7 +64,7 @@ public class HeavyweightClassLoaderModelBuilder extends ArtifactClassLoaderModel
   }
 
   @Override
-  protected Map<BundleDescriptor, Set<BundleDescriptor>> doProcessAdditionalPluginLibraries(Plugin packagingPlugin) {
+  protected Map<BundleDescriptor, List<BundleDescriptor>> doProcessAdditionalPluginLibraries(Plugin packagingPlugin) {
     if (packagerClassLoaderModel instanceof AppClassLoaderModel) {
       AppClassLoaderModel appClassLoaderModel = (AppClassLoaderModel) packagerClassLoaderModel;
       appClassLoaderModel.getAdditionalPluginDependencies()
@@ -69,11 +75,17 @@ public class HeavyweightClassLoaderModelBuilder extends ArtifactClassLoaderModel
 
   @Override
   protected List<URI> processPluginAdditionalDependenciesURIs(BundleDependency bundleDependency) {
-    return bundleDependency.getAdditionalDependencies().stream().map(BundleDependency::getBundleUri).collect(toList());
+    return bundleDependency.getAdditionalDependenciesList().stream().map(additionalDependency -> {
+      if (isSupportingPackagesResourcesInformation() && !isBlacklisted(additionalDependency.getDescriptor())) {
+        withLocalPackages(additionalDependency.getPackages());
+        withLocalResources(additionalDependency.getResources());
+      }
+      return additionalDependency.getBundleUri();
+    }).collect(toList());
   }
 
   private BundleDependency createExtendedBundleDependency(BundleDependency original,
-                                                          Set<BundleDependency> additionalPluginDependencies) {
+                                                          List<BundleDependency> additionalPluginDependencies) {
     return new BundleDependency.Builder(original).setAdditionalDependencies(additionalPluginDependencies).build();
   }
 
@@ -89,7 +101,7 @@ public class HeavyweightClassLoaderModelBuilder extends ArtifactClassLoaderModel
                                                                                               plugin.getAdditionalDependencies()
                                                                                                   .stream()
                                                                                                   .map(this::toBundleDependency)
-                                                                                                  .collect(Collectors.toSet()))));
+                                                                                                  .collect(toList()))));
   }
 
   private boolean areSameDependency(org.mule.tools.api.classloader.model.Plugin plugin, BundleDependency dependency) {
@@ -102,16 +114,29 @@ public class HeavyweightClassLoaderModelBuilder extends ArtifactClassLoaderModel
     if (artifact.getArtifactCoordinates().getScope() != null) {
       builder.setScope(BundleScope.valueOf(artifact.getArtifactCoordinates().getScope().toUpperCase()));
     }
-    return builder
-        .setBundleUri(new File(artifactFolder, artifact.getUri().toString()).toURI())
+
+    BundleDependency.Builder bundleDependencyBuilder = builder
+        .setBundleUri(artifact.getUri().isAbsolute()
+            ? artifact.getUri()
+            : new File(artifactFolder, artifact.getUri().toString()).toURI())
         .setDescriptor(new BundleDescriptor.Builder()
             .setArtifactId(artifact.getArtifactCoordinates().getArtifactId())
             .setGroupId(artifact.getArtifactCoordinates().getGroupId())
             .setVersion(artifact.getArtifactCoordinates().getVersion())
             .setClassifier(artifact.getArtifactCoordinates().getClassifier())
             .setType(artifact.getArtifactCoordinates().getType())
-            .build())
-        .build();
+            .build());
+    if (isSupportingPackagesResourcesInformation()) {
+      bundleDependencyBuilder
+          .setPackages(artifact.getPackages() == null ? emptySet() : new HashSet<>(asList(artifact.getPackages())));
+      bundleDependencyBuilder
+          .setResources(artifact.getResources() == null ? emptySet() : new HashSet<>(asList(artifact.getResources())));
+    }
+    return bundleDependencyBuilder.build();
+  }
+
+  private boolean isSupportingPackagesResourcesInformation() {
+    return !classLoaderModelVersion.isLowerThan(CLASS_LOADER_MODEL_VERSION_120);
   }
 
   /**
@@ -121,9 +146,18 @@ public class HeavyweightClassLoaderModelBuilder extends ArtifactClassLoaderModel
   private void exportSharedLibrariesResourcesAndPackages() {
     packagerClassLoaderModel.getDependencies().stream()
         .filter(Artifact::isShared)
-        .forEach(
-                 sharedDep -> findAndExportSharedLibrary(
-                                                         sharedDep.getArtifactCoordinates().getGroupId(),
-                                                         sharedDep.getArtifactCoordinates().getArtifactId()));
+        .filter(sharedDep -> !validateMuleRuntimeSharedLibrary(sharedDep.getArtifactCoordinates().getGroupId(),
+                                                               sharedDep.getArtifactCoordinates().getArtifactId()))
+        .forEach(sharedDep -> {
+          if (isSupportingPackagesResourcesInformation()) {
+            this.exportingPackages(sharedDep.getPackages() == null ? emptySet() : new HashSet<>(asList(sharedDep.getPackages())));
+            this.exportingResources(sharedDep.getResources() == null ? emptySet()
+                : new HashSet<>(asList(sharedDep.getResources())));
+          } else {
+            findAndExportSharedLibrary(sharedDep.getArtifactCoordinates().getGroupId(),
+                                       sharedDep.getArtifactCoordinates().getArtifactId());
+          }
+        });
   }
+
 }

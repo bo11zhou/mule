@@ -52,7 +52,7 @@
     <flow name="complexMappingWithFailingExpression">
         <!-- TODO MULE-13638: Partial fix until there's a way to make the calling to petstore:fail breaks differently depending on the 'petNames' parametrization -->
         <!-- defining an expression that will always fail -->
-        <petstore:fail petNames="#[ ' ++ as Object  ]">
+        <petstore:fail petNames="#[null.a!]">
             <error-mapping sourceType="CONNECTIVITY" targetType="APP:MY_REQUESTER"/>
         </petstore:fail>
         <error-handler>
@@ -70,7 +70,7 @@
             <!-- TODO MULE-13638: Partial fix until there's a way to make the calling to petstore:fail breaks differently depending on the 'petNames' parametrization -->
             <when expression="#[vars.failExpression]">
                 <!-- defining an expression that will always fail -->
-                <petstore:fail petNames="#[ ' ++ as Object  ]">
+                <petstore:fail petNames="#[null.a!]">
                     <error-mapping sourceType="CONNECTIVITY" targetType="APP:MY_REQUESTER"/>
                     <error-mapping sourceType="EXPRESSION" targetType="APP:MY_OTHER_ERROR"/>
                 </petstore:fail>
@@ -94,5 +94,37 @@
             </on-error-continue>
         </error-handler>
     </flow>
+
+    <flow name="raise-error-in-flow">
+        <set-payload value="#[output application/json --- null]"/>
+        <petstore:fail petNames="#[payload as Boolean]">
+            <error-mapping targetType="APP:PERRO"/>
+        </petstore:fail>
+        <logger message="b: No error raised" />
+    </flow>
+
+    <flow name="raise-error-flow-ref">
+        <flow-ref name="validate" />
+        <logger message="a: No error raised" />
+    </flow>
+
+    <flow name="validate">
+        <set-payload value="#[output application/json --- null]"/>
+        <petstore:fail petNames="#[payload as Boolean]">
+            <error-mapping targetType="APP:PERRO"/>
+        </petstore:fail>
+    </flow>
+
+    <flow name="raise-error-in-subflow">
+        <flow-ref name="validate-payload" />
+        <logger message="a: No error raised" />
+    </flow>
+
+    <sub-flow name="validate-payload">
+        <set-payload value="#[output application/json --- null]"/>
+        <petstore:fail petNames="#[payload as Boolean]">
+            <error-mapping targetType="APP:PERRO"/>
+        </petstore:fail>
+    </sub-flow>
 
 </mule>

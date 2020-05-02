@@ -8,27 +8,36 @@ package org.mule.runtime.module.extension.internal.runtime.operation;
 
 import static java.nio.charset.Charset.defaultCharset;
 import static java.util.Arrays.asList;
+import static java.util.Collections.emptyMap;
 import static java.util.Collections.emptySet;
 import static java.util.Optional.empty;
 import static java.util.Optional.of;
 import static org.apache.commons.lang3.StringUtils.EMPTY;
 import static org.mockito.Answers.RETURNS_DEEP_STUBS;
-import static org.mockito.Matchers.any;
-import static org.mockito.Matchers.anyMap;
-import static org.mockito.Matchers.anyObject;
-import static org.mockito.Matchers.anyString;
-import static org.mockito.Matchers.argThat;
-import static org.mockito.Matchers.same;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyMap;
+import static org.mockito.ArgumentMatchers.anyObject;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.same;
 import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.hamcrest.MockitoHamcrest.argThat;
+import static org.mule.runtime.api.meta.model.operation.ExecutionType.BLOCKING;
 import static org.mule.runtime.api.meta.model.parameter.ParameterRole.BEHAVIOUR;
 import static org.mule.runtime.api.meta.model.parameter.ParameterRole.CONTENT;
 import static org.mule.runtime.api.util.ExtensionModelTestUtils.visitableMock;
 import static org.mule.runtime.core.api.config.MuleProperties.OBJECT_CONNECTION_MANAGER;
 import static org.mule.runtime.core.api.config.MuleProperties.OBJECT_STREAMING_MANAGER;
+import static org.mule.runtime.core.api.lifecycle.LifecycleUtils.disposeIfNeeded;
+import static org.mule.runtime.core.api.lifecycle.LifecycleUtils.initialiseIfNeeded;
+import static org.mule.runtime.core.api.lifecycle.LifecycleUtils.startIfNeeded;
+import static org.mule.runtime.core.api.lifecycle.LifecycleUtils.stopIfNeeded;
+import static org.mule.runtime.core.internal.metadata.cache.MetadataCacheManager.METADATA_CACHE_MANAGER_KEY;
+import static org.mule.tck.MuleTestUtils.stubComponentExecutor;
 import static org.mule.tck.util.MuleContextUtils.eventBuilder;
 import static org.mule.test.module.extension.internal.util.ExtensionsTestUtils.getDefaultCursorStreamProviderFactory;
 import static org.mule.test.module.extension.internal.util.ExtensionsTestUtils.mockClassLoaderModelProperty;
@@ -39,8 +48,9 @@ import static org.mule.test.module.extension.internal.util.ExtensionsTestUtils.m
 import static org.mule.test.module.extension.internal.util.ExtensionsTestUtils.mockSubTypes;
 import static org.mule.test.module.extension.internal.util.ExtensionsTestUtils.setRequires;
 import static org.mule.test.module.extension.internal.util.ExtensionsTestUtils.toMetadataType;
-import static reactor.core.publisher.Mono.just;
+
 import org.mule.metadata.api.model.StringType;
+import org.mule.runtime.api.exception.MuleException;
 import org.mule.runtime.api.lifecycle.Disposable;
 import org.mule.runtime.api.lifecycle.Initialisable;
 import org.mule.runtime.api.lifecycle.Lifecycle;
@@ -56,6 +66,7 @@ import org.mule.runtime.api.meta.model.parameter.ParameterModel;
 import org.mule.runtime.api.metadata.DataType;
 import org.mule.runtime.api.metadata.MediaType;
 import org.mule.runtime.api.metadata.TypedValue;
+import org.mule.runtime.ast.api.ComponentAst;
 import org.mule.runtime.core.api.MuleContext;
 import org.mule.runtime.core.api.context.MuleContextAware;
 import org.mule.runtime.core.api.event.CoreEvent;
@@ -74,10 +85,10 @@ import org.mule.runtime.core.internal.metadata.cache.MetadataCacheIdGenerator;
 import org.mule.runtime.core.internal.metadata.cache.MetadataCacheIdGeneratorFactory;
 import org.mule.runtime.core.internal.metadata.cache.MetadataCacheManager;
 import org.mule.runtime.core.internal.policy.OperationExecutionFunction;
+import org.mule.runtime.core.internal.policy.OperationParametersProcessor;
 import org.mule.runtime.core.internal.policy.OperationPolicy;
 import org.mule.runtime.core.internal.policy.PolicyManager;
 import org.mule.runtime.core.internal.retry.ReconnectionConfig;
-import org.mule.runtime.dsl.api.component.config.ComponentConfiguration;
 import org.mule.runtime.extension.api.declaration.type.ExtensionsTypeLoaderFactory;
 import org.mule.runtime.extension.api.metadata.MetadataResolverFactory;
 import org.mule.runtime.extension.api.metadata.NullMetadataResolver;
@@ -87,14 +98,15 @@ import org.mule.runtime.extension.api.property.MetadataKeyPartModelProperty;
 import org.mule.runtime.extension.api.runtime.config.ConfigurationInstance;
 import org.mule.runtime.extension.api.runtime.config.ConfigurationProvider;
 import org.mule.runtime.extension.api.runtime.exception.ExceptionHandlerFactory;
-import org.mule.runtime.extension.api.runtime.operation.ComponentExecutor;
-import org.mule.runtime.extension.api.runtime.operation.ComponentExecutorFactory;
+import org.mule.runtime.extension.api.runtime.operation.CompletableComponentExecutor;
+import org.mule.runtime.extension.api.runtime.operation.CompletableComponentExecutor.ExecutorCallback;
+import org.mule.runtime.extension.api.runtime.operation.CompletableComponentExecutorFactory;
 import org.mule.runtime.module.extension.api.runtime.privileged.ExecutionContextAdapter;
 import org.mule.runtime.module.extension.internal.loader.java.property.FieldOperationParameterModelProperty;
-import org.mule.runtime.module.extension.internal.loader.java.property.InterceptorsModelProperty;
 import org.mule.runtime.module.extension.internal.loader.java.property.MediaTypeModelProperty;
 import org.mule.runtime.module.extension.internal.loader.java.property.QueryParameterModelProperty;
 import org.mule.runtime.module.extension.internal.runtime.exception.NullExceptionHandler;
+import org.mule.runtime.module.extension.internal.runtime.execution.OperationArgumentResolverFactory;
 import org.mule.runtime.module.extension.internal.runtime.resolver.ResolverSet;
 import org.mule.runtime.module.extension.internal.runtime.resolver.ResolverSetResult;
 import org.mule.runtime.module.extension.internal.runtime.resolver.ValueResolvingContext;
@@ -102,104 +114,115 @@ import org.mule.tck.junit4.AbstractMuleContextTestCase;
 import org.mule.test.metadata.extension.resolver.TestNoConfigMetadataResolver;
 
 import java.util.Collections;
-import java.util.Map;
-import java.util.Optional;
 
 import org.hamcrest.BaseMatcher;
 import org.hamcrest.Description;
+import org.junit.After;
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
-import org.junit.runner.RunWith;
 import org.mockito.Mock;
-import org.mockito.runners.MockitoJUnitRunner;
+import org.mockito.junit.MockitoJUnit;
+import org.mockito.junit.MockitoRule;
+import org.mockito.stubbing.Answer;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
-@RunWith(MockitoJUnitRunner.class)
 public abstract class AbstractOperationMessageProcessorTestCase extends AbstractMuleContextTestCase {
+
+  private static final Logger LOGGER = LoggerFactory.getLogger(AbstractOperationMessageProcessorTestCase.class);
 
   protected static final String EXTENSION_NAMESPACE = "extension_namespace";
   protected static final String CONFIG_NAME = "config";
   protected static final String OPERATION_NAME = "operation";
   protected static final String TARGET_VAR = "myFlowVar";
 
-  @Mock(answer = RETURNS_DEEP_STUBS)
+  @Rule
+  public MockitoRule rule = MockitoJUnit.rule().silent();
+
+  @Mock(answer = RETURNS_DEEP_STUBS, lenient = true)
   protected ExtensionModel extensionModel;
 
-  @Mock(answer = RETURNS_DEEP_STUBS)
+  @Mock(answer = RETURNS_DEEP_STUBS, lenient = true)
   protected ConfigurationModel configurationModel;
 
-  @Mock(answer = RETURNS_DEEP_STUBS)
+  @Mock(answer = RETURNS_DEEP_STUBS, lenient = true)
   protected OperationModel operationModel;
 
-  @Mock
+  @Mock(lenient = true)
   protected ExtensionManager extensionManager;
 
-  @Mock
+  @Mock(lenient = true)
   protected ConnectionManagerAdapter connectionManagerAdapter;
-  @Mock
-  protected ComponentExecutorFactory operationExecutorFactory;
 
-  @Mock(extraInterfaces = {Lifecycle.class, MuleContextAware.class})
-  protected ComponentExecutor operationExecutor;
+  @Mock(lenient = true)
+  protected CompletableComponentExecutorFactory operationExecutorFactory;
 
-  @Mock(answer = RETURNS_DEEP_STUBS)
+  @Mock(extraInterfaces = {Lifecycle.class, MuleContextAware.class, OperationArgumentResolverFactory.class}, lenient = true)
+  protected CompletableComponentExecutor operationExecutor;
+
+  @Mock(lenient = true)
+  protected ExecutorCallback executorCallback;
+
+  @Mock(answer = RETURNS_DEEP_STUBS, lenient = true)
   protected ResolverSet resolverSet;
 
-  @Mock
+  @Mock(lenient = true)
   protected ResolverSetResult parameters;
 
   protected CoreEvent event;
 
-  @Mock(answer = RETURNS_DEEP_STUBS)
+  @Mock(answer = RETURNS_DEEP_STUBS, lenient = true)
   protected InternalMessage message;
 
-  @Mock(answer = RETURNS_DEEP_STUBS)
+  @Mock(answer = RETURNS_DEEP_STUBS, lenient = true)
   protected MuleContextWithRegistry context;
 
-  @Mock
+  @Mock(lenient = true)
   protected ConfigurationInstance configurationInstance;
 
-  @Mock
+  @Mock(lenient = true)
   protected Object configuration;
 
-  @Mock
+  @Mock(lenient = true)
   protected ExceptionHandlerFactory exceptionHandlerFactory;
 
-  @Mock
+  @Mock(lenient = true)
   protected MetadataResolverFactory metadataResolverFactory;
 
-  @Mock
+  @Mock(lenient = true)
   protected ConnectionProviderWrapper connectionProviderWrapper;
 
-  @Mock
+  @Mock(lenient = true)
   protected ParameterModel contentMock;
 
-  @Mock
+  @Mock(lenient = true)
   protected ParameterModel keyParamMock;
 
-  @Mock
+  @Mock(lenient = true)
   protected OutputModel outputMock;
 
-  @Mock
+  @Mock(lenient = true)
   protected StringType stringType;
 
-  @Mock
+  @Mock(lenient = true)
   protected ConfigurationProvider configurationProvider;
 
   protected ParameterGroupModel parameterGroupModel;
 
-  @Mock(answer = RETURNS_DEEP_STUBS)
+  @Mock(answer = RETURNS_DEEP_STUBS, lenient = true)
   protected PolicyManager mockPolicyManager;
 
-  @Mock
+  @Mock(lenient = true)
   private ExecutionContextAdapter<OperationModel> executionContext;
 
-  @Mock
-  private MetadataCacheIdGeneratorFactory<ComponentConfiguration> cacheIdGeneratorFactory;
+  @Mock(lenient = true)
+  private MetadataCacheIdGeneratorFactory<ComponentAst> cacheIdGeneratorFactory;
 
-  @Mock
-  private MetadataCacheIdGenerator<ComponentConfiguration> cacheIdGenerator;
+  @Mock(lenient = true)
+  private MetadataCacheIdGenerator<ComponentAst> cacheIdGenerator;
 
-  @Mock
+  @Mock(lenient = true)
   private MetadataCacheManager metadataCacheManager;
 
   protected OperationMessageProcessor messageProcessor;
@@ -227,6 +250,7 @@ public abstract class AbstractOperationMessageProcessorTestCase extends Abstract
     when(extensionModel.getConfigurationModels()).thenReturn(asList(configurationModel));
     when(operationModel.getName()).thenReturn(getClass().getName());
     when(operationModel.isBlocking()).thenReturn(true);
+    when(operationModel.getExecutionType()).thenReturn(BLOCKING);
     when(extensionModel.getXmlDslModel()).thenReturn(XmlDslModel.builder().setPrefix("test-extension").build());
     when(operationModel.getOutput())
         .thenReturn(new ImmutableOutputModel("Message.Payload", toMetadataType(String.class), false, emptySet()));
@@ -238,6 +262,7 @@ public abstract class AbstractOperationMessageProcessorTestCase extends Abstract
                                                                                            .load(String.class), "someParam")));
     setRequires(operationModel, true, true);
     when(operationExecutorFactory.createExecutor(same(operationModel), anyMap())).thenReturn(operationExecutor);
+    when(((OperationArgumentResolverFactory) operationExecutor).createArgumentResolver(any())).thenReturn(ctx -> emptyMap());
 
     when(operationModel.getName()).thenReturn(OPERATION_NAME);
     when(operationModel.getDisplayModel()).thenReturn(empty());
@@ -283,25 +308,25 @@ public abstract class AbstractOperationMessageProcessorTestCase extends Abstract
     when(outputMock.hasDynamicType()).thenReturn(true);
     when(operationModel.getOutput()).thenReturn(outputMock);
     when(operationModel.getOutputAttributes()).thenReturn(outputMock);
-    when(operationModel.getModelProperty(InterceptorsModelProperty.class)).thenReturn(empty());
 
     when(operationExecutorFactory.createExecutor(same(operationModel), anyMap())).thenReturn(operationExecutor);
-    when(operationExecutor.execute(any())).thenReturn(just(""));
+
+    stubComponentExecutor(operationExecutor, "");
 
     when(extensionManager.getExtensions()).thenReturn(Collections.singleton(extensionModel));
 
     when(cacheIdGeneratorFactory.create(any(), any())).thenReturn(cacheIdGenerator);
-    when(cacheIdGenerator.getIdForComponentMetadata(any()))
-        .then(invocation -> Optional.of(new MetadataCacheId(UUID.getUUID(), null)));
-    when(cacheIdGenerator.getIdForGlobalMetadata(any()))
-        .then(invocation -> Optional.of(new MetadataCacheId(UUID.getUUID(), null)));
-    when(cacheIdGenerator.getIdForMetadataKeys(any()))
-        .then(invocation -> Optional.of(new MetadataCacheId(UUID.getUUID(), null)));
+
+    Answer<Object> cacheIdAnswer = invocation -> of(new MetadataCacheId(UUID.getUUID(), null));
+
+    when(cacheIdGenerator.getIdForComponentMetadata(any())).then(cacheIdAnswer);
+    when(cacheIdGenerator.getIdForGlobalMetadata(any())).then(cacheIdAnswer);
+    when(cacheIdGenerator.getIdForMetadataKeys(any())).then(cacheIdAnswer);
 
     ((MuleContextWithRegistry) muleContext).getRegistry().registerObject("metadata.cache.id.model.generator.factory",
                                                                          cacheIdGeneratorFactory);
 
-    ((MuleContextWithRegistry) muleContext).getRegistry().registerObject("core.metadata.cache.manager",
+    ((MuleContextWithRegistry) muleContext).getRegistry().registerObject(METADATA_CACHE_MANAGER_KEY,
                                                                          metadataCacheManager);
 
     when(resolverSet.resolve(argThat(new BaseMatcher<ValueResolvingContext>() {
@@ -348,13 +373,16 @@ public abstract class AbstractOperationMessageProcessorTestCase extends Abstract
 
     when(stringType.getAnnotation(anyObject())).thenReturn(empty());
 
-    when(mockPolicyManager.createOperationPolicy(any(), any(), any(), any())).thenAnswer(invocationOnMock -> {
+    when(mockPolicyManager.createOperationPolicy(any(), any(), any())).thenAnswer(invocationOnMock -> {
       if (mockOperationPolicy == null) {
         mockOperationPolicy = mock(OperationPolicy.class);
-        when(mockOperationPolicy.process(any()))
-            .thenAnswer(operationPolicyInvocationMock -> ((OperationExecutionFunction) invocationOnMock.getArguments()[3])
-                .execute((Map<String, Object>) invocationOnMock.getArguments()[2],
-                         (CoreEvent) invocationOnMock.getArguments()[1]));
+        doAnswer(invocation -> {
+          ((OperationExecutionFunction) invocation.getArgument(1))
+              .execute(((OperationParametersProcessor) invocationOnMock.getArgument(2)).getOperationParameters(),
+                       invocationOnMock.getArgument(1),
+                       invocation.getArgument(4));
+          return null;
+        }).when(mockOperationPolicy).process(any(), any(), any(), any(), any());
       }
       return mockOperationPolicy;
     });
@@ -363,6 +391,12 @@ public abstract class AbstractOperationMessageProcessorTestCase extends Abstract
     when(connectionManagerAdapter.getConnection(anyString())).thenReturn(null);
     when(connectionManagerAdapter.getReconnectionConfigFor(any())).thenReturn(ReconnectionConfig.getDefault());
     messageProcessor = setUpOperationMessageProcessor();
+  }
+
+  @After
+  public void after() throws MuleException {
+    stopIfNeeded(messageProcessor);
+    disposeIfNeeded(messageProcessor, LOGGER);
   }
 
   protected CoreEvent configureEvent() throws Exception {
@@ -375,15 +409,18 @@ public abstract class AbstractOperationMessageProcessorTestCase extends Abstract
   }
 
   protected OperationMessageProcessor setUpOperationMessageProcessor() throws Exception {
+    after();
     OperationMessageProcessor messageProcessor = createOperationMessageProcessor();
     messageProcessor.setMuleContext(context);
     ((MuleContextWithRegistry) muleContext).getRegistry().registerObject(OBJECT_CONNECTION_MANAGER, connectionManagerAdapter);
-    muleContext.getInjector().inject(messageProcessor);
-    messageProcessor.initialise();
+
+    initialiseIfNeeded(messageProcessor, muleContext);
+    startIfNeeded(messageProcessor);
+
     return messageProcessor;
   }
 
-  protected abstract OperationMessageProcessor createOperationMessageProcessor();
+  protected abstract OperationMessageProcessor createOperationMessageProcessor() throws MuleException;
 
   @Test
   public void initialise() throws Exception {
@@ -393,19 +430,15 @@ public abstract class AbstractOperationMessageProcessorTestCase extends Abstract
 
   @Test
   public void start() throws Exception {
-    messageProcessor.start();
     verify((Startable) operationExecutor).start();
   }
 
   @Test
-  public void stop() throws Exception {
+  public void stopAndDispose() throws Exception {
     messageProcessor.stop();
-    verify((Stoppable) operationExecutor).stop();
-  }
-
-  @Test
-  public void dispose() throws Exception {
     messageProcessor.dispose();
+
+    verify((Stoppable) operationExecutor).stop();
     verify((Disposable) operationExecutor).dispose();
   }
 

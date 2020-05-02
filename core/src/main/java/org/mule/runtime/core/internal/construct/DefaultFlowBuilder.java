@@ -12,17 +12,12 @@ import static java.util.Collections.emptyList;
 import static java.util.Optional.ofNullable;
 import static org.apache.commons.lang3.StringUtils.isNotEmpty;
 import static org.mule.runtime.api.util.Preconditions.checkArgument;
-import static org.mule.runtime.core.api.config.MuleProperties.COMPATIBILITY_PLUGIN_INSTALLED;
 import static org.mule.runtime.core.api.construct.Flow.INITIAL_STATE_STARTED;
-import static org.mule.runtime.core.api.event.EventContextFactory.create;
 import static org.mule.runtime.core.internal.construct.AbstractFlowConstruct.createFlowStatistics;
-import static org.mule.runtime.core.internal.event.DefaultEventContext.child;
-import static org.mule.runtime.core.privileged.event.PrivilegedEvent.setCurrentEvent;
 import static org.mule.runtime.core.privileged.processor.MessageProcessors.processToApply;
 import static reactor.core.publisher.Flux.from;
 
 import org.mule.runtime.api.deployment.management.ComponentInitialStateManager;
-import org.mule.runtime.api.event.EventContext;
 import org.mule.runtime.api.exception.MuleException;
 import org.mule.runtime.api.message.Message;
 import org.mule.runtime.core.api.MuleContext;
@@ -32,33 +27,22 @@ import org.mule.runtime.core.api.event.CoreEvent;
 import org.mule.runtime.core.api.exception.FlowExceptionHandler;
 import org.mule.runtime.core.api.management.stats.FlowConstructStatistics;
 import org.mule.runtime.core.api.processor.Processor;
+import org.mule.runtime.core.api.processor.ReactiveProcessor;
 import org.mule.runtime.core.api.processor.strategy.ProcessingStrategyFactory;
 import org.mule.runtime.core.api.source.MessageSource;
-import org.mule.runtime.core.internal.context.MuleContextWithRegistry;
-import org.mule.runtime.core.internal.exception.MessagingException;
-import org.mule.runtime.core.internal.message.InternalEvent;
 import org.mule.runtime.core.internal.processor.strategy.DirectProcessingStrategyFactory;
-import org.mule.runtime.core.internal.processor.strategy.TransactionAwareProactorStreamProcessingStrategyFactory;
-import org.mule.runtime.core.internal.util.MessagingExceptionResolver;
-import org.mule.runtime.core.privileged.PrivilegedMuleContext;
-import org.mule.runtime.core.privileged.event.BaseEventContext;
-import org.mule.runtime.core.privileged.event.PrivilegedEvent;
-
-import org.reactivestreams.Publisher;
+import org.mule.runtime.core.privileged.processor.MessageProcessors;
 
 import java.util.List;
 import java.util.Optional;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.RejectedExecutionException;
-import java.util.function.BiFunction;
-import java.util.function.Function;
 
-import reactor.core.publisher.Mono;
+import org.reactivestreams.Publisher;
+
+import reactor.core.publisher.Flux;
 
 /**
  * Creates instances of {@link Flow} with a default implementation
- *
- * <p/>
+ * <p>
  * Builder instance can be configured using the methods that follow the builder pattern until the flow is built. After that point,
  * builder methods will fail to update the builder state.
  */
@@ -82,7 +66,7 @@ public class DefaultFlowBuilder implements Builder {
    * @param name name of the flow to be created. Non empty.
    * @param muleContext context where the flow will be associated with. Non null.
    * @param componentInitialStateManager component state manager used by the flow to determine what components must be started or
-   *        not. Noo null.
+   *        not. Not null.
    */
   public DefaultFlowBuilder(String name, MuleContext muleContext, ComponentInitialStateManager componentInitialStateManager) {
     checkArgument(isNotEmpty(name), "name cannot be empty");
@@ -213,10 +197,6 @@ public class DefaultFlowBuilder implements Builder {
    */
   public static class DefaultFlow extends AbstractPipeline implements Flow {
 
-    private final MessagingExceptionResolver exceptionResolver = new MessagingExceptionResolver(this);
-
-    private boolean handleReplyTo = false;
-
     protected DefaultFlow(String name, MuleContext muleContext, MessageSource source, List<Processor> processors,
                           Optional<FlowExceptionHandler> exceptionListener,
                           Optional<ProcessingStrategyFactory> processingStrategyFactory, String initialState,
@@ -227,111 +207,28 @@ public class DefaultFlowBuilder implements Builder {
     }
 
     @Override
-    protected void doInitialise() throws MuleException {
-      super.doInitialise();
-
-      if (((MuleContextWithRegistry) muleContext).getRegistry().lookupObject(COMPATIBILITY_PLUGIN_INSTALLED) != null) {
-        handleReplyTo = true;
-      }
-    }
-
-    @Override
     public CoreEvent process(final CoreEvent event) throws MuleException {
       return processToApply(event, this);
     }
 
     @Override
+    public ReactiveProcessor referenced() {
+      return pub -> from(pub)
+          .doOnNext(this::checkBackpressureReferenced)
+          .transform(dispatchToFlow());
+    }
+
+    /**
+     * This implementation does not support {@link Flux}es, but because of backwards compatibility we cannot "improve" it.
+     */
+    @Override
     public Publisher<CoreEvent> apply(Publisher<CoreEvent> publisher) {
       return from(publisher)
           .doOnNext(assertStarted())
-          .flatMap(flowWaitMapper(event -> createMuleEventForCurrentFlow((PrivilegedEvent) event),
-                                  (result, event) -> createReturnEventForParentFlowConstruct((PrivilegedEvent) result,
-                                                                                             (InternalEvent) event)))
+          // Insert the incoming event into the flow, routing it through the processing strategy
+          .compose(routeThroughProcessingStrategyTransformer())
           // Don't handle errors, these will be handled by parent flow
           .onErrorStop();
-    }
-
-    private PrivilegedEvent createMuleEventForCurrentFlow(PrivilegedEvent event) {
-      if (handleReplyTo) {
-        // Create new event with replyToHandler etc.
-        event = InternalEvent.builder(event)
-            // DefaultReplyToHandler is used differently and should only be invoked by the first flow and not any
-            // referenced flows. If it is passed on they two replyTo responses are sent.
-            .replyToHandler(null)
-            .replyToDestination(event.getReplyToDestination()).build();
-        // Update RequestContext ThreadLocal for backwards compatibility
-        setCurrentEvent(event);
-      }
-      return event;
-    }
-
-    private PrivilegedEvent createReturnEventForParentFlowConstruct(PrivilegedEvent result, InternalEvent original) {
-      if (handleReplyTo) {
-        if (result != null) {
-          // Create new event with ReplyToHandler and synchronous
-          result = InternalEvent.builder(result)
-              .replyToHandler(original.getReplyToHandler())
-              .replyToDestination(original.getReplyToDestination())
-              .build();
-        }
-        // Update RequestContext ThreadLocal for backwards compatibility
-        setCurrentEvent(result);
-      }
-      return result;
-    }
-
-    @Override
-    protected Function<? super CoreEvent, Mono<? extends CoreEvent>> flowWaitMapper(Function<CoreEvent, CoreEvent> eventForFlowMapper,
-                                                                                    BiFunction<CoreEvent, CoreEvent, CoreEvent> returnEventFromFlowMapper) {
-      return event -> {
-        CoreEvent request = eventForFlowMapper.apply(event);
-        Publisher<CoreEvent> responsePublisher = ((BaseEventContext) request.getContext()).getResponsePublisher();
-        // Use sink and potentially shared stream in Flow by dispatching incoming event via sink and then using
-        // response publisher to operate of the result of flow processing before returning
-        try {
-          getSink().accept(request);
-        } catch (RejectedExecutionException ree) {
-          Throwable overloadException = new FlowBackPressureException(ree.getMessage(), ree);
-          MessagingException me = new MessagingException(request, overloadException, this);
-          ((BaseEventContext) request.getContext())
-              .error(exceptionResolver.resolve(me, ((PrivilegedMuleContext) getMuleContext()).getErrorTypeLocator(),
-                                               getMuleContext().getExceptionContextProviders()));
-        }
-        return flowResponse(request, responsePublisher, returnEventFromFlowMapper);
-      };
-    }
-
-    @Override
-    protected Function<? super CoreEvent, Mono<? extends CoreEvent>> flowFailDropMapper(Function<CoreEvent, CoreEvent> eventForFlowMapper,
-                                                                                        BiFunction<CoreEvent, CoreEvent, CoreEvent> returnEventFromFlowMapper) {
-      return event -> {
-        CoreEvent request = eventForFlowMapper.apply(event);
-        Publisher<CoreEvent> responsePublisher = ((BaseEventContext) request.getContext()).getResponsePublisher();
-
-        if (getSink().emit(request)) {
-          return flowResponse(request, responsePublisher, returnEventFromFlowMapper);
-        } else {
-          // If Event is not accepted and the back-pressure strategy is FAIL then respond to Source with a FLOW_BACK_PRESSURE
-          // error.
-          FlowBackPressureException rejectedExecutionException = new FlowBackPressureException(getName());
-          return Mono.error(exceptionResolver.resolve(new MessagingException(request, rejectedExecutionException, this),
-                                                      ((PrivilegedMuleContext) getMuleContext()).getErrorTypeLocator(),
-                                                      getMuleContext().getExceptionContextProviders()));
-        }
-      };
-    }
-
-    private Mono<? extends CoreEvent> flowResponse(CoreEvent event, Publisher<CoreEvent> responsePublisher,
-                                                   BiFunction<CoreEvent, CoreEvent, CoreEvent> returnEventFromFlowMapper) {
-      return Mono.from(responsePublisher)
-          .cast(PrivilegedEvent.class)
-          .map(r -> {
-            return returnEventFromFlowMapper.apply(r, event);
-          })
-          .onErrorMap(MessagingException.class, me -> {
-            me.setProcessedEvent(returnEventFromFlowMapper.apply(me.getEvent(), event));
-            return me;
-          });
     }
 
     /**
@@ -341,27 +238,12 @@ public class DefaultFlowBuilder implements Builder {
      */
     @Override
     protected ProcessingStrategyFactory createDefaultProcessingStrategyFactory() {
-      return new TransactionAwareProactorStreamProcessingStrategyFactory();
-    }
-
-    @Override
-    public String getConstructType() {
-      return "Flow";
+      return MessageProcessors.createDefaultProcessingStrategyFactory();
     }
 
     @Override
     public boolean isSynchronous() {
       return getProcessingStrategy() != null ? getProcessingStrategy().isSynchronous() : true;
-    }
-
-    @Override
-    protected EventContext createEventContext(Optional<CompletableFuture<Void>> externalCompletion) {
-      return create(this, getLocation(), null, externalCompletion);
-    }
-
-    @Override
-    protected BaseEventContext createChildEventContext(EventContext parent) {
-      return child((BaseEventContext) parent, ofNullable(getLocation()), getExceptionListener());
     }
   }
 }

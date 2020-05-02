@@ -6,12 +6,16 @@
  */
 package org.mule.test.module.extension.client;
 
+import static java.lang.Boolean.parseBoolean;
+import static java.lang.System.getProperty;
 import static java.util.Collections.emptyList;
 import static org.hamcrest.CoreMatchers.instanceOf;
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.CoreMatchers.nullValue;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.hasSize;
+import static org.hamcrest.Matchers.not;
+import static org.mule.runtime.api.util.MuleSystemProperties.MULE_EXTENSIONS_CLIENT_CACHE_IS_DISABLED;
 import static org.mule.runtime.extension.api.client.DefaultOperationParameters.builder;
 import static org.mule.test.heisenberg.extension.HeisenbergExtension.HEISENBERG;
 import static org.mule.test.heisenberg.extension.model.types.WeaponType.FIRE_WEAPON;
@@ -53,6 +57,7 @@ public abstract class ExtensionsClientTestCase extends AbstractHeisenbergConfigT
   private static final String HEISENBERG_EXT_NAME = HEISENBERG;
   private static final String HEISENBERG_CONFIG = "heisenberg";
   private static final String ALIAS_OUTPUT = "jeje, my name is Juani and I'm 23 years old";
+  private static final String ANOTHER_ALIAS_OUTPUT = "jeje, my name is Heisenberg and I'm 23 years old";
 
   @Inject
   protected ExtensionsClient client;
@@ -65,7 +70,7 @@ public abstract class ExtensionsClientTestCase extends AbstractHeisenbergConfigT
 
   @Override
   protected boolean isDisposeContextPerClass() {
-    return true;
+    return false;
   }
 
   @After
@@ -90,6 +95,13 @@ public abstract class ExtensionsClientTestCase extends AbstractHeisenbergConfigT
         .build();
     Result<String, Object> result = doExecute(HEISENBERG_EXT_NAME, "kill", params);
     assertThat(result.getOutput(), is("ADIOS, Juani"));
+  }
+
+  @Test
+  @Description("Executes a simple operation twice using the client and checks the output")
+  public void executeSimpleOperationTwice() throws Throwable {
+    executeSimpleOperation();
+    executeSimpleOperation();
   }
 
   @Test
@@ -130,11 +142,37 @@ public abstract class ExtensionsClientTestCase extends AbstractHeisenbergConfigT
     OperationParameters params = builder().configName(HEISENBERG_CONFIG)
         .addParameter("greeting", "jeje")
         .addParameter("age", 23)
-        .addParameter("name", "Juani")
+        .addParameter("myName", "Juani")
         .addParameter("knownAddresses", emptyList())
         .build();
     Result<String, Object> result = doExecute(HEISENBERG_EXT_NAME, "alias", params);
     assertThat(result.getOutput(), is(ALIAS_OUTPUT));
+  }
+
+  @Test
+  @Description("Executes an operation that has a parameter group using the client and checks the output")
+  public void executeOperationWithParameterGroupUsingOptional() throws Throwable {
+    OperationParameters params = builder().configName(HEISENBERG_CONFIG)
+        .addParameter("greeting", "jeje")
+        .addParameter("age", 23)
+        .addParameter("knownAddresses", emptyList())
+        .build();
+    Result<String, Object> result = doExecute(HEISENBERG_EXT_NAME, "alias", params);
+    assertThat(result.getOutput(), is(ANOTHER_ALIAS_OUTPUT));
+  }
+
+  @Test
+  @Description("Executes a simple operation twice with different parameters using the client and checks the output")
+  public void executeSimpleOperationTwiceWithDifferentParameters() throws Throwable {
+    executeOperationWithParameterGroup();
+    executeOperationWithParameterGroupUsingOptional();
+  }
+
+  @Test
+  @Description("Executes a two different operationsusing the client and checks the output")
+  public void executeTwoDifferentOperation() throws Throwable {
+    executeOperationWithParameterGroup();
+    executeSimpleOperation();
   }
 
   @Test
@@ -185,6 +223,16 @@ public abstract class ExtensionsClientTestCase extends AbstractHeisenbergConfigT
   }
 
   @Test
+  @Description("Executes an operation that fails using the client and checks the throwed exception")
+  public void executeFailureNonBlockingOperation() throws Throwable {
+    exception.expect(MuleException.class);
+    exception.expectCause(instanceOf(ConnectionException.class));
+    exception.expectMessage("You are not allowed to speak with gus.");
+    OperationParameters params = builder().configName(HEISENBERG_CONFIG).build();
+    doExecute(HEISENBERG_EXT_NAME, "callGusFringNonBlocking", params);
+  }
+
+  @Test
   @Description("Tries to execute an operation from an extension that does not exist")
   public void nonExistentExtension() throws Throwable {
     exception.expect(MuleRuntimeException.class);
@@ -212,9 +260,21 @@ public abstract class ExtensionsClientTestCase extends AbstractHeisenbergConfigT
   }
 
   @Test
+  @Description("Tries to execute an operation that takes a long time")
+  public void longOperation() throws Throwable {
+    OperationParameters params = builder().build();
+    assertThat(doExecute(VEGAN, "longDigest", params), not(nullValue()));
+  }
+
+  @Test
   @Description("Checks that an operation disposes the resources after terminated")
   public void disposeAfterExecution() throws Throwable {
     executeSimpleOperation();
+
+    if (usingCachedStrategy()) {
+      muleContext.dispose();
+    }
+
     assertThat(HeisenbergOperations.disposed, is(true));
   }
 
@@ -223,5 +283,9 @@ public abstract class ExtensionsClientTestCase extends AbstractHeisenbergConfigT
   public void disposeOnFailureOperation() throws Throwable {
     executeFailureOperation();
     assertThat(HeisenbergOperations.disposed, is(true));
+  }
+
+  private boolean usingCachedStrategy() {
+    return !parseBoolean(getProperty(MULE_EXTENSIONS_CLIENT_CACHE_IS_DISABLED));
   }
 }

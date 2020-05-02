@@ -15,8 +15,8 @@ import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.CoreMatchers.nullValue;
 import static org.hamcrest.CoreMatchers.sameInstance;
 import static org.junit.Assert.assertThat;
-import static org.mockito.Matchers.any;
-import static org.mockito.Matchers.contains;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -52,7 +52,7 @@ import org.mule.runtime.extension.api.declaration.type.ExtensionsTypeLoaderFacto
 import org.mule.runtime.extension.api.runtime.operation.Result;
 import org.mule.runtime.module.extension.api.runtime.privileged.ExecutionContextAdapter;
 import org.mule.runtime.module.extension.internal.loader.java.property.MediaTypeModelProperty;
-import org.mule.tck.core.streaming.SimpleByteBufferManager;
+import org.mule.runtime.core.internal.streaming.bytes.SimpleByteBufferManager;
 import org.mule.tck.junit4.AbstractMuleContextTestCase;
 import org.mule.tck.size.SmallTest;
 
@@ -68,7 +68,7 @@ import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
-import org.mockito.runners.MockitoJUnitRunner;
+import org.mockito.junit.MockitoJUnitRunner;
 
 @SmallTest
 @RunWith(MockitoJUnitRunner.class)
@@ -76,7 +76,7 @@ public abstract class ValueReturnDelegateContractTestCase extends AbstractMuleCo
 
   public static final String HELLO_WORLD_MSG = "Hello world!";
 
-  @Mock
+  @Mock(lenient = true)
   protected ExecutionContextAdapter operationContext;
 
   @Mock
@@ -87,7 +87,7 @@ public abstract class ValueReturnDelegateContractTestCase extends AbstractMuleCo
   @Mock
   protected Object attributes;
 
-  @Mock
+  @Mock(lenient = true)
   protected OutputModel outputModel;
 
   @Mock
@@ -235,6 +235,26 @@ public abstract class ValueReturnDelegateContractTestCase extends AbstractMuleCo
       verify(connectionHandler, atLeastOnce()).release();
       return true;
     });
+  }
+
+  @Test
+  public void operationWithResultInputStreamOutputReleasesConnection() throws Exception {
+    when(outputModel.getType()).thenReturn(typeLoader.load(InputStream.class));
+    when(componentModel.supportsStreaming()).thenReturn(true);
+
+    delegate = createReturnDelegate();
+
+    Result<InputStream, Void> inputStreamResult =
+        Result.<InputStream, Void>builder().output(new ByteArrayInputStream(HELLO_WORLD_MSG.getBytes(UTF_8))).build();
+
+    CoreEvent result = delegate.asReturnValue(inputStreamResult, operationContext);
+
+    Message message = getOutputMessage(result);
+
+    ManagedCursorStreamProvider cursorStreamProvider = (ManagedCursorStreamProvider) message.getPayload().getValue();
+    InputStream resultingStream = cursorStreamProvider.openCursor();
+    assertThat(IOUtils.toString(resultingStream), is(HELLO_WORLD_MSG));
+    verify(connectionHandler, atLeastOnce()).release();
   }
 
   private void assertStreamIsWrapped(Object value) throws InitialisationException, IOException {

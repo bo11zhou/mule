@@ -10,7 +10,6 @@ import static org.mule.metadata.java.api.utils.JavaTypeUtils.getType;
 import static org.mule.runtime.core.api.util.ClassUtils.withContextClassLoader;
 import static org.mule.runtime.core.privileged.component.AnnotatedObjectInvocationHandler.addAnnotationsToClass;
 import static org.mule.runtime.module.extension.api.util.MuleExtensionUtils.getInitialiserEvent;
-import static org.mule.runtime.module.extension.internal.runtime.resolver.ValueResolvingContext.from;
 
 import org.mule.metadata.api.model.ObjectType;
 import org.mule.runtime.api.util.LazyValue;
@@ -22,6 +21,7 @@ import org.mule.runtime.module.extension.internal.config.dsl.AbstractExtensionOb
 import org.mule.runtime.module.extension.internal.runtime.objectbuilder.DefaultObjectBuilder;
 import org.mule.runtime.module.extension.internal.runtime.resolver.ObjectBuilderValueResolver;
 import org.mule.runtime.module.extension.internal.runtime.resolver.ValueResolver;
+import org.mule.runtime.module.extension.internal.runtime.resolver.ValueResolvingContext;
 import org.mule.runtime.module.extension.internal.util.ReflectionCache;
 
 import javax.inject.Inject;
@@ -36,9 +36,6 @@ import javax.inject.Inject;
  * @since 4.0
  */
 public class TopLevelParameterObjectFactory extends AbstractExtensionObjectFactory<Object> implements ObjectTypeProvider {
-
-  @Inject
-  private ReflectionCache reflectionCache;
 
   private LazyValue<DefaultObjectBuilder> builder;
   private LazyValue<Class<?>> objectClass;
@@ -77,10 +74,9 @@ public class TopLevelParameterObjectFactory extends AbstractExtensionObjectFacto
         return resolver;
       }
 
-      CoreEvent initialiserEvent = null;
-      try {
-        initialiserEvent = getInitialiserEvent(muleContext);
-        staticProduct = resolver.resolve(from(initialiserEvent));
+      CoreEvent initialiserEvent = getInitialiserEvent(muleContext);
+      try (ValueResolvingContext ctx = ValueResolvingContext.builder(initialiserEvent, expressionManager).build()) {
+        staticProduct = resolver.resolve(ctx);
         muleContext.getInjector().inject(staticProduct);
         return staticProduct;
       } finally {

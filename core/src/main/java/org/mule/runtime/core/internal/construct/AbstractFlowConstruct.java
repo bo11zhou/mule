@@ -38,11 +38,11 @@ import org.mule.runtime.core.privileged.component.AbstractExecutableComponent;
 import org.mule.runtime.core.privileged.exception.MessagingExceptionHandlerAcceptor;
 import org.mule.runtime.core.privileged.registry.RegistrationException;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import java.beans.ExceptionListener;
 import java.util.Optional;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Abstract implementation of {@link FlowConstruct} that:
@@ -109,7 +109,7 @@ public abstract class AbstractFlowConstruct extends AbstractExecutableComponent 
   @Override
   public final void start() throws MuleException {
     // Check if Initial State is Stopped
-    if (!isStopped() && initialState.equals(INITIAL_STATE_STOPPED)) {
+    if (muleContext.isStarting() && initialState.equals(INITIAL_STATE_STOPPED)) {
       lifecycleManager.fireStartPhase(new EmptyLifecycleCallback<>());
       lifecycleManager.fireStopPhase(new EmptyLifecycleCallback<>());
 
@@ -141,8 +141,8 @@ public abstract class AbstractFlowConstruct extends AbstractExecutableComponent 
       }
 
       lifecycleManager.fireDisposePhase((phaseName, object) -> {
-        doDispose();
         disposeIfDisposable(exceptionListener);
+        doDispose();
       });
     } catch (MuleException e) {
       LOGGER.error("Failed to stop service: " + name, e);
@@ -265,9 +265,4 @@ public abstract class AbstractFlowConstruct extends AbstractExecutableComponent 
   protected void disposeIfDisposable(Object candidate) {
     disposeIfNeeded(candidate, LOGGER);
   }
-
-  /**
-   * @return the type of construct being created, e.g. "Flow"
-   */
-  public abstract String getConstructType();
 }

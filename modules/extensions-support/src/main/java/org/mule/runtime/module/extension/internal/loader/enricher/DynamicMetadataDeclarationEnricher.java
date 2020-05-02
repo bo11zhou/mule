@@ -7,13 +7,17 @@
 package org.mule.runtime.module.extension.internal.loader.enricher;
 
 import static org.mule.runtime.api.meta.model.display.LayoutModel.builderFrom;
+import static org.mule.runtime.module.extension.internal.util.IntrospectionUtils.isASTMode;
+
 import org.mule.runtime.api.meta.model.declaration.fluent.BaseDeclaration;
 import org.mule.runtime.api.meta.model.declaration.fluent.ComponentDeclaration;
+import org.mule.runtime.api.meta.model.declaration.fluent.ExecutableComponentDeclaration;
 import org.mule.runtime.api.meta.model.declaration.fluent.ExtensionDeclaration;
 import org.mule.runtime.api.meta.model.declaration.fluent.OperationDeclaration;
 import org.mule.runtime.api.meta.model.declaration.fluent.ParameterDeclaration;
 import org.mule.runtime.api.meta.model.declaration.fluent.ParameterDeclarer;
 import org.mule.runtime.api.meta.model.declaration.fluent.ParameterizedDeclaration;
+import org.mule.runtime.api.meta.model.declaration.fluent.SourceCallbackDeclaration;
 import org.mule.runtime.api.meta.model.declaration.fluent.SourceDeclaration;
 import org.mule.runtime.api.meta.model.declaration.fluent.TypedDeclaration;
 import org.mule.runtime.api.meta.model.declaration.fluent.WithOutputDeclaration;
@@ -55,9 +59,9 @@ import java.util.Optional;
 import java.util.Set;
 
 /**
- * {@link DeclarationEnricher} implementation that walks through a {@link ExtensionDeclaration} and looks for components (Operations and
- * Message sources) annotated with {@link MetadataScope} or {@link Query}. If a custom metadata scope is used, the component will
- * be considered of dynamic type.
+ * {@link DeclarationEnricher} implementation that walks through a {@link ExtensionDeclaration} and looks for components
+ * (Operations and Message sources) annotated with {@link MetadataScope} or {@link Query}. If a custom metadata scope is used, the
+ * component will be considered of dynamic type.
  *
  * @since 4.0
  */
@@ -75,11 +79,16 @@ public class DynamicMetadataDeclarationEnricher implements DeclarationEnricher {
 
     @Override
     public void enrich(ExtensionLoadingContext extensionLoadingContext) {
-      Optional<ExtensionTypeDescriptorModelProperty> property = extensionLoadingContext.getExtensionDeclarer().getDeclaration()
-          .getModelProperty(ExtensionTypeDescriptorModelProperty.class);
-
+      BaseDeclaration declaration = extensionLoadingContext.getExtensionDeclarer().getDeclaration();
       //TODO MULE-14397 - Improve Dynamic Metadata Enricher to enrich without requiring Classes
-      if (property.isPresent() && property.get().getType().getDeclaringClass().isPresent()) {
+      if (!isASTMode(declaration)) {
+        Optional<ExtensionTypeDescriptorModelProperty> property =
+            declaration.getModelProperty(ExtensionTypeDescriptorModelProperty.class);
+
+        if (!property.isPresent()) {
+          return;
+        }
+
         extensionType = property.get().getType();
 
         new IdempotentDeclarationWalker() {
@@ -104,7 +113,25 @@ public class DynamicMetadataDeclarationEnricher implements DeclarationEnricher {
             final Type sourceType = prop.getType();
             MetadataScopeAdapter metadataScope = new DefaultMetadataScopeAdapter(extensionType, sourceType, declaration);
             enrichResolversInformation(declaration, metadataScope);
+            enrichSuccesSourceCallbackMetadata(declaration);
+            enrichErrorSourceCallbackMetadata(declaration);
           });
+    }
+
+    private void enrichErrorSourceCallbackMetadata(SourceDeclaration declaration) {
+      declaration.getSuccessCallback()
+          .ifPresent(sourceCallbackDeclaration -> enrichSourceCallbackMetadata(declaration, sourceCallbackDeclaration));
+    }
+
+    private void enrichSuccesSourceCallbackMetadata(SourceDeclaration declaration) {
+      declaration.getErrorCallback()
+          .ifPresent(sourceCallbackDeclaration -> enrichSourceCallbackMetadata(declaration, sourceCallbackDeclaration));
+    }
+
+    private void enrichSourceCallbackMetadata(SourceDeclaration sourceDeclaration,
+                                              SourceCallbackDeclaration sourceCallbackDeclaration) {
+      MetadataScopeAdapter metadataScope = new DefaultMetadataScopeAdapter(sourceCallbackDeclaration);
+      enrichResolversInformation(sourceDeclaration, sourceCallbackDeclaration, metadataScope);
     }
 
     private void enrichOperationMetadata(OperationDeclaration declaration) {
@@ -120,7 +147,16 @@ public class DynamicMetadataDeclarationEnricher implements DeclarationEnricher {
           });
     }
 
-    private void enrichResolversInformation(ComponentDeclaration<?> declaration, MetadataScopeAdapter metadataScope) {
+    private void enrichResolversInformation(SourceDeclaration sourceDeclaration,
+                                            SourceCallbackDeclaration sourceCallbackDeclaration,
+                                            MetadataScopeAdapter metadataScope) {
+      final String categoryName = getCategoryName(metadataScope);
+      declareResolversInformation(sourceCallbackDeclaration, metadataScope, categoryName,
+                                  sourceDeclaration.isRequiresConnection());
+      declareMetadataResolverFactory(sourceCallbackDeclaration, metadataScope);
+    }
+
+    private void enrichResolversInformation(ExecutableComponentDeclaration<?> declaration, MetadataScopeAdapter metadataScope) {
       final String categoryName = getCategoryName(metadataScope);
       declareResolversInformation(declaration, metadataScope, categoryName);
       declareMetadataResolverFactory(declaration, metadataScope, categoryName);
@@ -136,8 +172,14 @@ public class DynamicMetadataDeclarationEnricher implements DeclarationEnricher {
                                                                       typeKeysResolver)));
     }
 
-    private void declareResolversInformation(ComponentDeclaration<? extends ComponentDeclaration> declaration,
+    private void declareResolversInformation(ExecutableComponentDeclaration<? extends ComponentDeclaration> declaration,
                                              MetadataScopeAdapter metadataScope, String categoryName) {
+      declareResolversInformation(declaration, metadataScope, categoryName, declaration.isRequiresConnection());
+    }
+
+    private void declareResolversInformation(BaseDeclaration declaration,
+                                             MetadataScopeAdapter metadataScope, String categoryName,
+                                             boolean requiresConnection) {
       if (metadataScope.isCustomScope()) {
         Map<String, String> inputResolversByParam = metadataScope.getInputResolvers()
             .entrySet().stream()
@@ -146,11 +188,16 @@ public class DynamicMetadataDeclarationEnricher implements DeclarationEnricher {
         String outputResolver = metadataScope.getOutputResolver().get().getResolverName();
         String attributesResolver = metadataScope.getAttributesResolver().get().getResolverName();
         String keysResolver = metadataScope.getKeysResolver().get().getResolverName();
+
+        // TODO MULE-15638 - Once Metadata API 2.0 is implemented we will know better if the resolver requires or not a connection
+        // of config.
         declaration.addModelProperty(new TypeResolversInformationModelProperty(categoryName,
                                                                                inputResolversByParam,
                                                                                outputResolver,
                                                                                attributesResolver,
-                                                                               keysResolver));
+                                                                               keysResolver,
+                                                                               requiresConnection,
+                                                                               requiresConnection));
       }
     }
 
@@ -163,6 +210,13 @@ public class DynamicMetadataDeclarationEnricher implements DeclarationEnricher {
       if (declaration instanceof WithOutputDeclaration) {
         declareOutputResolvers((WithOutputDeclaration) declaration, metadataScope);
       }
+    }
+
+    private void declareMetadataResolverFactory(SourceCallbackDeclaration sourceCallbackDeclaration,
+                                                MetadataScopeAdapter metadataScope) {
+      MetadataResolverFactory metadataResolverFactory = getMetadataResolverFactory(metadataScope);
+      sourceCallbackDeclaration.addModelProperty(new MetadataResolverFactoryModelProperty(() -> metadataResolverFactory));
+      declareInputResolvers(sourceCallbackDeclaration, metadataScope);
     }
 
     private void enrichWithDsql(OperationDeclaration declaration, MethodElement method) {
@@ -202,7 +256,7 @@ public class DynamicMetadataDeclarationEnricher implements DeclarationEnricher {
 
     }
 
-    private void declareInputResolvers(ComponentDeclaration<?> declaration, MetadataScopeAdapter metadataScope) {
+    private void declareInputResolvers(ParameterizedDeclaration<?> declaration, MetadataScopeAdapter metadataScope) {
       if (metadataScope.hasInputResolvers()) {
         Set<String> dynamicParameters = metadataScope.getInputResolvers().keySet();
         declaration.getAllParameters().stream()
@@ -265,10 +319,10 @@ public class DynamicMetadataDeclarationEnricher implements DeclarationEnricher {
     }
 
     /**
-     * Enriches the {@link ParameterDeclarer} with a {@link MetadataKeyPartModelProperty}
-     * if the parsedParameter is annotated either as {@link MetadataKeyId} or {@link MetadataKeyPart}
+     * Enriches the {@link ParameterDeclarer} with a {@link MetadataKeyPartModelProperty} if the parsedParameter is annotated
+     * either as {@link MetadataKeyId} or {@link MetadataKeyPart}
      *
-     * @param element         the method annotated parameter parsed
+     * @param element the method annotated parameter parsed
      * @param baseDeclaration the {@link ParameterDeclarer} associated to the parsed parameter
      */
     private void parseMetadataKeyAnnotations(ExtensionParameter element, BaseDeclaration baseDeclaration,

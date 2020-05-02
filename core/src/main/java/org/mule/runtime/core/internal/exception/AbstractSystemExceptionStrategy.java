@@ -12,21 +12,24 @@ import static org.mule.runtime.core.privileged.event.PrivilegedEvent.setCurrentE
 
 import org.mule.runtime.api.lifecycle.InitialisationException;
 import org.mule.runtime.api.scheduler.Scheduler;
-import org.mule.runtime.core.api.MuleContext;
+import org.mule.runtime.api.scheduler.SchedulerService;
 import org.mule.runtime.core.api.connector.ConnectException;
 import org.mule.runtime.core.api.exception.RollbackSourceCallback;
 import org.mule.runtime.core.api.exception.SystemExceptionHandler;
-import org.mule.runtime.core.api.message.ExceptionPayload;
-import org.mule.runtime.core.internal.message.DefaultExceptionPayload;
 import org.mule.runtime.core.internal.message.InternalMessage;
 import org.mule.runtime.core.privileged.event.PrivilegedEvent;
 import org.mule.runtime.core.privileged.exception.AbstractExceptionListener;
+
+import javax.inject.Inject;
 
 /**
  * Fire a notification, log exception, clean up transaction if any, and trigger reconnection strategy if this is a
  * <code>ConnectException</code>.
  */
 public abstract class AbstractSystemExceptionStrategy extends AbstractExceptionListener implements SystemExceptionHandler {
+
+  @Inject
+  private SchedulerService schedulerService;
 
   protected Scheduler retryScheduler;
 
@@ -39,11 +42,10 @@ public abstract class AbstractSystemExceptionStrategy extends AbstractExceptionL
     logger.debug("Rolling back transaction");
     rollback(ex, rollbackMethod);
 
-    ExceptionPayload exceptionPayload = new DefaultExceptionPayload(ex);
     if (getCurrentEvent() != null) {
       PrivilegedEvent currentEvent = getCurrentEvent();
       currentEvent = PrivilegedEvent.builder(currentEvent)
-          .message(InternalMessage.builder(currentEvent.getMessage()).exceptionPayload(exceptionPayload).build()).build();
+          .message(InternalMessage.builder(currentEvent.getMessage()).build()).build();
       setCurrentEvent(currentEvent);
     }
 
@@ -65,10 +67,9 @@ public abstract class AbstractSystemExceptionStrategy extends AbstractExceptionL
   }
 
   @Override
-  protected void doInitialise(MuleContext context) throws InitialisationException {
-    retryScheduler =
-        muleContext.getSchedulerService().ioScheduler(muleContext.getSchedulerBaseConfig().withShutdownTimeout(0, MILLISECONDS));
-    super.doInitialise(context);
+  protected void doInitialise() throws InitialisationException {
+    retryScheduler = schedulerService.ioScheduler(muleContext.getSchedulerBaseConfig().withShutdownTimeout(0, MILLISECONDS));
+    super.doInitialise();
   }
 
   @Override

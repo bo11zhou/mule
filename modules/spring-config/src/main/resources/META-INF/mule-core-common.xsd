@@ -764,6 +764,13 @@
                         </xsd:documentation>
                     </xsd:annotation>
                 </xsd:attribute>
+                <xsd:attribute name="inheritIterableRepeatability" type="xsd:boolean">
+                    <xsd:annotation>
+                        <xsd:documentation>
+                            Whether streamed iterable objects should follow the repeatability strategy of the iterable or use the default one.
+                        </xsd:documentation>
+                    </xsd:annotation>
+                </xsd:attribute>
                 <xsd:attribute name="shutdownTimeout" type="substitutableInt" default="5000">
                     <xsd:annotation>
                         <xsd:documentation>
@@ -1524,10 +1531,10 @@
     <xsd:complexType name="fixedSchedulerType">
         <xsd:complexContent>
             <xsd:extension base="abstractSchedulingStrategyType">
-                <xsd:attribute name="frequency" type="substitutableLong" default="1000">
+                <xsd:attribute name="frequency" type="substitutableLong" default="60000">
                     <xsd:annotation>
                         <xsd:documentation>
-                            Polling frequency in milliseconds. Default frequency is 1000ms (1s).
+                            Polling frequency in milliseconds. Default frequency is 60000ms (1 minute).
                         </xsd:documentation>
                     </xsd:annotation>
                 </xsd:attribute>
@@ -1541,7 +1548,7 @@
                 <xsd:attribute name="startDelay" type="substitutableLong" default="0">
                     <xsd:annotation>
                         <xsd:documentation>
-                            The delay time in time units that sheduler needs to wait before start
+                            The delay time in time units that scheduler needs to wait before start
                         </xsd:documentation>
                     </xsd:annotation>
                 </xsd:attribute>
@@ -1873,24 +1880,6 @@
             </xsd:extension>
         </xsd:complexContent>
     </xsd:complexType>
-
-    <xsd:attributeGroup name="expressionAttributes">
-        <xsd:attribute name="expression" type="xsd:string" use="required">
-            <xsd:annotation>
-                <xsd:documentation>The expression to evaluate.
-                </xsd:documentation>
-            </xsd:annotation>
-        </xsd:attribute>
-    </xsd:attributeGroup>
-
-    <xsd:attributeGroup name="optionalExpressionAttributes">
-        <xsd:attribute name="expression" type="xsd:string">
-            <xsd:annotation>
-                <xsd:documentation>The expression to evaluate.
-                </xsd:documentation>
-            </xsd:annotation>
-        </xsd:attribute>
-    </xsd:attributeGroup>
 
     <xsd:complexType name="extractValueExtractorTemplateType">
         <xsd:attributeGroup ref="valueExtractorTemplateAttributes"/>
@@ -2476,7 +2465,7 @@
     <xsd:complexType name="raiseErrorType">
         <xsd:complexContent>
             <xsd:extension base="abstractMessageProcessorType">
-                <xsd:attribute name="type" type="xsd:string" use="required">
+                <xsd:attribute name="type" type="nonBlankString" use="required">
                     <xsd:annotation>
                         <xsd:documentation>
                             The error type to raise.
@@ -2578,19 +2567,21 @@
             <xsd:complexContent>
                 <xsd:extension base="abstractRoutingMessageProcessorType">
                     <xsd:group ref="messageProcessorOrMixedContentMessageProcessor" minOccurs="1" maxOccurs="unbounded"/>
-                    <xsd:attribute name="maxRetries" type="substitutableInt" use="optional" default="5">
+                    <xsd:attribute name="maxRetries" type="xsd:string" use="optional" default="5">
                         <xsd:annotation>
                             <xsd:documentation>
                                 Specifies the maximum number of processing retries that will be performed.
+                                Embedded expressions can be used to extract value from the current message.
                             </xsd:documentation>
                         </xsd:annotation>
                     </xsd:attribute>
-                    <xsd:attribute name="millisBetweenRetries" type="substitutableInt" use="optional">
+                    <xsd:attribute name="millisBetweenRetries" type="xsd:string" use="optional">
                         <xsd:annotation>
                             <xsd:documentation>
                                 Specifies the minimum time interval between two process retries in milliseconds.
                                 The actual time interval depends on the previous execution but should not exceed twice this number.
-                                Default value is 60000 (one minute)
+                                Default value is 60000 (one minute).
+                                Embedded expressions can be used to extract value from the current message.
                             </xsd:documentation>
                         </xsd:annotation>
                     </xsd:attribute>
@@ -2651,7 +2642,7 @@
         </xsd:complexType>
     </xsd:element>
 
-    <xsd:element name="split-aggregate" substitutionGroup="abstract-routing-message-processor">
+    <xsd:element name="parallel-foreach" substitutionGroup="abstract-routing-message-processor">
         <xsd:annotation>
             <xsd:documentation>
                 Splits the same message and processes each part in parallel.
@@ -2661,19 +2652,19 @@
             <xsd:complexContent>
                 <xsd:extension base="abstractRoutingMessageProcessorType">
                     <xsd:sequence>
-                        <xsd:element name="collection" type="xsd:string" minOccurs="0">
-                            <xsd:annotation>
-                                <xsd:documentation>
-                                    Expression that defines the collection of parts to be processed in parallel.
-                                </xsd:documentation>
-                            </xsd:annotation>
-                        </xsd:element>
                         <xsd:group ref="messageProcessorOrMixedContentMessageProcessor" minOccurs="1" maxOccurs="unbounded"/>
                     </xsd:sequence>
                     <xsd:attribute name="timeout" type="substitutableLong">
                         <xsd:annotation>
                             <xsd:documentation>
                                 Sets a timeout in milliseconds for each route. The default behaviour is that of no timeout.
+                            </xsd:documentation>
+                        </xsd:annotation>
+                    </xsd:attribute>
+                    <xsd:attribute name="collection" use="optional" type="xsd:string">
+                        <xsd:annotation>
+                            <xsd:documentation>
+                                Expression that defines the collection of parts to be processed in parallel.
                             </xsd:documentation>
                         </xsd:annotation>
                     </xsd:attribute>
@@ -3617,5 +3608,27 @@
             <xsd:extension base="abstractExtensionType"/>
         </xsd:complexContent>
     </xsd:complexType>
+
+    <!-- Already Removed -->
+    <!-- These items remain here for compatibility with stale schema definitions -->
+    <!--     but they do NOT have an associated parser definition! --> 
+
+    <xsd:attributeGroup name="expressionAttributes">
+        <xsd:attribute name="expression" type="xsd:string" use="required">
+            <xsd:annotation>
+                <xsd:documentation>The expression to evaluate.
+                </xsd:documentation>
+            </xsd:annotation>
+        </xsd:attribute>
+    </xsd:attributeGroup>
+
+    <xsd:attributeGroup name="optionalExpressionAttributes">
+        <xsd:attribute name="expression" type="xsd:string">
+            <xsd:annotation>
+                <xsd:documentation>The expression to evaluate.
+                </xsd:documentation>
+            </xsd:annotation>
+        </xsd:attribute>
+    </xsd:attributeGroup>
 
 </xsd:schema>

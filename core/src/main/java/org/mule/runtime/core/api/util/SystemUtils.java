@@ -9,10 +9,12 @@ package org.mule.runtime.core.api.util;
 import static org.apache.commons.lang3.StringUtils.INDEX_NOT_FOUND;
 import static org.apache.commons.lang3.StringUtils.indexOf;
 import static org.apache.commons.lang3.StringUtils.substring;
+import static org.apache.commons.lang3.SystemUtils.JAVA_VENDOR;
 import static org.apache.commons.lang3.SystemUtils.JAVA_VM_VENDOR;
 import static org.mule.runtime.core.api.config.MuleProperties.MULE_ENCODING_SYSTEM_PROPERTY;
-import org.mule.runtime.api.exception.MuleException;
+
 import org.mule.runtime.api.exception.DefaultMuleException;
+import org.mule.runtime.api.exception.MuleException;
 import org.mule.runtime.core.api.MuleContext;
 
 import java.nio.charset.Charset;
@@ -61,16 +63,32 @@ public class SystemUtils {
   }
 
   public static boolean isSunJDK() {
-    return JAVA_VM_VENDOR.toUpperCase().indexOf("SUN") != -1
-        || JAVA_VM_VENDOR.toUpperCase().indexOf("ORACLE") != -1;
+    return JAVA_VM_VENDOR.toLowerCase().contains("sun")
+        || JAVA_VM_VENDOR.toLowerCase().contains("oracle");
   }
 
   public static boolean isAppleJDK() {
-    return JAVA_VM_VENDOR.toUpperCase().indexOf("APPLE") != -1;
+    return JAVA_VM_VENDOR.toLowerCase().contains("apple");
   }
 
   public static boolean isIbmJDK() {
-    return JAVA_VM_VENDOR.toUpperCase().indexOf("IBM") != -1;
+    return JAVA_VM_VENDOR.toLowerCase().contains("ibm");
+  }
+
+  public static boolean isAzulJDK() {
+    return JAVA_VM_VENDOR.toLowerCase().contains("azul");
+  }
+
+  public static boolean isAmazonJDK() {
+    return JAVA_VM_VENDOR.toLowerCase().contains("amazon");
+  }
+
+  public static boolean isOpenJDK() {
+    return JAVA_VM_VENDOR.toLowerCase().contains("openjdk") || JAVA_VENDOR.toLowerCase().contains("openjdk");
+  }
+
+  public static boolean isAdoptOpenJDK() {
+    return JAVA_VM_VENDOR.toLowerCase().contains("adoptopenjdk") || JAVA_VENDOR.toLowerCase().contains("adoptopenjdk");
   }
 
   // TODO MULE-1947 Command-line arguments should be handled exclusively by the bootloader
@@ -78,7 +96,7 @@ public class SystemUtils {
   private static CommandLine parseCommandLine(String args[], String opts[][]) throws MuleException {
     Options options = new Options();
     for (String[] opt : opts) {
-      options.addOption(opt[0], opt[1].equals("true") ? true : false, opt[2]);
+      options.addOption(opt[0], opt[1].equals("true"), opt[2]);
     }
 
     BasicParser parser = new BasicParser();
@@ -102,7 +120,7 @@ public class SystemUtils {
   // TODO MULE-1947 Command-line arguments should be handled exclusively by the bootloader
   public static Map<String, Object> getCommandLineOptions(String args[], String opts[][]) throws MuleException {
     CommandLine line = parseCommandLine(args, opts);
-    Map<String, Object> ret = new HashMap<String, Object>();
+    Map<String, Object> ret = new HashMap<>();
     Option[] options = line.getOptions();
 
     for (Option option : options) {
@@ -127,7 +145,7 @@ public class SystemUtils {
     }
 
     // the result map of property key/value pairs
-    final Map<String, String> result = new HashMap<String, String>();
+    final Map<String, String> result = new HashMap<>();
 
     // where to begin looking for key/value tokens
     int tokenStart = 0;

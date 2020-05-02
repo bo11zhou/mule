@@ -16,6 +16,7 @@ import static org.mule.runtime.core.api.config.MuleProperties.OBJECT_QUEUE_MANAG
 import static org.mule.runtime.core.api.config.MuleProperties.OBJECT_SECURITY_MANAGER;
 import static org.mule.runtime.core.api.processor.strategy.AsyncProcessingStrategyFactory.DEFAULT_MAX_CONCURRENCY;
 import static org.mule.runtime.core.internal.interception.InterceptorManager.INTERCEPTOR_MANAGER_REGISTRY_KEY;
+
 import org.mule.runtime.api.component.Component;
 import org.mule.runtime.api.deployment.management.ComponentInitialStateManager;
 import org.mule.runtime.api.exception.MuleException;
@@ -52,8 +53,8 @@ import org.junit.Test;
 @SmallTest
 public class QueueManagerLifecycleOrderTestCase extends AbstractMuleTestCase {
 
-  private List<Object> startStopOrder = new ArrayList<>();
-  private RecordingTQM rtqm = new RecordingTQM();
+  private final List<Object> startStopOrder = new ArrayList<>();
+  private final RecordingTQM rtqm = new RecordingTQM();
 
   @Rule
   public TestServicesConfigurationBuilder testServicesConfigurationBuilder = new TestServicesConfigurationBuilder();
@@ -144,12 +145,14 @@ public class QueueManagerLifecycleOrderTestCase extends AbstractMuleTestCase {
 
     @Override
     public void doStart() throws MuleException {
+      super.doStart();
       startStopOrder.add(this);
     }
 
     @Override
     public void doStop() throws MuleException {
       startStopOrder.add(this);
+      super.doStop();
     }
   }
 }

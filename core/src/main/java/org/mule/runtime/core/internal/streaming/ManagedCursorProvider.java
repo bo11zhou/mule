@@ -9,6 +9,8 @@ package org.mule.runtime.core.internal.streaming;
 import org.mule.runtime.api.streaming.Cursor;
 import org.mule.runtime.api.streaming.CursorProvider;
 
+import java.util.concurrent.atomic.AtomicInteger;
+
 /**
  * Base class for a {@link CursorProvider} decorator which makes sure that {@link Cursor cursors}
  * opened by the decorated provider are properly tracked through the {@link CursorManager}.
@@ -20,27 +22,40 @@ import org.mule.runtime.api.streaming.CursorProvider;
 public abstract class ManagedCursorProvider<T extends Cursor> implements CursorProvider<T> {
 
   private final CursorProvider<T> delegate;
-  private final CursorManager cursorManager;
-  private final CursorContext cursorContext;
+  private final AtomicInteger openCursorsCount = new AtomicInteger(0);
+  private final MutableStreamingStatistics statistics;
+  private final CursorProviderJanitor janitor;
 
-  protected ManagedCursorProvider(CursorContext cursorContext, CursorManager cursorManager) {
-    this.delegate = (CursorProvider<T>) cursorContext.getCursorProvider();
-    this.cursorContext = cursorContext;
-    this.cursorManager = cursorManager;
+  protected ManagedCursorProvider(CursorProvider<T> delegate, MutableStreamingStatistics statistics) {
+    this.delegate = delegate;
+    this.janitor = new CursorProviderJanitor(delegate, openCursorsCount, statistics);
+    this.statistics = statistics;
+    if (statistics != null) {
+      statistics.incrementOpenProviders();
+    }
   }
 
   /**
-   * Gets a cursor from the {@link #delegate} and registers it through {@link CursorManager#onOpen(Cursor, CursorContext)}.
+   * Gets a cursor from the {@link #delegate} and keeps track of it.
    * <p>
-   * The returned cursor will also be managed through the means of {@link #managedCursor(Cursor, CursorContext)}
+   * The returned cursor will also be managed through the means of {@link #managedCursor(Cursor)}
    *
    * @return a new {@link Cursor}
    */
   @Override
   public final T openCursor() {
     T cursor = delegate.openCursor();
-    cursorManager.onOpen(cursor, cursorContext);
-    return managedCursor(cursor, cursorContext);
+    openCursorsCount.incrementAndGet();
+
+    if (statistics != null) {
+      statistics.incrementOpenCursors();
+    }
+
+    return managedCursor(cursor);
+  }
+
+  public CursorProvider<T> getDelegate() {
+    return delegate;
   }
 
   /**
@@ -49,27 +64,26 @@ public abstract class ManagedCursorProvider<T extends Cursor> implements CursorP
    * should be that a new instance will be returned.
    *
    * @param cursor the cursor to manage
-   * @param handle the {@link CursorContext}
    * @return a managed {@link Cursor}
    */
-  protected abstract T managedCursor(T cursor, CursorContext handle);
+  protected abstract T managedCursor(T cursor);
 
   @Override
-  public void releaseResources() {
-    delegate.releaseResources();
+  public final void releaseResources() {
+    janitor.releaseResources();
+  }
+
+  public CursorProviderJanitor getJanitor() {
+    return janitor;
   }
 
   @Override
   public void close() {
-    delegate.close();
+    janitor.close();
   }
 
   @Override
   public boolean isClosed() {
     return delegate.isClosed();
-  }
-
-  protected CursorManager getCursorManager() {
-    return cursorManager;
   }
 }

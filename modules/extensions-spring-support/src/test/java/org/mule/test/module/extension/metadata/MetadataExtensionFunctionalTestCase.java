@@ -6,10 +6,8 @@
  */
 package org.mule.test.module.extension.metadata;
 
-import static java.util.stream.Collectors.joining;
 import static org.apache.commons.lang3.StringUtils.isBlank;
 import static org.hamcrest.Matchers.containsString;
-import static org.hamcrest.Matchers.empty;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.core.Is.is;
 import static org.junit.Assert.assertThat;
@@ -18,14 +16,19 @@ import static org.mule.runtime.api.message.Message.of;
 import static org.mule.runtime.api.metadata.MetadataKeyBuilder.newKey;
 import static org.mule.runtime.api.metadata.MetadataService.METADATA_SERVICE_KEY;
 import static org.mule.runtime.api.util.Preconditions.checkArgument;
+import static org.mule.tck.junit4.matcher.metadata.MetadataKeyResultFailureMatcher.isFailure;
+import static org.mule.tck.junit4.matcher.metadata.MetadataKeyResultSuccessMatcher.isSuccess;
 import static org.mule.test.metadata.extension.MetadataConnection.CAR;
 import static org.mule.test.metadata.extension.MetadataConnection.PERSON;
-import static org.mule.test.metadata.extension.resolver.TestMetadataResolverUtils.getMetadata;
+import static org.mule.test.metadata.extension.resolver.TestMetadataResolverUtils.getCarMetadata;
+import static org.mule.test.metadata.extension.resolver.TestMetadataResolverUtils.getHouseMetadata;
+import static org.mule.test.metadata.extension.resolver.TestMetadataResolverUtils.getPersonMetadata;
 import static org.mule.test.metadata.extension.resolver.TestMultiLevelKeyResolver.AMERICA;
 import static org.mule.test.metadata.extension.resolver.TestMultiLevelKeyResolver.SAN_FRANCISCO;
 import static org.mule.test.metadata.extension.resolver.TestMultiLevelKeyResolver.USA;
 import static org.mule.test.module.extension.metadata.MetadataExtensionFunctionalTestCase.ResolutionType.DSL_RESOLUTION;
 import static org.mule.test.module.extension.metadata.MetadataExtensionFunctionalTestCase.ResolutionType.EXPLICIT_RESOLUTION;
+
 import org.mule.metadata.api.ClassTypeLoader;
 import org.mule.metadata.api.builder.BaseTypeBuilder;
 import org.mule.metadata.api.model.MetadataType;
@@ -97,7 +100,7 @@ public abstract class MetadataExtensionFunctionalTestCase<T extends ComponentMod
   protected static final String OUTPUT_AND_METADATA_KEY_CACHE_RESOLVER = "outputAndMetadataKeyCacheResolver";
   protected static final String SOURCE_METADATA = "sourceMetadata";
   protected static final String SOURCE_METADATA_WITH_MULTILEVEL = "sourceMetadataWithMultilevel";
-  protected static final String SHOULD_INHERIT_EXTENSION_RESOLVERS = "shouldInheritExtensionResolvers";
+  protected static final String SOURCE_METADATA_WITH_CALLBACK_PARAMETERS = "sourceMetadataWithCallbackParameters";
   protected static final String SHOULD_INHERIT_OPERATION_PARENT_RESOLVERS = "shouldInheritOperationParentResolvers";
   protected static final String SIMPLE_MULTILEVEL_KEY_RESOLVER = "simpleMultiLevelKeyResolver";
   protected static final String INCOMPLETE_MULTILEVEL_KEY_RESOLVER = "incompleteMultiLevelKeyResolver";
@@ -113,12 +116,17 @@ public abstract class MetadataExtensionFunctionalTestCase<T extends ComponentMod
   protected static final String ENUM_METADATA_KEY = "enumMetadataKey";
   protected static final String BOOLEAN_METADATA_KEY = "booleanMetadataKey";
   protected static final String METADATA_KEY_DEFAULT_VALUE = "metadataKeyDefaultValue";
+  protected static final String METADATA_KEY_OPTIONAL = "metadataKeyOptional";
   protected static final String MULTILEVEL_METADATA_KEY_DEFAULT_VALUE = "multilevelMetadataKeyDefaultValue";
   protected static final String OUTPUT_AND_MULTIPLE_INPUT_WITH_KEY_ID = "outputAndMultipleInputWithKeyId";
 
   protected static final String CONTINENT = "continent";
   protected static final String COUNTRY = "country";
   protected static final String CITY = "city";
+
+  protected static final String SUCCESS_OBJECT_PARAMETER_NAME = "successObject";
+  protected static final String ERROR_OBJECT_PARAMETER_NAME = "errorObject";
+  protected static final String RESPONSE_PARAMETER_NAME = "response";
 
   protected final static MetadataKey PERSON_METADATA_KEY = newKey(PERSON).build();
   protected static final MetadataKey CAR_KEY = newKey(CAR).build();
@@ -144,6 +152,9 @@ public abstract class MetadataExtensionFunctionalTestCase<T extends ComponentMod
   }
 
   protected MetadataType personType;
+  protected MetadataType houseType;
+  protected MetadataType carType;
+
   protected Location location;
   protected CoreEvent event;
   protected ClassTypeLoader typeLoader = ExtensionsTypeLoaderFactory.getDefault().createTypeLoader();
@@ -167,7 +178,9 @@ public abstract class MetadataExtensionFunctionalTestCase<T extends ComponentMod
   @Before
   public void setup() throws Exception {
     event = CoreEvent.builder(testEvent()).message(of("")).build();
-    personType = getMetadata(PERSON_METADATA_KEY.getId());
+    personType = getPersonMetadata();
+    houseType = getHouseMetadata();
+    carType = getCarMetadata();
   }
 
   @Override
@@ -200,8 +213,7 @@ public abstract class MetadataExtensionFunctionalTestCase<T extends ComponentMod
   private ComponentMetadataDescriptor<T> getSuccessComponentDynamicMetadata(MetadataKey key,
                                                                             BiConsumer<MetadataResult<ComponentMetadataDescriptor<T>>, MetadataKey> assertKeys) {
     MetadataResult<ComponentMetadataDescriptor<T>> componentMetadata = getComponentDynamicMetadata(key);
-    String msg = componentMetadata.getFailures().stream().map(f -> "Failure: " + f.getMessage()).collect(joining(", "));
-    assertThat(msg, componentMetadata.isSuccess(), is(true));
+    assertThat(componentMetadata, isSuccess());
     assertKeys.accept(componentMetadata, key);
     return componentMetadata.get();
   }
@@ -291,14 +303,11 @@ public abstract class MetadataExtensionFunctionalTestCase<T extends ComponentMod
   }
 
   public void assertSuccessResult(MetadataResult<?> result) {
-    assertThat(result.getFailures(), is(empty()));
-    String failures = result.getFailures().stream().map(Object::toString).collect(joining(", "));
-    assertThat("Expecting success but this failure/s result/s found:\n " + failures, result.isSuccess(), is(true));
+    assertThat(result, isSuccess());
   }
 
   void assertFailureResult(MetadataResult<?> result, int failureNumber) {
-    assertThat(result.getFailures(), hasSize(failureNumber));
-    assertThat("Expecting failure but a success result found", result.isSuccess(), is(false));
+    assertThat(result, isFailure(hasSize(failureNumber)));
   }
 
   interface MetadataComponentDescriptorProvider<T extends ComponentModel> {

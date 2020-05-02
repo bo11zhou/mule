@@ -8,31 +8,30 @@ package org.mule.runtime.core.internal.processor.chain;
 
 import static java.util.Collections.emptyMap;
 import static java.util.Collections.unmodifiableMap;
-import static java.util.Optional.empty;
 import static org.mule.runtime.api.component.AbstractComponent.LOCATION_KEY;
 import static org.mule.runtime.api.component.AbstractComponent.ROOT_CONTAINER_NAME_KEY;
-import static org.mule.runtime.core.api.config.DefaultMuleConfiguration.isFlowTrace;
 import static reactor.core.publisher.Flux.from;
-import static reactor.core.publisher.Mono.just;
 
 import org.mule.runtime.api.component.Component;
 import org.mule.runtime.api.component.location.ComponentLocation;
 import org.mule.runtime.api.component.location.Location;
 import org.mule.runtime.core.api.context.notification.FlowStackElement;
 import org.mule.runtime.core.api.event.CoreEvent;
+import org.mule.runtime.core.api.exception.NullExceptionHandler;
 import org.mule.runtime.core.api.processor.Processor;
+import org.mule.runtime.core.api.processor.strategy.ProcessingStrategy;
 import org.mule.runtime.core.internal.context.notification.DefaultFlowCallStack;
 import org.mule.runtime.core.privileged.processor.chain.DefaultMessageProcessorChainBuilder;
 import org.mule.runtime.core.privileged.processor.chain.MessageProcessorChain;
 
-import org.reactivestreams.Publisher;
-
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.function.Consumer;
+import java.util.Optional;
 
 import javax.xml.namespace.QName;
+
+import org.reactivestreams.Publisher;
 
 /**
  * Constructs a custom chain for subflows using the subflow name as the chain name.
@@ -81,47 +80,41 @@ public class SubflowMessageProcessorChainBuilder extends DefaultMessageProcessor
   }
 
   @Override
-  protected MessageProcessorChain createInterceptingChain(Processor head, List<Processor> processors,
-                                                          List<Processor> processorForLifecycle) {
-    return new SubFlowMessageProcessorChain(name, head, processors, processorForLifecycle);
+  protected MessageProcessorChain createSimpleChain(List<Processor> processors,
+                                                    Optional<ProcessingStrategy> processingStrategyOptional) {
+    return new SubFlowMessageProcessorChain(name, processors, processingStrategyOptional);
   }
 
   /**
    * Generates message processor identifiers specific for subflows.
    */
-  static class SubFlowMessageProcessorChain extends DefaultMessageProcessorChain {
+  private static class SubFlowMessageProcessorChain extends DefaultMessageProcessorChain {
 
-    private String subFlowName;
+    private final String subFlowName;
 
-    SubFlowMessageProcessorChain(String name, Processor head, List<Processor> processors,
-                                 List<Processor> processorsForLifecycle) {
-      super(name, empty(), head, processors, processorsForLifecycle);
+    SubFlowMessageProcessorChain(String name, List<Processor> processors,
+                                 Optional<ProcessingStrategy> processingStrategyOptional) {
+      super(name, processingStrategyOptional, processors,
+            NullExceptionHandler.getInstance());
       this.subFlowName = name;
     }
 
-    private Consumer<CoreEvent> pushSubFlowFlowStackElement() {
-      return event -> {
-        if (isFlowTrace()) {
-          ((DefaultFlowCallStack) event.getFlowCallStack()).push(new FlowStackElement(subFlowName, null));
-        }
-      };
+    private void pushSubFlowFlowStackElement(CoreEvent event) {
+      ((DefaultFlowCallStack) event.getFlowCallStack()).push(new FlowStackElement(subFlowName, null));
     }
 
-    private Consumer<CoreEvent> popSubFlowFlowStackElement() {
-      return event -> {
-        if (isFlowTrace()) {
-          ((DefaultFlowCallStack) event.getFlowCallStack()).pop();
-        }
-      };
+    private void popSubFlowFlowStackElement(CoreEvent event) {
+      ((DefaultFlowCallStack) event.getFlowCallStack()).pop();
     }
 
     @Override
     public Publisher<CoreEvent> apply(Publisher<CoreEvent> publisher) {
       return from(publisher)
-          .concatMap(event -> just(event)
-              .doOnNext(pushSubFlowFlowStackElement())
-              .transform(s -> super.apply(s))
-              .doOnSuccessOrError((result, throwable) -> popSubFlowFlowStackElement().accept(event)));
+          .doOnNext(this::pushSubFlowFlowStackElement)
+          // To avoid recursive transformation when there are flowref cycles, the chain is lazily transformed
+          .compose(super::apply)
+          .doOnNext(this::popSubFlowFlowStackElement);
     }
+
   }
 }

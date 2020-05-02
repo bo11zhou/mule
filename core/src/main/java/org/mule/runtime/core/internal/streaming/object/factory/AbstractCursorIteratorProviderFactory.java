@@ -6,7 +6,10 @@
  */
 package org.mule.runtime.core.internal.streaming.object.factory;
 
-import org.mule.runtime.api.component.AbstractComponent;
+import static java.lang.Boolean.getBoolean;
+import static org.mule.runtime.api.util.MuleSystemProperties.TRACK_CURSOR_PROVIDER_CLOSE_PROPERTY;
+import static org.mule.runtime.core.privileged.util.EventUtils.getRoot;
+
 import org.mule.runtime.api.event.EventContext;
 import org.mule.runtime.api.streaming.CursorProvider;
 import org.mule.runtime.api.streaming.object.CursorIterator;
@@ -15,7 +18,6 @@ import org.mule.runtime.core.api.streaming.StreamingManager;
 import org.mule.runtime.core.api.streaming.iterator.StreamingIterator;
 import org.mule.runtime.core.api.streaming.object.CursorIteratorProviderFactory;
 import org.mule.runtime.core.internal.streaming.CursorManager;
-import org.mule.runtime.core.privileged.event.BaseEventContext;
 
 import java.util.Iterator;
 
@@ -27,10 +29,10 @@ import java.util.Iterator;
  *
  * @since 4.0
  */
-public abstract class AbstractCursorIteratorProviderFactory extends AbstractComponent
-    implements CursorIteratorProviderFactory {
+public abstract class AbstractCursorIteratorProviderFactory implements CursorIteratorProviderFactory {
 
-  private final StreamingManager streamingManager;
+  protected final StreamingManager streamingManager;
+  protected final static boolean trackCursorProviderClose = getBoolean(TRACK_CURSOR_PROVIDER_CLOSE_PROPERTY);
 
   public AbstractCursorIteratorProviderFactory(StreamingManager streamingManager) {
     this.streamingManager = streamingManager;
@@ -55,7 +57,7 @@ public abstract class AbstractCursorIteratorProviderFactory extends AbstractComp
 
   @Override
   public Object of(CoreEvent event, Iterator value) {
-    return of(((BaseEventContext) event.getContext()).getRootContext(), value);
+    return of(getRoot(event.getContext()), value);
   }
 
   /**

@@ -19,8 +19,8 @@ import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.nullValue;
 import static org.hamcrest.Matchers.startsWith;
 import static org.junit.Assert.assertThat;
-import static org.mockito.Matchers.any;
-import static org.mockito.Matchers.anyString;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.RETURNS_DEEP_STUBS;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
@@ -54,6 +54,7 @@ import org.mule.runtime.api.lifecycle.InitialisationException;
 import org.mule.runtime.api.message.Message;
 import org.mule.runtime.api.metadata.DataType;
 import org.mule.runtime.api.metadata.FunctionParameter;
+import org.mule.runtime.api.metadata.MediaType;
 import org.mule.runtime.api.metadata.TypedValue;
 import org.mule.runtime.api.streaming.CursorProvider;
 import org.mule.runtime.core.api.config.MuleConfiguration;
@@ -73,7 +74,7 @@ import org.junit.Test;
 import org.junit.rules.ExpectedException;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
-import org.mockito.runners.MockitoJUnitRunner;
+import org.mockito.junit.MockitoJUnitRunner;
 
 import java.io.ByteArrayInputStream;
 import java.util.HashMap;
@@ -305,6 +306,21 @@ public class DefaultExpressionManagerTestCase extends AbstractMuleContextTestCas
   }
 
   @Test
+  @Description("Verifies that JSON content can be used for logging in DW.")
+  public void parseLogJsonWithEscapedStrings() throws MuleException {
+    System.out.println("{\"key1\": \"{\\\"key1\\\": \\\"value1\\\"}\"}");
+
+    CoreEvent event = getEventBuilder().message(Message.builder()
+        .value("{\"key1\": \"{\\\"key1\\\": \\\"value1\\\"}\"}")
+        .mediaType(MediaType.JSON)
+        .build())
+        .build();
+    assertThat(expressionManager.parseLogTemplate("this is #[payload]", event, TEST_CONNECTOR_LOCATION,
+                                                  NULL_BINDING_CONTEXT),
+               is("this is {\"key1\": \"{\\\"key1\\\": \\\"value1\\\"}\"}"));
+  }
+
+  @Test
   @Description("Verifies that streams are logged in DW but not in MVEL.")
   public void parseLogStream() throws MuleException {
     ByteArrayInputStream stream = new ByteArrayInputStream("hello".getBytes());
@@ -352,7 +368,7 @@ public class DefaultExpressionManagerTestCase extends AbstractMuleContextTestCas
     TypedValue value = new TypedValue(cursorProvider, BYTE_ARRAY);
     when(expressionLanguage.evaluate(anyString(), any())).thenReturn(value);
     when(expressionLanguage.evaluate(anyString(), any(), any())).thenReturn(value);
-    when(mockFactory.create()).thenReturn(expressionLanguage);
+    when(mockFactory.create(any())).thenReturn(expressionLanguage);
 
     expressionManager = new DefaultExpressionManager();
     ((DefaultExpressionManager) expressionManager).setRegistry(registry);
@@ -369,7 +385,7 @@ public class DefaultExpressionManagerTestCase extends AbstractMuleContextTestCas
   protected void disableMel() throws InitialisationException {
     Registry registry = mock(Registry.class);
     when(registry.lookupByType(DefaultExpressionLanguageFactoryService.class))
-        .thenReturn(of(new WeaveDefaultExpressionLanguageFactoryService()));
+        .thenReturn(of(new WeaveDefaultExpressionLanguageFactoryService(null)));
     when(registry.lookupByName(COMPATIBILITY_PLUGIN_INSTALLED)).thenReturn(empty());
 
     final MuleContextWithRegistry mockMuleContext = mockMuleContext();

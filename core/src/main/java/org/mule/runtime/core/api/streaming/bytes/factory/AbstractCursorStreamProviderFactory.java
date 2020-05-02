@@ -6,6 +6,10 @@
  */
 package org.mule.runtime.core.api.streaming.bytes.factory;
 
+import static java.lang.Boolean.getBoolean;
+import static org.mule.runtime.api.util.MuleSystemProperties.TRACK_CURSOR_PROVIDER_CLOSE_PROPERTY;
+import static org.mule.runtime.core.privileged.util.EventUtils.getRoot;
+
 import org.mule.api.annotation.NoExtend;
 import org.mule.runtime.api.component.AbstractComponent;
 import org.mule.runtime.api.event.EventContext;
@@ -16,7 +20,6 @@ import org.mule.runtime.core.api.streaming.StreamingManager;
 import org.mule.runtime.core.api.streaming.bytes.ByteBufferManager;
 import org.mule.runtime.core.api.streaming.bytes.CursorStreamProviderFactory;
 import org.mule.runtime.core.internal.streaming.CursorManager;
-import org.mule.runtime.core.privileged.event.BaseEventContext;
 
 import java.io.InputStream;
 
@@ -31,8 +34,9 @@ import java.io.InputStream;
 @NoExtend
 public abstract class AbstractCursorStreamProviderFactory extends AbstractComponent implements CursorStreamProviderFactory {
 
-  private final ByteBufferManager bufferManager;
+  protected final ByteBufferManager bufferManager;
   protected final StreamingManager streamingManager;
+  protected static final boolean trackCursorProviderClose = getBoolean(TRACK_CURSOR_PROVIDER_CLOSE_PROPERTY);
 
   /**
    * Creates a new instance
@@ -60,7 +64,7 @@ public abstract class AbstractCursorStreamProviderFactory extends AbstractCompon
 
   @Override
   public final Object of(CoreEvent event, InputStream inputStream) {
-    return of(((BaseEventContext) event.getContext()).getRootContext(), inputStream);
+    return of(getRoot(event.getContext()), inputStream);
   }
 
   /**
@@ -73,19 +77,18 @@ public abstract class AbstractCursorStreamProviderFactory extends AbstractCompon
   /**
    * Implementations should use this method to actually create the output value
    *
-   * @param inputStream
-   * @param eventContext
-   * @return
+   * @param inputStream  a stream
+   * @param eventContext the context of the event on which the stream was opened
+   * @return a resolved value
    */
   protected abstract Object resolve(InputStream inputStream, EventContext eventContext);
 
   /**
    * Implementations should use this method to actually create the output value
    *
-   * @param inputStream
-   * @param creatorRootEventContext
-   * @return
-   *
+   * @param inputStream a stream
+   * @param event       the event on which the stream was opened
+   * @return a resolved value
    * @deprecated Use {@link #resolve(InputStream, EventContext)} instead.
    */
   @Deprecated

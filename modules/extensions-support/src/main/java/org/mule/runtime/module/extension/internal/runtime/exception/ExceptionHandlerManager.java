@@ -6,17 +6,19 @@
  */
 package org.mule.runtime.module.extension.internal.runtime.exception;
 
-import static org.mule.runtime.core.api.util.ExceptionUtils.extractCauseOfType;
+import static org.mule.runtime.core.api.exception.Errors.Identifiers.CONNECTIVITY_ERROR_IDENTIFIER;
 import static org.mule.runtime.core.api.util.ExceptionUtils.extractConnectionException;
 
+import org.mule.runtime.api.component.ComponentIdentifier;
 import org.mule.runtime.api.connection.ConnectionException;
+import org.mule.runtime.api.exception.ErrorTypeRepository;
+import org.mule.runtime.api.message.ErrorType;
 import org.mule.runtime.api.meta.model.ComponentModel;
 import org.mule.runtime.api.meta.model.EnrichableModel;
 import org.mule.runtime.api.meta.model.ExtensionModel;
 import org.mule.runtime.extension.api.runtime.exception.ExceptionHandler;
 import org.mule.runtime.module.extension.internal.loader.java.property.ExceptionHandlerModelProperty;
 
-import java.lang.reflect.UndeclaredThrowableException;
 import java.util.Optional;
 
 /**
@@ -33,9 +35,29 @@ public final class ExceptionHandlerManager {
 
   private static final ExceptionHandler DEFAULT_EXCEPTION_ENRICHER = new NullExceptionHandler();
   private final ExceptionHandler exceptionHandler;
+  private final ErrorType connectionErrorType;
 
   public ExceptionHandlerManager(ExtensionModel extensionModel, ComponentModel componentModel) {
+    this(extensionModel, componentModel, null);
+  }
+
+  public ExceptionHandlerManager(ExtensionModel extensionModel, ComponentModel componentModel,
+                                 ErrorTypeRepository errorTypeRepository) {
     exceptionHandler = findExceptionHandler(extensionModel, componentModel);
+    this.connectionErrorType =
+        errorTypeRepository == null ? null : resolveConnectionErrorType(extensionModel, errorTypeRepository);
+  }
+
+  private ErrorType resolveConnectionErrorType(ExtensionModel extensionModel, ErrorTypeRepository errorTypeRepository) {
+    return extensionModel.getErrorModels().stream()
+        .filter(errorModel -> errorModel.getType().equals(CONNECTIVITY_ERROR_IDENTIFIER))
+        .findFirst()
+        .map(errorModel -> errorTypeRepository.getErrorType(ComponentIdentifier.builder()
+            .namespace(errorModel.getNamespace())
+            .name(errorModel.getType())
+            .build())
+            .orElse(null))
+        .orElse(null);
   }
 
   /**
@@ -52,17 +74,28 @@ public final class ExceptionHandlerManager {
    * Given a {@link Throwable} instance this method will get the specific failure reason.
    * <p>
    * If there is a {@link ConnectionException} in the stacktrace is going to be considered the main failure reason,
-   * otherwise it will check if there is a {@link UndeclaredThrowableException} reflective wrapper exception
+   * otherwise it will check if there is a {@link SdkMethodInvocationException} wrapper exception
    * in the stacktrace wrapping the real failure.
    */
   public Throwable handleThrowable(Throwable e) {
     Optional<ConnectionException> connectionException = extractConnectionException(e);
     if (connectionException.isPresent()) {
-      return connectionException.get();
+      return resolveConnectionException(connectionException.get());
     } else {
-      // unwraps the exception thrown by the reflective operation if exist any.
-      return extractCauseOfType(e, UndeclaredThrowableException.class).orElse(e);
+      return e instanceof SdkMethodInvocationException ? e.getCause() : e;
     }
+  }
+
+  private Throwable resolveConnectionException(ConnectionException connectionException) {
+    if (connectionErrorType != null && !connectionException.getErrorType().isPresent()) {
+      ConnectionException newException = new ConnectionException(connectionException.getMessage(),
+                                                                 connectionException.getCause(),
+                                                                 connectionErrorType,
+                                                                 connectionException.getConnection().orElse(null));
+      newException.getInfo().putAll(connectionException.getInfo());
+      return newException;
+    }
+    return connectionException;
   }
 
   private Throwable enrich(Throwable t) {

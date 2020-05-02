@@ -6,21 +6,16 @@
  */
 package org.mule.runtime.core.internal.exception;
 
-import static reactor.core.publisher.Mono.just;
-
+import org.mule.runtime.api.component.location.Location;
+import org.mule.runtime.api.message.ErrorType;
 import org.mule.runtime.core.api.event.CoreEvent;
 import org.mule.runtime.core.api.processor.Processor;
 import org.mule.runtime.core.privileged.exception.MessageRedeliveredException;
 import org.mule.runtime.core.privileged.exception.TemplateOnErrorHandler;
 
-import org.reactivestreams.Publisher;
-
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Function;
-
-//TODO: MULE-9307 re-write junits for rollback exception strategy
-
 
 /**
  * Handler that will propagate errors and rollback transactions. Replaces the rollback-exception-strategy from Mule 3.
@@ -31,18 +26,45 @@ public class OnErrorPropagateHandler extends TemplateOnErrorHandler {
 
   @Override
   public boolean acceptsAll() {
-    return errorTypeMatcher == null && when == null;
+    return errorTypeMatcher == null && !when.isPresent();
+  }
+
+  /**
+   * @param errorType an {@link ErrorType}
+   * @return whether this handler accepts the provided type
+   */
+  boolean acceptsErrorType(ErrorType errorType) {
+    return acceptsAll() || (errorTypeMatcher != null && errorTypeMatcher.match(errorType));
   }
 
   @Override
-  protected Function<CoreEvent, CoreEvent> beforeRouting(Exception exception) {
+  protected Function<CoreEvent, CoreEvent> beforeRouting() {
     return event -> {
-      event = super.beforeRouting(exception).apply(event);
-      if (!isRedeliveryExhausted(exception)) {
+      Exception exception = getException(event);
+      event = super.beforeRouting().apply(event);
+      if (!isRedeliveryExhausted(exception) && isOwnedTransaction()) {
         rollback(exception);
       }
       return event;
     };
+  }
+
+  /**
+   * {@inheritDoc}
+   */
+  @Override
+  public TemplateOnErrorHandler duplicateFor(Location buildFor) {
+    OnErrorPropagateHandler cpy = new OnErrorPropagateHandler();
+    cpy.setFlowLocation(buildFor);
+    when.ifPresent(expr -> cpy.setWhen(expr));
+    cpy.setHandleException(this.handleException);
+    cpy.setErrorType(this.errorType);
+    cpy.setMessageProcessors(this.getMessageProcessors());
+    cpy.setEnableNotifications(this.isEnableNotifications());
+    cpy.setLogException(this.logException);
+    cpy.setNotificationFirer(this.notificationFirer);
+    cpy.setAnnotations(this.getAnnotations());
+    return cpy;
   }
 
   @Override
@@ -52,25 +74,6 @@ public class OnErrorPropagateHandler extends TemplateOnErrorHandler {
 
   private boolean isRedeliveryExhausted(Exception exception) {
     return (exception instanceof MessageRedeliveredException);
-  }
-
-  @Override
-  protected Function<CoreEvent, Publisher<CoreEvent>> route(Exception exception) {
-    if (isRedeliveryExhausted(exception)) {
-      logger.info("Message redelivery exhausted. No redelivery exhausted actions configured. Message consumed.");
-    } else {
-      return super.route(exception);
-    }
-    return event -> just(event);
-  }
-
-  @Override
-  protected CoreEvent processReplyTo(CoreEvent event, Exception e) {
-    if (isRedeliveryExhausted(e)) {
-      return super.processReplyTo(event, e);
-    } else {
-      return event;
-    }
   }
 
 }

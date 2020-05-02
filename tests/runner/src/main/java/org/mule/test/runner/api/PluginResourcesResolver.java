@@ -16,13 +16,13 @@ import static org.mule.runtime.deployment.model.api.artifact.ArtifactDescriptorC
 import static org.mule.runtime.deployment.model.api.artifact.ArtifactDescriptorConstants.PRIVILEGED_EXPORTED_PACKAGES;
 import static org.mule.runtime.deployment.model.api.plugin.ArtifactPluginDescriptor.MULE_ARTIFACT_PATH_INSIDE_JAR;
 import static org.mule.runtime.deployment.model.api.plugin.ArtifactPluginDescriptor.MULE_AUTO_GENERATED_ARTIFACT_PATH_INSIDE_JAR;
-import static org.mule.runtime.deployment.model.api.policy.PolicyTemplateDescriptor.META_INF;
 import static org.mule.runtime.module.artifact.api.descriptor.ArtifactDescriptor.MULE_ARTIFACT_JSON_DESCRIPTOR;
+
 import org.mule.runtime.api.deployment.meta.MulePluginModel;
 import org.mule.runtime.api.deployment.persistence.MulePluginModelJsonSerializer;
+import org.mule.test.runner.utils.TroubleshootingUtils;
 
 import java.io.IOException;
-import java.io.InputStream;
 import java.io.UncheckedIOException;
 import java.net.URL;
 import java.net.URLClassLoader;
@@ -56,21 +56,29 @@ public class PluginResourcesResolver {
     final Set<String> privilegedArtifacts = newHashSet();
 
     try (URLClassLoader classLoader = new URLClassLoader(pluginUrlClassification.getUrls().toArray(new URL[0]), null)) {
+      final String MULE_ARTIFACT_JSON_PATH_INSIDE_JAR = MULE_ARTIFACT_PATH_INSIDE_JAR + "/" + MULE_ARTIFACT_JSON_DESCRIPTOR;
+      String pluginDescriptorLocation = MULE_ARTIFACT_JSON_PATH_INSIDE_JAR;
+
       logger.debug("Loading plugin '{}' descriptor", pluginUrlClassification.getName());
-      URL pluginJsonUrl = classLoader.getResource(MULE_ARTIFACT_PATH_INSIDE_JAR + "/" + MULE_ARTIFACT_JSON_DESCRIPTOR);
+      URL pluginJsonUrl = classLoader.getResource(MULE_ARTIFACT_JSON_PATH_INSIDE_JAR);
       if (pluginJsonUrl == null) {
         pluginJsonUrl = classLoader.getResource(MULE_AUTO_GENERATED_ARTIFACT_PATH_INSIDE_JAR);
         if (pluginJsonUrl == null) {
           throw new IllegalStateException(MULE_ARTIFACT_JSON_DESCRIPTOR + " couldn't be found for plugin: " +
               pluginUrlClassification.getName());
         }
+        pluginDescriptorLocation = MULE_AUTO_GENERATED_ARTIFACT_PATH_INSIDE_JAR;
       }
+      logger.debug("Loading plugin '{}' descriptor (from path: {}) using classloader {}", pluginUrlClassification.getName(),
+                   pluginDescriptorLocation, classLoader.getURLs());
 
       MulePluginModel mulePluginModel;
-      try (InputStream stream = pluginJsonUrl.openStream()) {
-        mulePluginModel = new MulePluginModelJsonSerializer().deserialize(IOUtils.toString(stream));
+      try {
+        mulePluginModel = new MulePluginModelJsonSerializer()
+            .deserialize(IOUtils.toString(classLoader.getResourceAsStream(pluginDescriptorLocation)));
       } catch (IOException e) {
-        throw new IllegalArgumentException(format("Could not read extension describer on plugin '%s'", pluginJsonUrl),
+        throw new IllegalArgumentException(format("Could not read extension describer on plugin '%s' from JAR with MD5 '%s'",
+                                                  pluginJsonUrl, TroubleshootingUtils.getMD5FromFile(pluginJsonUrl)),
                                            e);
       }
 

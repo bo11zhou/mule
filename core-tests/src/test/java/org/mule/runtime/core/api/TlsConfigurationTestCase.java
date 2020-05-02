@@ -16,12 +16,16 @@ import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertThat;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
+import static org.mule.runtime.core.api.util.FileUtils.newFile;
+import static org.mule.runtime.core.internal.util.TestFileUtils.isFileOpen;
 import static org.mule.runtime.core.privileged.security.tls.TlsConfiguration.DEFAULT_KEYSTORE;
 import static org.mule.runtime.core.privileged.security.tls.TlsConfiguration.DEFAULT_SECURITY_MODEL;
 import static org.mule.runtime.core.privileged.security.tls.TlsConfiguration.DEFAULT_SSL_TYPE;
 import static org.mule.runtime.core.privileged.security.tls.TlsConfiguration.JSSE_NAMESPACE;
 import org.mule.runtime.core.api.config.MuleProperties;
 import org.mule.runtime.api.lifecycle.CreateException;
+import org.mule.runtime.core.api.util.FileUtils;
+import org.mule.runtime.core.internal.util.TestFileUtils;
 import org.mule.runtime.core.privileged.security.tls.TlsConfiguration;
 import org.mule.tck.junit4.AbstractMuleTestCase;
 import org.mule.runtime.core.api.util.ClassUtils;
@@ -73,11 +77,52 @@ public class TlsConfigurationTestCase extends AbstractMuleTestCase {
   }
 
   @Test
+  public void testTlsConfigurationDoesNotLeakKeyStoreFile() throws Exception {
+    TlsConfiguration configuration = new TlsConfiguration(DEFAULT_KEYSTORE);
+    configuration.setKeyPassword("mulepassword");
+    configuration.setKeyStorePassword("mulepassword");
+    configuration.setKeyStore("clientKeystore");
+    configuration.initialise(false, JSSE_NAMESPACE);
+
+    URL keystoreUrl = getClass().getClassLoader().getResource("clientKeystore");
+    File keyStoreFile = newFile(keystoreUrl.toURI());
+    assertThat(isFileOpen(keyStoreFile), is(false));
+  }
+
+  @Test
+  public void testTlsConfigurationDoesNotLeakTrustStoreFile() throws Exception {
+    TlsConfiguration configuration = new TlsConfiguration(DEFAULT_KEYSTORE);
+    configuration.setKeyPassword("mulepassword");
+    configuration.setKeyStorePassword("mulepassword");
+    configuration.setKeyStore("clientKeystore");
+    configuration.setTrustStorePassword("mulepassword");
+    configuration.setTrustStore("trustStore");
+    configuration.initialise(false, JSSE_NAMESPACE);
+
+    URL keystoreUrl = getClass().getClassLoader().getResource("trustStore");
+    File trustStoreFile = newFile(keystoreUrl.toURI());
+    assertThat(isFileOpen(trustStoreFile), is(false));
+  }
+
+  @Test
   public void testSimpleSocket() throws Exception {
     TlsConfiguration configuration = new TlsConfiguration(DEFAULT_KEYSTORE);
     configuration.setKeyPassword("mulepassword");
     configuration.setKeyStorePassword("mulepassword");
     configuration.setKeyStore("clientKeystore");
+    configuration.initialise(false, JSSE_NAMESPACE);
+    SSLSocketFactory socketFactory = configuration.getSocketFactory();
+    assertTrue("socket is useless", socketFactory.getSupportedCipherSuites().length > 0);
+  }
+
+  @Test
+  public void testTlsConfigurationUsingPKCS12KeystoreWithMultipleKeys() throws Exception {
+    TlsConfiguration configuration = new TlsConfiguration(DEFAULT_KEYSTORE);
+    configuration.setKeyPassword("passw0rd");
+    configuration.setKeyStorePassword("passw0rd");
+    configuration.setKeyStore("keystoreMultiplesKeys.p12");
+    configuration.setKeyStoreType("pkcs12");
+    configuration.setKeyAlias("ldnmulvs01");
     configuration.initialise(false, JSSE_NAMESPACE);
     SSLSocketFactory socketFactory = configuration.getSocketFactory();
     assertTrue("socket is useless", socketFactory.getSupportedCipherSuites().length > 0);

@@ -6,28 +6,20 @@
  */
 package org.mule.runtime.core.internal.policy;
 
-import static org.mule.runtime.api.message.Message.of;
-import static org.mule.runtime.core.privileged.processor.MessageProcessors.processToApply;
-import static org.slf4j.LoggerFactory.getLogger;
-import static reactor.core.publisher.Mono.from;
-import static reactor.core.publisher.Mono.just;
+import static org.mule.runtime.core.internal.policy.PolicyNextActionMessageProcessor.POLICY_NEXT_OPERATION;
+import static reactor.core.publisher.Flux.from;
 
-import org.mule.runtime.api.exception.MuleException;
 import org.mule.runtime.core.api.event.CoreEvent;
 import org.mule.runtime.core.api.policy.Policy;
 import org.mule.runtime.core.api.policy.PolicyChain;
-import org.mule.runtime.core.api.policy.PolicyStateHandler;
-import org.mule.runtime.core.api.policy.PolicyStateId;
 import org.mule.runtime.core.api.processor.Processor;
+import org.mule.runtime.core.api.processor.ReactiveProcessor;
 import org.mule.runtime.core.internal.exception.MessagingException;
-import org.mule.runtime.core.privileged.event.PrivilegedEvent;
 
-import java.util.Optional;
-import java.util.function.Supplier;
+import java.lang.ref.Reference;
+import java.lang.ref.WeakReference;
 
 import org.reactivestreams.Publisher;
-import org.slf4j.Logger;
-import reactor.core.publisher.Mono;
 
 /**
  * This class is responsible for the processing of a policy applied to a {@link Processor}. Currently the only kind of
@@ -38,126 +30,45 @@ import reactor.core.publisher.Mono;
  * {@link Processor}.
  * <p>
  * This class enforces the scoping of variables between the actual behaviour and the policy that may be applied to it. To enforce
- * such scoping of variables it uses {@link PolicyStateHandler} so the last {@link CoreEvent} modified by the policy behaviour can
- * be stored and retrieve for later usages. It also uses {@link PolicyEventConverter} as a helper class to convert an
+ * such scoping of variables it uses internal parameters so the last {@link CoreEvent} modified by the policy behaviour can be
+ * stored and retrieve for later usages. It also uses {@link PolicyEventConverter} as a helper class to convert an
  * {@link CoreEvent} from the policy to the next operation {@link CoreEvent} or from the next operation result to the
  * {@link CoreEvent} that must continue the execution of the policy.
  * <p>
  */
-public class OperationPolicyProcessor implements Processor {
-
-  private static final Logger LOGGER = getLogger(OperationPolicyProcessor.class);
+public class OperationPolicyProcessor implements ReactiveProcessor {
 
   private final Policy policy;
-  private final PolicyStateHandler policyStateHandler;
-  private final PolicyEventConverter policyEventConverter = new PolicyEventConverter();
-  private final Processor nextProcessor;
-  private final PolicyStateIdFactory stateIdFactory;
+  private final Reference<ReactiveProcessor> nextProcessorRef;
+  private final PolicyEventMapper policyEventMapper;
+  private final PolicyTraceLogger policyTraceLogger;
 
-  public OperationPolicyProcessor(Policy policy,
-                                  PolicyStateHandler policyStateHandler,
-                                  Processor nextProcessor) {
+  public OperationPolicyProcessor(Policy policy, ReactiveProcessor nextProcessor) {
     this.policy = policy;
-    this.policyStateHandler = policyStateHandler;
-    this.nextProcessor = nextProcessor;
-    this.stateIdFactory = new PolicyStateIdFactory(policy.getPolicyId());
+    this.nextProcessorRef = new WeakReference<>(nextProcessor);
+    this.policyEventMapper = new PolicyEventMapper(policy.getPolicyId());
+    this.policyTraceLogger = new PolicyTraceLogger();
   }
 
   /**
    * Process the policy chain of processors. The provided {@code nextOperation} function has the behaviour to be executed by the
    * next-operation of the chain.
    *
-   * @param operationEvent the event with the data to execute the operation
    * @return the result of processing the {@code event} through the policy chain.
-   * @throws MuleException
    */
-  @Override
-  public CoreEvent process(CoreEvent operationEvent) throws MuleException {
-    return processToApply(operationEvent, this);
-  }
-
   @Override
   public Publisher<CoreEvent> apply(Publisher<CoreEvent> publisher) {
     return from(publisher)
-        .cast(PrivilegedEvent.class)
-        .flatMap(operationEvent -> {
-          PolicyStateId policyStateId = stateIdFactory.create(operationEvent);
-          PrivilegedEvent variablesProviderEvent = variablesProvider(operationEvent, policyStateId);
-          PrivilegedEvent policyEvent = policyEventConverter.createEvent(operationEvent, variablesProviderEvent);
-          Processor operationCall = buildOperationExecutionWithPolicyFunction(nextProcessor, operationEvent, policyStateId);
-          policyStateHandler.updateNextOperation(policyStateId.getExecutionIdentifier(), operationCall);
-          return executePolicyChain(operationEvent, policyStateId, policyEvent);
-        });
+        .map(policyEventMapper::onOperationPolicyBegin)
+        .doOnNext(event -> policyTraceLogger.logOperationPolicyStart(policy, event))
+        .transform(policy.getPolicyChain().onChainError(t -> manageError((MessagingException) t)))
+        .subscriberContext(ctx -> ctx.put(POLICY_NEXT_OPERATION, nextProcessorRef))
+        .doOnNext(event -> policyTraceLogger.logOperationPolicyEnd(policy, event))
+        .map(policyChainResult -> policyEventMapper
+            .onOperationPolicyFinish(policyChainResult, policy.getPolicyChain().isPropagateMessageTransformations()));
   }
 
-  private void manageError(PolicyStateId policyStateId, PrivilegedEvent operationEvent, MessagingException messagingException) {
-    policyStateHandler.updateState(policyStateId, messagingException.getEvent());
-    PrivilegedEvent newEvent = policyEventConverter.createEvent((PrivilegedEvent) messagingException.getEvent(), operationEvent);
-    messagingException.setProcessedEvent(newEvent);
-  }
-
-  private Mono<PrivilegedEvent> executePolicyChain(PrivilegedEvent operationEvent, PolicyStateId policyStateId,
-                                                   PrivilegedEvent policyEvent) {
-
-    PolicyChain policyChain = policy.getPolicyChain();
-    policyChain.onChainError(t -> manageError(policyStateId, operationEvent, (MessagingException) t));
-
-    return just(policyEvent)
-        .doOnNext(event -> logPolicy(event.getContext().getCorrelationId(), policyStateId.getPolicyId(),
-                                     () -> getMessageAttributesAsString(event), "Before operation"))
-        .cast(CoreEvent.class)
-        .transform(policyChain)
-        .cast(PrivilegedEvent.class)
-        .doOnNext(policyChainResult -> policyStateHandler.updateState(policyStateId, policyChainResult))
-        .map(policyChainResult -> policyEventConverter.createEvent(policyChainResult, operationEvent))
-        .doOnNext(event -> logPolicy(event.getContext().getCorrelationId(), policyStateId.getPolicyId(),
-                                     () -> getMessageAttributesAsString(event), "After operation"));
-  }
-
-  private Processor buildOperationExecutionWithPolicyFunction(Processor nextOperation, PrivilegedEvent operationEvent,
-                                                              PolicyStateId policyStateId) {
-    return new Processor() {
-
-      @Override
-      public CoreEvent process(CoreEvent event) throws MuleException {
-        return processToApply(event, this);
-      }
-
-      @Override
-      public Publisher<CoreEvent> apply(Publisher<CoreEvent> publisher) {
-        return from(publisher)
-            .cast(PrivilegedEvent.class)
-            .flatMap(policyExecuteNextEvent -> {
-              policyStateHandler.updateState(policyStateId, policyExecuteNextEvent);
-              return just(policyExecuteNextEvent)
-                  .map(event -> policyEventConverter.createEvent(event, operationEvent))
-                  .cast(CoreEvent.class)
-                  .transform(nextOperation)
-                  .cast(PrivilegedEvent.class)
-                  .map(operationResult -> policyEventConverter.createEvent(operationResult, policyExecuteNextEvent));
-            });
-      }
-    };
-  }
-
-  private PrivilegedEvent variablesProvider(CoreEvent event, PolicyStateId policyStateId) {
-    Optional<CoreEvent> latestPolicyState = policyStateHandler.getLatestState(policyStateId);
-    return (PrivilegedEvent) latestPolicyState
-        .orElseGet(() -> PrivilegedEvent.builder(event.getContext()).message(of(null)).build());
-  }
-
-  private String getMessageAttributesAsString(CoreEvent event) {
-    if (event.getMessage() == null || event.getMessage().getAttributes() == null
-        || event.getMessage().getAttributes().getValue() == null) {
-      return "";
-    }
-    return event.getMessage().getAttributes().getValue().toString();
-  }
-
-  private void logPolicy(String eventId, String policyName, Supplier<String> message, String startingMessage) {
-    if (LOGGER.isTraceEnabled()) {
-      // TODO Remove event id when first policy generates it. MULE-14455
-      LOGGER.trace("Event Id: " + eventId + ".\n" + startingMessage + "\nPolicy:" + policyName + "\n" + message.get());
-    }
+  private void manageError(MessagingException messagingException) {
+    messagingException.setProcessedEvent(policyEventMapper.onOperationPolicyError(messagingException.getEvent()));
   }
 }

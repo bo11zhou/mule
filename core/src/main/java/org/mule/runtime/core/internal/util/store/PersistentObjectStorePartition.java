@@ -15,17 +15,18 @@ import static org.mule.runtime.core.api.config.i18n.CoreMessages.failedToCreate;
 import static org.mule.runtime.core.api.util.FileUtils.cleanDirectory;
 import static org.mule.runtime.core.api.util.FileUtils.newFile;
 import static org.mule.runtime.core.internal.util.store.MuleObjectStoreManager.UNBOUNDED;
+
 import org.mule.runtime.api.exception.MuleRuntimeException;
 import org.mule.runtime.api.serialization.ObjectSerializer;
+import org.mule.runtime.api.store.ExpirableObjectStore;
 import org.mule.runtime.api.store.ObjectAlreadyExistsException;
 import org.mule.runtime.api.store.ObjectDoesNotExistException;
 import org.mule.runtime.api.store.ObjectStoreException;
 import org.mule.runtime.api.store.ObjectStoreNotAvailableException;
 import org.mule.runtime.api.store.TemplateObjectStore;
 import org.mule.runtime.core.api.MuleContext;
-import org.mule.runtime.core.privileged.store.DeserializationPostInitialisable;
-import org.mule.runtime.api.store.ExpirableObjectStore;
 import org.mule.runtime.core.api.util.UUID;
+import org.mule.runtime.core.privileged.store.DeserializationPostInitialisable;
 
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
@@ -84,6 +85,11 @@ public class PersistentObjectStorePartition<T extends Serializable> extends Temp
     this.partitionName = readPartitionFileName(partitionDirectory);
   }
 
+  protected PersistentObjectStorePartition() {
+    muleContext = null;
+    serializer = null;
+  }
+
   private String readPartitionFileName(File partitionDirectory) throws ObjectStoreNotAvailableException {
     File partitionDescriptorFile = new File(partitionDirectory, PARTITION_DESCRIPTOR_FILE);
     try {
@@ -100,7 +106,18 @@ public class PersistentObjectStorePartition<T extends Serializable> extends Temp
   }
 
   @Override
-  public void close() throws ObjectStoreException {}
+  public void close() throws ObjectStoreException {
+    synchronized (realKeyToUUIDIndex) {
+      try {
+        cleanDirectory(this.partitionDirectory);
+        partitionDirectory.delete();
+      } catch (IOException e) {
+        throw new ObjectStoreException(createStaticMessage("Could not close object store partition"), e);
+      }
+
+      realKeyToUUIDIndex.clear();
+    }
+  }
 
   @Override
   public List<String> allKeys() throws ObjectStoreException {
@@ -239,8 +256,11 @@ public class PersistentObjectStorePartition<T extends Serializable> extends Temp
         .toPath().normalize();
     Path absoluteFilePath = file.toPath();
     Path relativePath = workingDirectory.relativize(absoluteFilePath);
-    File corruptedFile = new File(muleContext.getConfiguration().getWorkingDirectory()
-        + File.separator + CORRUPTED_FOLDER + File.separator + relativePath.toString());
+    File corruptedDir = new File(muleContext.getConfiguration().getWorkingDirectory() + File.separator + CORRUPTED_FOLDER);
+    if (!corruptedDir.exists()) {
+      corruptedDir.mkdir();
+    }
+    File corruptedFile = new File(corruptedDir.getAbsolutePath() + File.separator + relativePath.toString());
     Files.move(file.toPath(), corruptedFile.getParentFile().toPath());
   }
 
@@ -276,6 +296,10 @@ public class PersistentObjectStorePartition<T extends Serializable> extends Temp
                                                                   partitionDirectory.getAbsolutePath())));
       }
     }
+  }
+
+  public File getPartitionDirectory() {
+    return partitionDirectory;
   }
 
   private File[] listValuesFiles() {

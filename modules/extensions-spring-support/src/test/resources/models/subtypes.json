@@ -90,6 +90,40 @@
       "format": "java",
       "type": "Object",
       "annotations": {
+        "typeId": "org.mule.tck.message.StringAttributes",
+        "classInformation": {
+          "classname": "org.mule.tck.message.StringAttributes",
+          "hasDefaultConstructor": true,
+          "isInterface": false,
+          "isInstantiable": true,
+          "isAbstract": false,
+          "isFinal": false,
+          "implementedInterfaces": [
+            "java.io.Serializable"
+          ],
+          "parent": "",
+          "genericTypes": [],
+          "isMap": false
+        },
+        "typeAlias": {
+          "value": "StringAttributes"
+        }
+      },
+      "fields": [
+        {
+          "key": {
+            "name": "value"
+          },
+          "model": {
+            "type": "String"
+          }
+        }
+      ]
+    },
+    {
+      "format": "java",
+      "type": "Object",
+      "annotations": {
         "typeId": "org.mule.test.heisenberg.extension.model.Ricin",
         "classInformation": {
           "classname": "org.mule.test.heisenberg.extension.model.Ricin",
@@ -111,6 +145,18 @@
         },
         "typeAlias": {
           "value": "Ricin"
+        },
+        "stereotype": {
+          "allowedStereotypes": [
+            {
+              "type": "RICIN",
+              "namespace": "HEISENBERG",
+              "parent": {
+                "type": "WEAPON",
+                "namespace": "HEISENBERG"
+              }
+            }
+          ]
         }
       },
       "fields": [
@@ -161,7 +207,9 @@
                 "isInstantiable": true,
                 "isAbstract": false,
                 "isFinal": false,
-                "implementedInterfaces": [],
+                "implementedInterfaces": [
+                  "java.io.Serializable"
+                ],
                 "parent": "",
                 "genericTypes": [],
                 "isMap": false
@@ -172,6 +220,14 @@
               },
               "typeAlias": {
                 "value": "door"
+              },
+              "stereotype": {
+                "allowedStereotypes": [
+                  {
+                    "type": "KNOCKEABLE_DOOR",
+                    "namespace": "HEISENBERG"
+                  }
+                ]
               }
             },
             "fields": [
@@ -244,6 +300,14 @@
         "extensibleType": {},
         "typeAlias": {
           "value": "Weapon"
+        },
+        "stereotype": {
+          "allowedStereotypes": [
+            {
+              "type": "WEAPON",
+              "namespace": "HEISENBERG"
+            }
+          ]
         }
       },
       "fields": []
@@ -414,7 +478,12 @@
                 "query": false,
                 "order": 2
               },
-              "allowedStereotypeModels": [],
+              "allowedStereotypeModels": [
+                {
+                  "type": "DOOR",
+                  "namespace": "SUBTYPES"
+                }
+              ],
               "name": "doorInterface",
               "description": "",
               "modelProperties": {}
@@ -441,7 +510,16 @@
                 "query": false,
                 "order": 3
               },
-              "allowedStereotypeModels": [],
+              "allowedStereotypeModels": [
+                {
+                  "type": "SQUARE",
+                  "namespace": "SUBTYPES",
+                  "parent": {
+                    "type": "PARENT_SHAPE",
+                    "namespace": "SUBTYPES"
+                  }
+                }
+              ],
               "name": "explicitSquare",
               "description": "",
               "modelProperties": {}
@@ -495,7 +573,12 @@
                 "query": false,
                 "order": 5
               },
-              "allowedStereotypeModels": [],
+              "allowedStereotypeModels": [
+                {
+                  "type": "RICIN",
+                  "namespace": "HEISENBERG"
+                }
+              ],
               "name": "ricin",
               "description": "",
               "modelProperties": {}
@@ -522,7 +605,12 @@
                 "query": false,
                 "order": 6
               },
-              "allowedStereotypeModels": [],
+              "allowedStereotypeModels": [
+                {
+                  "type": "WEAPON",
+                  "namespace": "HEISENBERG"
+                }
+              ],
               "name": "extensibleWeapon",
               "description": "",
               "modelProperties": {}
@@ -720,7 +808,12 @@
                 "query": false,
                 "order": 11
               },
-              "allowedStereotypeModels": [],
+              "allowedStereotypeModels": [
+                {
+                  "type": "WEAPON",
+                  "namespace": "HEISENBERG"
+                }
+              ],
               "name": "weapons",
               "description": "",
               "modelProperties": {}
@@ -768,9 +861,41 @@
                 "query": false,
                 "order": 12
               },
-              "allowedStereotypeModels": [],
+              "allowedStereotypeModels": [
+                {
+                  "type": "WEAPON",
+                  "namespace": "HEISENBERG"
+                }
+              ],
               "name": "weaponMap",
               "description": "",
+              "modelProperties": {}
+            },
+            {
+              "type": {
+                "format": "java",
+                "type": "String"
+              },
+              "hasDynamicType": false,
+              "required": true,
+              "isConfigOverride": false,
+              "isComponentId": true,
+              "expressionSupport": "NOT_SUPPORTED",
+              "role": "BEHAVIOUR",
+              "dslConfiguration": {
+                "allowsInlineDefinition": false,
+                "allowsReferences": false,
+                "allowTopLevelDefinition": false
+              },
+              "layoutModel": {
+                "password": false,
+                "text": false,
+                "query": false,
+                "order": 14
+              },
+              "allowedStereotypeModels": [],
+              "name": "name",
+              "description": "The identifier of this element used to reference it in other components",
               "modelProperties": {}
             },
             {
@@ -950,6 +1075,61 @@
                 {
                   "type": {
                     "format": "java",
+                    "type": "Object",
+                    "annotations": {
+                      "typeId": "org.mule.runtime.extension.api.runtime.config.ConfigurationProvider"
+                    },
+                    "fields": []
+                  },
+                  "hasDynamicType": false,
+                  "required": true,
+                  "isConfigOverride": false,
+                  "isComponentId": false,
+                  "expressionSupport": "NOT_SUPPORTED",
+                  "role": "BEHAVIOUR",
+                  "dslConfiguration": {
+                    "allowsInlineDefinition": false,
+                    "allowsReferences": true,
+                    "allowTopLevelDefinition": false
+                  },
+                  "layoutModel": {
+                    "password": false,
+                    "text": false,
+                    "query": false,
+                    "order": 3
+                  },
+                  "allowedStereotypeModels": [
+                    {
+                      "type": "CONFIG",
+                      "namespace": "SUBTYPES",
+                      "parent": {
+                        "type": "MODULE_CONFIG",
+                        "namespace": "MULE"
+                      }
+                    }
+                  ],
+                  "name": "config-ref",
+                  "description": "The name of the configuration to be used to execute this component",
+                  "modelProperties": {}
+                }
+              ],
+              "exclusiveParametersModels": [],
+              "layoutModel": {
+                "password": false,
+                "text": false,
+                "query": false,
+                "order": 0
+              },
+              "showInDsl": false,
+              "name": "General",
+              "description": "",
+              "modelProperties": {}
+            },
+            {
+              "parameters": [
+                {
+                  "type": {
+                    "format": "java",
                     "type": "String"
                   },
                   "hasDynamicType": false,
@@ -1027,9 +1207,13 @@
           "name": "configRetriever",
           "description": "",
           "modelProperties": {
-            "org.mule.runtime.extension.api.property.TypeResolversInformationModelProperty": {
+            "typeResolversInformation": {
               "category": "SubtypesOutputResolver",
-              "outputResolver": "OUTPUT_PAYLOAD"
+              "outputResolver": {
+                "resolverName": "OUTPUT_PAYLOAD",
+                "requiresConnection": false,
+                "requiresConfiguration": false
+              }
             }
           },
           "kind": "operation"
@@ -1077,6 +1261,61 @@
             }
           },
           "parameterGroupModels": [
+            {
+              "parameters": [
+                {
+                  "type": {
+                    "format": "java",
+                    "type": "Object",
+                    "annotations": {
+                      "typeId": "org.mule.runtime.extension.api.runtime.config.ConfigurationProvider"
+                    },
+                    "fields": []
+                  },
+                  "hasDynamicType": false,
+                  "required": true,
+                  "isConfigOverride": false,
+                  "isComponentId": false,
+                  "expressionSupport": "NOT_SUPPORTED",
+                  "role": "BEHAVIOUR",
+                  "dslConfiguration": {
+                    "allowsInlineDefinition": false,
+                    "allowsReferences": true,
+                    "allowTopLevelDefinition": false
+                  },
+                  "layoutModel": {
+                    "password": false,
+                    "text": false,
+                    "query": false,
+                    "order": 4
+                  },
+                  "allowedStereotypeModels": [
+                    {
+                      "type": "CONFIG",
+                      "namespace": "SUBTYPES",
+                      "parent": {
+                        "type": "MODULE_CONFIG",
+                        "namespace": "MULE"
+                      }
+                    }
+                  ],
+                  "name": "config-ref",
+                  "description": "The name of the configuration to be used to execute this component",
+                  "modelProperties": {}
+                }
+              ],
+              "exclusiveParametersModels": [],
+              "layoutModel": {
+                "password": false,
+                "text": false,
+                "query": false,
+                "order": 0
+              },
+              "showInDsl": false,
+              "name": "General",
+              "description": "",
+              "modelProperties": {}
+            },
             {
               "parameters": [
                 {
@@ -1204,6 +1443,22 @@
                           },
                           {
                             "key": {
+                              "name": "blocking"
+                            },
+                            "model": {
+                              "type": "Boolean",
+                              "annotations": {
+                                "default": "true"
+                              }
+                            },
+                            "annotations": {
+                              "description": {
+                                "value": "If false, the reconnection strategy will run in a separate, non-blocking thread"
+                              }
+                            }
+                          },
+                          {
+                            "key": {
                               "name": "count"
                             },
                             "model": {
@@ -1255,6 +1510,22 @@
                             "annotations": {
                               "description": {
                                 "value": "How often (in ms) to reconnect"
+                              }
+                            }
+                          },
+                          {
+                            "key": {
+                              "name": "blocking"
+                            },
+                            "model": {
+                              "type": "Boolean",
+                              "annotations": {
+                                "default": "true"
+                              }
+                            },
+                            "annotations": {
+                              "description": {
+                                "value": "If false, the reconnection strategy will run in a separate, non-blocking thread"
                               }
                             }
                           }
@@ -1313,9 +1584,13 @@
           "name": "connectionRetriever",
           "description": "",
           "modelProperties": {
-            "org.mule.runtime.extension.api.property.TypeResolversInformationModelProperty": {
+            "typeResolversInformation": {
               "category": "SubtypesOutputResolver",
-              "outputResolver": "OUTPUT_PAYLOAD"
+              "outputResolver": {
+                "resolverName": "OUTPUT_PAYLOAD",
+                "requiresConnection": true,
+                "requiresConfiguration": true
+              }
             }
           },
           "kind": "operation"
@@ -1386,7 +1661,12 @@
                     "query": false,
                     "order": 2
                   },
-                  "allowedStereotypeModels": [],
+                  "allowedStereotypeModels": [
+                    {
+                      "type": "DOOR",
+                      "namespace": "SUBTYPES"
+                    }
+                  ],
                   "name": "doorInterface",
                   "description": "",
                   "modelProperties": {}
@@ -1434,7 +1714,12 @@
                     "query": false,
                     "order": 3
                   },
-                  "allowedStereotypeModels": [],
+                  "allowedStereotypeModels": [
+                    {
+                      "type": "DOOR",
+                      "namespace": "SUBTYPES"
+                    }
+                  ],
                   "name": "doors",
                   "description": "",
                   "modelProperties": {}
@@ -1527,6 +1812,22 @@
                                 },
                                 {
                                   "key": {
+                                    "name": "blocking"
+                                  },
+                                  "model": {
+                                    "type": "Boolean",
+                                    "annotations": {
+                                      "default": "true"
+                                    }
+                                  },
+                                  "annotations": {
+                                    "description": {
+                                      "value": "If false, the reconnection strategy will run in a separate, non-blocking thread"
+                                    }
+                                  }
+                                },
+                                {
+                                  "key": {
                                     "name": "count"
                                   },
                                   "model": {
@@ -1578,6 +1879,22 @@
                                   "annotations": {
                                     "description": {
                                       "value": "How often (in ms) to reconnect"
+                                    }
+                                  }
+                                },
+                                {
+                                  "key": {
+                                    "name": "blocking"
+                                  },
+                                  "model": {
+                                    "type": "Boolean",
+                                    "annotations": {
+                                      "default": "true"
+                                    }
+                                  },
+                                  "annotations": {
+                                    "description": {
+                                      "value": "If false, the reconnection strategy will run in a separate, non-blocking thread"
                                     }
                                   }
                                 }
@@ -1643,13 +1960,39 @@
           ],
           "name": "connection",
           "description": "",
-          "modelProperties": {}
+          "modelProperties": {
+            "requiredForMetadata": {
+              "requiredParameters": [
+                "abstractShape",
+                "doorInterface",
+                "doors"
+              ]
+            }
+          }
         }
       ],
       "messageSources": [],
       "name": "config",
       "description": "Default configuration",
-      "modelProperties": {}
+      "modelProperties": {
+        "requiredForMetadata": {
+          "requiredParameters": [
+            "abstractShape",
+            "doorInterface",
+            "explicitSquare",
+            "finalPojo",
+            "ricin",
+            "extensibleWeapon",
+            "triangle",
+            "pojoWithExtension",
+            "onePojos",
+            "twoPojos",
+            "weapons",
+            "weaponMap",
+            "name"
+          ]
+        }
+      }
     }
   ],
   "operations": [
@@ -1717,7 +2060,12 @@
                 "query": false,
                 "order": 1
               },
-              "allowedStereotypeModels": [],
+              "allowedStereotypeModels": [
+                {
+                  "type": "DOOR",
+                  "namespace": "SUBTYPES"
+                }
+              ],
               "name": "door",
               "description": "",
               "modelProperties": {}
@@ -1817,9 +2165,13 @@
       "name": "doorRetriever",
       "description": "",
       "modelProperties": {
-        "org.mule.runtime.extension.api.property.TypeResolversInformationModelProperty": {
+        "typeResolversInformation": {
           "category": "SubtypesOutputResolver",
-          "outputResolver": "OUTPUT_PAYLOAD"
+          "outputResolver": {
+            "resolverName": "OUTPUT_PAYLOAD",
+            "requiresConnection": false,
+            "requiresConfiguration": false
+          }
         }
       },
       "kind": "operation"
@@ -1988,9 +2340,13 @@
       "name": "noGlobalPojo",
       "description": "",
       "modelProperties": {
-        "org.mule.runtime.extension.api.property.TypeResolversInformationModelProperty": {
+        "typeResolversInformation": {
           "category": "SubtypesOutputResolver",
-          "outputResolver": "OUTPUT_PAYLOAD"
+          "outputResolver": {
+            "resolverName": "OUTPUT_PAYLOAD",
+            "requiresConnection": false,
+            "requiresConfiguration": false
+          }
         }
       },
       "kind": "operation"
@@ -2101,7 +2457,12 @@
                 "query": false,
                 "order": 1
               },
-              "allowedStereotypeModels": [],
+              "allowedStereotypeModels": [
+                {
+                  "type": "DOOR",
+                  "namespace": "SUBTYPES"
+                }
+              ],
               "name": "door",
               "description": "",
               "modelProperties": {}
@@ -2149,7 +2510,12 @@
                 "query": false,
                 "order": 2
               },
-              "allowedStereotypeModels": [],
+              "allowedStereotypeModels": [
+                {
+                  "type": "DOOR",
+                  "namespace": "SUBTYPES"
+                }
+              ],
               "name": "doorRegistry",
               "description": "",
               "modelProperties": {}
@@ -2249,9 +2615,13 @@
       "name": "processDoor",
       "description": "",
       "modelProperties": {
-        "org.mule.runtime.extension.api.property.TypeResolversInformationModelProperty": {
+        "typeResolversInformation": {
           "category": "SubtypesOutputResolver",
-          "outputResolver": "OUTPUT_PAYLOAD"
+          "outputResolver": {
+            "resolverName": "OUTPUT_PAYLOAD",
+            "requiresConnection": false,
+            "requiresConfiguration": false
+          }
         }
       },
       "kind": "operation"
@@ -2420,9 +2790,13 @@
       "name": "shapeRetriever",
       "description": "",
       "modelProperties": {
-        "org.mule.runtime.extension.api.property.TypeResolversInformationModelProperty": {
+        "typeResolversInformation": {
           "category": "SubtypesOutputResolver",
-          "outputResolver": "OUTPUT_PAYLOAD"
+          "outputResolver": {
+            "resolverName": "OUTPUT_PAYLOAD",
+            "requiresConnection": false,
+            "requiresConfiguration": false
+          }
         }
       },
       "kind": "operation"
@@ -2558,7 +2932,12 @@
                 "query": false,
                 "order": 2
               },
-              "allowedStereotypeModels": [],
+              "allowedStereotypeModels": [
+                {
+                  "type": "DOOR",
+                  "namespace": "SUBTYPES"
+                }
+              ],
               "name": "door",
               "description": "",
               "modelProperties": {}
@@ -2793,9 +3172,13 @@
       "name": "subtypedAndConcreteParameters",
       "description": "",
       "modelProperties": {
-        "org.mule.runtime.extension.api.property.TypeResolversInformationModelProperty": {
+        "typeResolversInformation": {
           "category": "SubtypesOutputResolver",
-          "outputResolver": "OUTPUT_PAYLOAD"
+          "outputResolver": {
+            "resolverName": "OUTPUT_PAYLOAD",
+            "requiresConnection": false,
+            "requiresConfiguration": false
+          }
         }
       },
       "kind": "operation"
@@ -2868,7 +3251,12 @@
                 "query": false,
                 "order": 2
               },
-              "allowedStereotypeModels": [],
+              "allowedStereotypeModels": [
+                {
+                  "type": "DOOR",
+                  "namespace": "SUBTYPES"
+                }
+              ],
               "name": "doorInterface",
               "description": "",
               "modelProperties": {}
@@ -2916,7 +3304,12 @@
                 "query": false,
                 "order": 3
               },
-              "allowedStereotypeModels": [],
+              "allowedStereotypeModels": [
+                {
+                  "type": "DOOR",
+                  "namespace": "SUBTYPES"
+                }
+              ],
               "name": "doors",
               "description": "",
               "modelProperties": {}
@@ -3009,6 +3402,22 @@
                             },
                             {
                               "key": {
+                                "name": "blocking"
+                              },
+                              "model": {
+                                "type": "Boolean",
+                                "annotations": {
+                                  "default": "true"
+                                }
+                              },
+                              "annotations": {
+                                "description": {
+                                  "value": "If false, the reconnection strategy will run in a separate, non-blocking thread"
+                                }
+                              }
+                            },
+                            {
+                              "key": {
                                 "name": "count"
                               },
                               "model": {
@@ -3060,6 +3469,22 @@
                               "annotations": {
                                 "description": {
                                   "value": "How often (in ms) to reconnect"
+                                }
+                              }
+                            },
+                            {
+                              "key": {
+                                "name": "blocking"
+                              },
+                              "model": {
+                                "type": "Boolean",
+                                "annotations": {
+                                  "default": "true"
+                                }
+                              },
+                              "annotations": {
+                                "description": {
+                                  "value": "If false, the reconnection strategy will run in a separate, non-blocking thread"
                                 }
                               }
                             }
@@ -3125,7 +3550,15 @@
       ],
       "name": "connection",
       "description": "",
-      "modelProperties": {}
+      "modelProperties": {
+        "requiredForMetadata": {
+          "requiredParameters": [
+            "abstractShape",
+            "doorInterface",
+            "doors"
+          ]
+        }
+      }
     }
   ],
   "messageSources": [
@@ -3199,7 +3632,12 @@
                 "query": false,
                 "order": 1
               },
-              "allowedStereotypeModels": [],
+              "allowedStereotypeModels": [
+                {
+                  "type": "DOOR",
+                  "namespace": "SUBTYPES"
+                }
+              ],
               "name": "doorParam",
               "description": "",
               "modelProperties": {}
@@ -3436,40 +3874,6 @@
       "format": "java",
       "type": "Object",
       "annotations": {
-        "typeId": "org.mule.tck.message.StringAttributes",
-        "classInformation": {
-          "classname": "org.mule.tck.message.StringAttributes",
-          "hasDefaultConstructor": true,
-          "isInterface": false,
-          "isInstantiable": true,
-          "isAbstract": false,
-          "isFinal": false,
-          "implementedInterfaces": [
-            "java.io.Serializable"
-          ],
-          "parent": "",
-          "genericTypes": [],
-          "isMap": false
-        },
-        "typeAlias": {
-          "value": "StringAttributes"
-        }
-      },
-      "fields": [
-        {
-          "key": {
-            "name": "value"
-          },
-          "model": {
-            "type": "String"
-          }
-        }
-      ]
-    },
-    {
-      "format": "java",
-      "type": "Object",
-      "annotations": {
         "typeId": "org.mule.test.subtypes.extension.CarDoor",
         "classInformation": {
           "classname": "org.mule.test.subtypes.extension.CarDoor",
@@ -3491,6 +3895,18 @@
         },
         "typeAlias": {
           "value": "CarDoor"
+        },
+        "stereotype": {
+          "allowedStereotypes": [
+            {
+              "type": "CAR_DOOR",
+              "namespace": "SUBTYPES",
+              "parent": {
+                "type": "DOOR",
+                "namespace": "SUBTYPES"
+              }
+            }
+          ]
         }
       },
       "fields": [
@@ -3543,6 +3959,14 @@
         },
         "typeAlias": {
           "value": "Door"
+        },
+        "stereotype": {
+          "allowedStereotypes": [
+            {
+              "type": "DOOR",
+              "namespace": "SUBTYPES"
+            }
+          ]
         }
       },
       "fields": []
@@ -3695,6 +4119,18 @@
         },
         "typeAlias": {
           "value": "HouseDoor"
+        },
+        "stereotype": {
+          "allowedStereotypes": [
+            {
+              "type": "HOUSE_DOOR",
+              "namespace": "SUBTYPES",
+              "parent": {
+                "type": "DOOR",
+                "namespace": "SUBTYPES"
+              }
+            }
+          ]
         }
       },
       "fields": [
@@ -3986,6 +4422,18 @@
         },
         "typeAlias": {
           "value": "Revolver"
+        },
+        "stereotype": {
+          "allowedStereotypes": [
+            {
+              "type": "REVOLVER",
+              "namespace": "SUBTYPES",
+              "parent": {
+                "type": "WEAPON",
+                "namespace": "HEISENBERG"
+              }
+            }
+          ]
         }
       },
       "fields": [
@@ -4043,6 +4491,18 @@
         },
         "typeAlias": {
           "value": "Square"
+        },
+        "stereotype": {
+          "allowedStereotypes": [
+            {
+              "type": "SQUARE",
+              "namespace": "SUBTYPES",
+              "parent": {
+                "type": "PARENT_SHAPE",
+                "namespace": "SUBTYPES"
+              }
+            }
+          ]
         }
       },
       "fields": [
@@ -4142,6 +4602,14 @@
               },
               "typeAlias": {
                 "value": "Door"
+              },
+              "stereotype": {
+                "allowedStereotypes": [
+                  {
+                    "type": "DOOR",
+                    "namespace": "SUBTYPES"
+                  }
+                ]
               }
             },
             "fields": []
@@ -4312,6 +4780,14 @@
               },
               "typeAlias": {
                 "value": "Door"
+              },
+              "stereotype": {
+                "allowedStereotypes": [
+                  {
+                    "type": "DOOR",
+                    "namespace": "SUBTYPES"
+                  }
+                ]
               }
             },
             "fields": []
@@ -4349,6 +4825,14 @@
               },
               "typeAlias": {
                 "value": "Square"
+              },
+              "stereotype": {
+                "allowedStereotypes": [
+                  {
+                    "type": "SQUARE",
+                    "namespace": "SUBTYPES"
+                  }
+                ]
               }
             },
             "fields": [
@@ -4481,6 +4965,14 @@
               },
               "typeAlias": {
                 "value": "Ricin"
+              },
+              "stereotype": {
+                "allowedStereotypes": [
+                  {
+                    "type": "RICIN",
+                    "namespace": "HEISENBERG"
+                  }
+                ]
               }
             },
             "fields": [
@@ -4531,7 +5023,9 @@
                       "isInstantiable": true,
                       "isAbstract": false,
                       "isFinal": false,
-                      "implementedInterfaces": [],
+                      "implementedInterfaces": [
+                        "java.io.Serializable"
+                      ],
                       "parent": "",
                       "genericTypes": [],
                       "isMap": false
@@ -4542,6 +5036,14 @@
                     },
                     "typeAlias": {
                       "value": "door"
+                    },
+                    "stereotype": {
+                      "allowedStereotypes": [
+                        {
+                          "type": "KNOCKEABLE_DOOR",
+                          "namespace": "HEISENBERG"
+                        }
+                      ]
                     }
                   },
                   "fields": [
@@ -4624,6 +5126,14 @@
               "extensibleType": {},
               "typeAlias": {
                 "value": "Weapon"
+              },
+              "stereotype": {
+                "allowedStereotypes": [
+                  {
+                    "type": "WEAPON",
+                    "namespace": "HEISENBERG"
+                  }
+                ]
               }
             },
             "fields": []
@@ -4966,6 +5476,14 @@
                 "extensibleType": {},
                 "typeAlias": {
                   "value": "Weapon"
+                },
+                "stereotype": {
+                  "allowedStereotypes": [
+                    {
+                      "type": "WEAPON",
+                      "namespace": "HEISENBERG"
+                    }
+                  ]
                 }
               },
               "fields": []
@@ -5020,6 +5538,14 @@
                 "extensibleType": {},
                 "typeAlias": {
                   "value": "Weapon"
+                },
+                "stereotype": {
+                  "allowedStereotypes": [
+                    {
+                      "type": "WEAPON",
+                      "namespace": "HEISENBERG"
+                    }
+                  ]
                 }
               },
               "fields": []
@@ -5057,6 +5583,18 @@
         },
         "typeAlias": {
           "value": "triangleAlias"
+        },
+        "stereotype": {
+          "allowedStereotypes": [
+            {
+              "type": "TRIANGLE",
+              "namespace": "SUBTYPES",
+              "parent": {
+                "type": "PARENT_SHAPE",
+                "namespace": "SUBTYPES"
+              }
+            }
+          ]
         }
       },
       "fields": [

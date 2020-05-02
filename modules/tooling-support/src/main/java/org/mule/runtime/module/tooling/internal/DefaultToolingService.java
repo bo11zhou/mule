@@ -6,7 +6,9 @@
  */
 package org.mule.runtime.module.tooling.internal;
 
+import static java.lang.Boolean.valueOf;
 import static java.lang.String.format;
+import static java.lang.System.getProperty;
 import static java.util.Collections.emptyList;
 import static java.util.Collections.singletonList;
 import static java.util.Optional.empty;
@@ -14,7 +16,9 @@ import static java.util.Optional.of;
 import static org.apache.commons.io.FileUtils.deleteQuietly;
 import static org.mule.runtime.api.i18n.I18nMessageFactory.createStaticMessage;
 import static org.mule.runtime.config.internal.LazyMuleArtifactContext.SHARED_PARTITIONED_PERSISTENT_OBJECT_STORE_PATH;
+import static org.mule.runtime.container.api.MuleFoldersUtil.getAppDataFolder;
 import static org.mule.runtime.container.api.MuleFoldersUtil.getExecutionFolder;
+import static org.mule.runtime.core.api.config.MuleDeploymentProperties.MULE_FORCE_TOOLING_APP_LOGS_DEPLOYMENT_PROPERTY;
 import static org.mule.runtime.core.api.config.MuleDeploymentProperties.MULE_MUTE_APP_LOGS_DEPLOYMENT_PROPERTY;
 import static org.mule.runtime.core.api.util.FileUtils.cleanDirectory;
 import static org.mule.runtime.module.deployment.impl.internal.maven.AbstractMavenClassLoaderModelLoader.CLASSLOADER_MODEL_MAVEN_REACTOR_RESOLVER;
@@ -36,6 +40,7 @@ import org.mule.runtime.module.deployment.impl.internal.application.DefaultAppli
 import org.mule.runtime.module.deployment.impl.internal.application.ToolingApplicationDescriptorFactory;
 import org.mule.runtime.module.deployment.impl.internal.artifact.DeployableArtifactWrapper;
 import org.mule.runtime.module.deployment.impl.internal.domain.DefaultDomainFactory;
+import org.mule.runtime.module.deployment.impl.internal.domain.DomainNotFoundException;
 import org.mule.runtime.module.deployment.impl.internal.domain.DomainRepository;
 import org.mule.runtime.module.tooling.api.ToolingService;
 import org.mule.runtime.module.tooling.api.connectivity.ConnectivityTestingServiceBuilder;
@@ -136,9 +141,11 @@ public class DefaultToolingService implements ToolingService {
         applicationDescriptorFactory.createArtifactModelBuilder(toolingApplicationContent);
     String domainName = mergedDeploymentProperties.get().getProperty(DEPLOYMENT_DOMAIN_NAME_REF);
     if (domainName != null) {
-      Domain domain = domainRepository.getDomain(domainName);
-      if (domain == null) {
-        throw new IllegalArgumentException(format("Domain '%s' is expected to be deployed", domainName));
+      Domain domain;
+      try {
+        domain = domainRepository.getDomain(domainName);
+      } catch (DomainNotFoundException e) {
+        throw new IllegalArgumentException(format("Domain '%s' is expected to be deployed", domainName), e);
       }
 
       MuleArtifactLoaderDescriptor classLoaderModelDescriptorLoader =
@@ -205,9 +212,14 @@ public class DefaultToolingService implements ToolingService {
    */
   @Override
   public Domain createDomain(File domainLocation) throws IOException {
+    return createDomain(domainLocation, empty());
+  }
+
+  @Override
+  public Domain createDomain(File domainLocation, Optional<Properties> deploymentProperties) throws IOException {
     File toolingDomainContent = artifactFileWriter.writeContent(getUniqueIdString(DOMAIN), domainLocation);
     try {
-      return doCreateDomain(toolingDomainContent);
+      return doCreateDomain(toolingDomainContent, deploymentProperties);
     } catch (Throwable t) {
       deleteQuietly(toolingDomainContent);
       throw t;
@@ -219,26 +231,27 @@ public class DefaultToolingService implements ToolingService {
    */
   @Override
   public Domain createDomain(byte[] domainContent) throws IOException {
+    return createDomain(domainContent, empty());
+  }
+
+  @Override
+  public Domain createDomain(byte[] domainContent, Optional<Properties> deploymentProperties) throws IOException {
     File toolingDomainContent = artifactFileWriter.writeContent(getUniqueIdString(DOMAIN), domainContent);
     try {
-      return doCreateDomain(toolingDomainContent);
+      return doCreateDomain(toolingDomainContent, deploymentProperties);
     } catch (Throwable t) {
       deleteQuietly(toolingDomainContent);
       throw t;
     }
   }
 
-  private Domain doCreateDomain(File toolingDomainContent) throws IOException {
-    Domain domain = domainFactory.createArtifact(toolingDomainContent, of(createDeploymentProperties()));
+  private Domain doCreateDomain(File toolingDomainContent, Optional<Properties> deploymentProperties) throws IOException {
+    Optional<Properties> mergedDeploymentProperties = of(createDeploymentProperties(deploymentProperties));
+    Domain domain = domainFactory.createArtifact(toolingDomainContent, mergedDeploymentProperties);
     domain.install();
     domain.lazyInit();
     domain.start();
     return new ToolingDomainWrapper(domain);
-  }
-
-  private Properties createDeploymentProperties() {
-    final Properties properties = new Properties();
-    return createDeploymentProperties(of(properties));
   }
 
   private Properties createDeploymentProperties(Optional<Properties> deploymentProperties) {
@@ -249,7 +262,9 @@ public class DefaultToolingService implements ToolingService {
     } else {
       properties = new Properties();
     }
-    properties.setProperty(MULE_MUTE_APP_LOGS_DEPLOYMENT_PROPERTY, "true");
+    // System Property for user allow to force enable logs, but internal property is meant to disable logs if it is true
+    properties.setProperty(MULE_MUTE_APP_LOGS_DEPLOYMENT_PROPERTY,
+                           String.valueOf(!valueOf(getProperty(MULE_FORCE_TOOLING_APP_LOGS_DEPLOYMENT_PROPERTY, "false"))));
     properties.setProperty(SHARED_PARTITIONED_PERSISTENT_OBJECT_STORE_PATH, getToolingWorkingDir().getAbsolutePath());
     return properties;
   }
@@ -334,6 +349,7 @@ public class DefaultToolingService implements ToolingService {
         logger.warn(format("Error while disposing application: {} ", this.getArtifactName()), t);
       }
       deleteQuietly(appLocation);
+      deleteQuietly(getAppDataFolder(getArtifactName()));
     }
 
   }
@@ -358,6 +374,7 @@ public class DefaultToolingService implements ToolingService {
         logger.warn(format("Error while disposing domain: {} ", super.getArtifactName()), t);
       }
       deleteQuietly(domainLocation);
+      deleteQuietly(getAppDataFolder(getArtifactName()));
     }
 
   }

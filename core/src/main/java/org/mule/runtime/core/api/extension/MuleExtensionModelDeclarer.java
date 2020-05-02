@@ -6,6 +6,7 @@
  */
 package org.mule.runtime.core.api.extension;
 
+import static java.util.Arrays.asList;
 import static java.util.Collections.singletonList;
 import static org.mule.metadata.api.model.MetadataFormat.JAVA;
 import static org.mule.runtime.api.meta.Category.COMMUNITY;
@@ -60,6 +61,7 @@ import static org.mule.runtime.extension.api.stereotype.MuleStereotypes.FLOW;
 import static org.mule.runtime.extension.api.stereotype.MuleStereotypes.OBJECT_STORE;
 import static org.mule.runtime.extension.api.stereotype.MuleStereotypes.ON_ERROR;
 import static org.mule.runtime.extension.api.stereotype.MuleStereotypes.PROCESSOR;
+import static org.mule.runtime.extension.api.stereotype.MuleStereotypes.SUB_FLOW;
 import static org.mule.runtime.extension.internal.loader.util.InfrastructureParameterBuilder.addReconnectionStrategyParameter;
 import static org.mule.runtime.internal.dsl.DslConstants.CORE_NAMESPACE;
 import static org.mule.runtime.internal.dsl.DslConstants.CORE_PREFIX;
@@ -89,9 +91,12 @@ import org.mule.runtime.core.api.source.scheduler.Scheduler;
 import org.mule.runtime.core.internal.extension.CustomBuildingDefinitionProviderModelProperty;
 import org.mule.runtime.extension.api.declaration.type.DynamicConfigExpirationTypeBuilder;
 import org.mule.runtime.extension.api.declaration.type.ExtensionsTypeLoaderFactory;
+import org.mule.runtime.extension.api.model.deprecated.ImmutableDeprecationModel;
+import org.mule.runtime.extension.api.property.SinceMuleVersionModelProperty;
 import org.mule.runtime.extension.api.stereotype.MuleStereotypes;
 import org.mule.runtime.extension.internal.property.TargetModelProperty;
 
+import com.google.common.collect.ImmutableSet;
 import com.google.gson.reflect.TypeToken;
 
 /**
@@ -131,13 +136,14 @@ class MuleExtensionModelDeclarer {
     declareExportedTypes(typeLoader, extensionDeclarer);
 
     // constructs
+    declareObject(extensionDeclarer, typeLoader);
     declareFlow(extensionDeclarer, typeLoader);
-    declareSubflow(extensionDeclarer);
+    declareSubflow(extensionDeclarer, typeLoader);
     declareChoice(extensionDeclarer, typeLoader);
     declareErrorHandler(extensionDeclarer, typeLoader);
     declareTry(extensionDeclarer, typeLoader);
     declareScatterGather(extensionDeclarer, typeLoader);
-    declareSplitAggregate(extensionDeclarer, typeLoader);
+    declareParallelForEach(extensionDeclarer, typeLoader);
     declareFirstSuccessful(extensionDeclarer);
     declareRoundRobin(extensionDeclarer);
     declareConfiguration(extensionDeclarer, typeLoader);
@@ -163,6 +169,36 @@ class MuleExtensionModelDeclarer {
     declareErrors(extensionDeclarer);
 
     return extensionDeclarer;
+  }
+
+  private void declareObject(ExtensionDeclarer extensionDeclarer, ClassTypeLoader typeLoader) {
+    ConstructDeclarer object = extensionDeclarer.withConstruct("object")
+        .allowingTopLevelDefinition()
+        .describedAs("Element to declare a java object. Objects declared globally can be referenced from other parts of the " +
+            "configuration or recovered programmatically through org.mule.runtime.api.artifact.Registry.")
+        .withDeprecation(new ImmutableDeprecationModel("Only meant to be used for backwards compatibility.", "4.0", "5.0"));
+
+    object.onDefaultParameterGroup()
+        .withOptionalParameter("name")
+        .ofType(typeLoader.load(String.class))
+        .withExpressionSupport(NOT_SUPPORTED)
+        .describedAs("Name to use to reference this object.");
+
+    object.onDefaultParameterGroup()
+        .withOptionalParameter("ref")
+        .ofType(typeLoader.load(String.class))
+        .withExpressionSupport(NOT_SUPPORTED)
+        .describedAs("@Deprecated since 4.0. Only meant to be used for backwards compatibility. " +
+            "Reference to another object defined in the mule configuration or any other provider of objects.");
+
+    object.onDefaultParameterGroup()
+        .withOptionalParameter("class")
+        .ofType(typeLoader.load(String.class))
+        .withExpressionSupport(NOT_SUPPORTED)
+        .describedAs("Creates an instance of the class provided as argument.");
+
+    object.onDefaultParameterGroup()
+        .withExclusiveOptionals(ImmutableSet.of("ref", "class"), true);
   }
 
   private void declareExportedTypes(ClassTypeLoader typeLoader, ExtensionDeclarer extensionDeclarer) {
@@ -269,7 +305,7 @@ class MuleExtensionModelDeclarer {
     flowRef.onDefaultParameterGroup()
         .withRequiredParameter("name")
         .ofType(typeLoader.load(String.class))
-        .withAllowedStereotypes(singletonList(FLOW))
+        .withAllowedStereotypes(asList(FLOW, SUB_FLOW))
         .withExpressionSupport(NOT_SUPPORTED)
         .describedAs("The name of the flow to call");
   }
@@ -482,14 +518,14 @@ class MuleExtensionModelDeclarer {
         .withOptionalParameter("maxRetries")
         .ofType(typeLoader.load(Integer.class))
         .defaultingTo(5)
-        .withExpressionSupport(NOT_SUPPORTED)
+        .withExpressionSupport(SUPPORTED)
         .describedAs("Specifies the maximum number of processing retries that will be performed.");
 
     untilSuccessful.onDefaultParameterGroup()
         .withOptionalParameter("millisBetweenRetries")
         .ofType(typeLoader.load(Integer.class))
         .defaultingTo(60000)
-        .withExpressionSupport(NOT_SUPPORTED)
+        .withExpressionSupport(SUPPORTED)
         .describedAs("Specifies the minimum time interval between two process retries in milliseconds.\n" +
             " The actual time interval depends on the previous execution but should not exceed twice this number.\n" +
             " Default value is 60000 (one minute)");
@@ -517,6 +553,10 @@ class MuleExtensionModelDeclarer {
         .allowingTopLevelDefinition()
         .withStereotype(FLOW);
 
+    flow.onDefaultParameterGroup()
+        .withRequiredParameter("name")
+        .asComponentId()
+        .ofType(typeLoader.load(String.class));
     flow.onDefaultParameterGroup().withOptionalParameter("initialState").defaultingTo("started")
         .ofType(BaseTypeBuilder.create(JAVA).stringType().enumOf("started", "stopped").build());
     flow.onDefaultParameterGroup().withOptionalParameter("maxConcurrency")
@@ -531,11 +571,16 @@ class MuleExtensionModelDeclarer {
 
   }
 
-  private void declareSubflow(ExtensionDeclarer extensionDeclarer) {
-    ConstructDeclarer flow = extensionDeclarer.withConstruct("subFlow")
-        .allowingTopLevelDefinition();
+  private void declareSubflow(ExtensionDeclarer extensionDeclarer, ClassTypeLoader typeLoader) {
+    ConstructDeclarer subFlow = extensionDeclarer.withConstruct("subFlow")
+        .allowingTopLevelDefinition()
+        .withStereotype(SUB_FLOW);
 
-    flow.withChain().setRequired(true).withAllowedStereotypes(PROCESSOR);
+    subFlow.onDefaultParameterGroup()
+        .withRequiredParameter("name")
+        .asComponentId()
+        .ofType(typeLoader.load(String.class));
+    subFlow.withChain().setRequired(true).withAllowedStereotypes(PROCESSOR);
   }
 
   private void declareFirstSuccessful(ExtensionDeclarer extensionDeclarer) {
@@ -593,40 +638,42 @@ class MuleExtensionModelDeclarer {
     // ConstructModel doesn't support it.)
   }
 
-  private void declareSplitAggregate(ExtensionDeclarer extensionDeclarer, ClassTypeLoader typeLoader) {
-    ConstructDeclarer splitAggregate = extensionDeclarer.withConstruct("splitAggregate")
+  private void declareParallelForEach(ExtensionDeclarer extensionDeclarer, ClassTypeLoader typeLoader) {
+    ConstructDeclarer parallelForeach = extensionDeclarer.withConstruct("parallelForeach")
         .describedAs("Splits the same message and processes each part in parallel.")
-        .withErrorModel(compositeRoutingError);
+        .withErrorModel(compositeRoutingError).withModelProperty(new SinceMuleVersionModelProperty("4.2.0"));
 
-    splitAggregate.withChain();
+    parallelForeach.withChain();
 
-    splitAggregate.onDefaultParameterGroup()
+    parallelForeach.onDefaultParameterGroup()
         .withOptionalParameter("collection")
-        .ofType(typeLoader.load(String.class))
-        // TODO MULE-14734 Review collection parameter in splitAggregate
-        .withRole(ParameterRole.BEHAVIOUR)
+        .ofType(typeLoader.load(new TypeToken<Iterable<Object>>() {
+
+        }.getType()))
+        .withRole(BEHAVIOUR)
         .withExpressionSupport(REQUIRED)
+        .defaultingTo("#[payload]")
         .describedAs("Expression that defines the collection of parts to be processed in parallel.");
-    splitAggregate.onDefaultParameterGroup()
+    parallelForeach.onDefaultParameterGroup()
         .withOptionalParameter("timeout")
         .ofType(typeLoader.load(Long.class))
         .defaultingTo(Long.MAX_VALUE)
         .withExpressionSupport(NOT_SUPPORTED)
         .describedAs("Sets a timeout in milliseconds for each route. Values lower or equals than zero means no timeout.");
-    splitAggregate.onDefaultParameterGroup()
+    parallelForeach.onDefaultParameterGroup()
         .withOptionalParameter("maxConcurrency")
         .ofType(typeLoader.load(Integer.class))
         .defaultingTo(Integer.MAX_VALUE)
         .withExpressionSupport(NOT_SUPPORTED)
         .describedAs("This value determines the maximum level of parallelism that will be used by this router.");
-    splitAggregate.onDefaultParameterGroup()
+    parallelForeach.onDefaultParameterGroup()
         .withOptionalParameter(TARGET_PARAMETER_NAME)
         .ofType(typeLoader.load(String.class))
         .withExpressionSupport(NOT_SUPPORTED)
         .describedAs(TARGET_PARAMETER_DESCRIPTION)
         .withLayout(LayoutModel.builder().tabName(ADVANCED_TAB).build());
 
-    splitAggregate.onDefaultParameterGroup()
+    parallelForeach.onDefaultParameterGroup()
         .withOptionalParameter(TARGET_VALUE_PARAMETER_NAME)
         .ofType(typeLoader.load(String.class))
         .defaultingTo(PAYLOAD)
@@ -671,6 +718,11 @@ class MuleExtensionModelDeclarer {
         .allowingTopLevelDefinition()
         .describedAs("Allows the definition of internal selective handlers. It will route the error to the first handler that matches it."
             + " If there's no match, then a default error handler will be executed.");
+
+    errorHandler.onDefaultParameterGroup()
+        .withRequiredParameter("name")
+        .asComponentId()
+        .ofType(typeLoader.load(String.class));
 
     errorHandler.onDefaultParameterGroup()
         .withOptionalParameter("ref")
@@ -812,7 +864,20 @@ class MuleExtensionModelDeclarer {
         .ofType(typeLoader.load(String.class))
         .withExpressionSupport(NOT_SUPPORTED)
         .withAllowedStereotypes(singletonList(ERROR_HANDLER))
-        .describedAs("The default error handler for every flow. This must be a reference to a global error handler.");
+        .describedAs("The default error handler for every flow. This must be a reference to a global error handler.")
+        .withDsl(ParameterDslConfiguration.builder()
+            .allowsReferences(true)
+            .allowsInlineDefinition(false)
+            .allowTopLevelDefinition(false)
+            .build());
+
+    configuration.onDefaultParameterGroup()
+        .withOptionalParameter("inheritIterableRepeatability")
+        .ofType(typeLoader.load(boolean.class))
+        .defaultingTo(false)
+        .withExpressionSupport(NOT_SUPPORTED)
+        .describedAs("Whether streamed iterable objects should follow the repeatability strategy of the iterable or use the default one.")
+        .withModelProperty(new SinceMuleVersionModelProperty("4.3.0"));
 
     configuration.onDefaultParameterGroup()
         .withOptionalParameter("shutdownTimeout")
@@ -841,7 +906,12 @@ class MuleExtensionModelDeclarer {
         .withOptionalParameter("defaultObjectSerializer-ref")
         .ofType(typeLoader.load(String.class))
         .withExpressionSupport(NOT_SUPPORTED)
-        .describedAs("An optional reference to an ObjectSerializer to be used as the application's default");
+        .describedAs("An optional reference to an ObjectSerializer to be used as the application's default")
+        .withDsl(ParameterDslConfiguration.builder()
+            .allowsReferences(true)
+            .allowsInlineDefinition(false)
+            .allowTopLevelDefinition(false)
+            .build());
 
     configuration.onDefaultParameterGroup()
         .withOptionalParameter("dynamicConfigExpiration")

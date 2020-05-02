@@ -10,16 +10,17 @@ import static java.lang.String.format;
 import static java.util.Arrays.asList;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.core.Is.is;
-import org.junit.Test;
-import org.junit.runners.Parameterized;
 
 import org.mule.runtime.core.api.event.CoreEvent;
 import org.mule.test.runner.RunnerDelegateTo;
 
 import java.util.Collection;
 
+import org.junit.Test;
+import org.junit.runners.Parameterized;
+
 @RunnerDelegateTo(Parameterized.class)
-public class ModuleCallingOperationsWithinModuleTestCase extends AbstractXmlExtensionMuleArtifactFunctionalTestCase {
+public class ModuleCallingOperationsWithinModuleTestCase extends AbstractCeXmlExtensionMuleArtifactFunctionalTestCase {
 
   private static final String HARDCODED_VALUE = "hardcoded value";
   private static final String SIMPLE_VARIABLE_VALUE = "some food for this operation";
@@ -76,6 +77,12 @@ public class ModuleCallingOperationsWithinModuleTestCase extends AbstractXmlExte
   @Test
   public void testSetPayloadThruInternalSetPayloadHardcodedValue() throws Exception {
     CoreEvent event = runFlowWithDefaultVariable("testSetPayloadThruInternalSetPayloadHardcodedValue");
+    assertThat(event.getMessage().getPayload().getValue(), is(HARDCODED_VALUE));
+  }
+
+  @Test
+  public void testSetPayloadThruPublicTnsOperation() throws Exception {
+    CoreEvent event = runFlowWithDefaultVariable("testSetPayloadThruSetPayloadThruInternalSetPayloadHardcodedValue");
     assertThat(event.getMessage().getPayload().getValue(), is(HARDCODED_VALUE));
   }
 

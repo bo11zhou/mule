@@ -25,9 +25,11 @@ import org.mule.runtime.core.internal.interception.DefaultInterceptionEvent;
 import org.mule.runtime.core.internal.message.InternalEvent;
 import org.mule.runtime.core.privileged.exception.ErrorTypeLocator;
 
+import java.util.concurrent.CompletableFuture;
+
 import org.slf4j.Logger;
 
-import java.util.concurrent.CompletableFuture;
+import reactor.util.context.Context;
 
 /**
  * Implementation of {@link InterceptionAction} that does the needed hooks with {@code Reactor} into the pipeline.
@@ -38,16 +40,18 @@ class ReactiveInterceptionAction implements InterceptionAction {
 
   private static final Logger LOGGER = getLogger(ReactiveInterceptionAction.class);
 
-  private ErrorTypeLocator errorTypeLocator;
+  private final ErrorTypeLocator errorTypeLocator;
 
-  private Processor processor;
-  private ReactiveProcessor next;
-  private DefaultInterceptionEvent interceptionEvent;
+  private final Processor processor;
+  private final ReactiveProcessor next;
+  private final Context ctx;
+  private final DefaultInterceptionEvent interceptionEvent;
 
   public ReactiveInterceptionAction(DefaultInterceptionEvent interceptionEvent,
-                                    ReactiveProcessor next, Processor processor, ErrorTypeLocator errorTypeLocator) {
+                                    ReactiveProcessor next, Context ctx, Processor processor, ErrorTypeLocator errorTypeLocator) {
     this.interceptionEvent = interceptionEvent;
     this.next = next;
+    this.ctx = ctx;
     this.processor = processor;
     this.errorTypeLocator = errorTypeLocator;
   }
@@ -62,11 +66,9 @@ class ReactiveInterceptionAction implements InterceptionAction {
         .cast(CoreEvent.class)
         .transform(next)
         .cast(InternalEvent.class)
-        .map(event -> {
-          interceptionEvent.reset(event);
-          return interceptionEvent;
-        })
+        .map(interceptionEvent::reset)
         .cast(InterceptionEvent.class)
+        .subscriberContext(ctx)
         .toFuture();
   }
 
@@ -96,18 +98,29 @@ class ReactiveInterceptionAction implements InterceptionAction {
     return completableFuture;
   }
 
+  private CompletableFuture<InterceptionEvent> failWithMessage(ErrorType errorType, String msg) {
+    Throwable cause = new InterceptionException(msg);
+    interceptionEvent.setError(errorType, cause);
+    CompletableFuture<InterceptionEvent> completableFuture = new CompletableFuture<>();
+    completableFuture.completeExceptionally(new MessagingException(interceptionEvent.resolve(), cause, (Component) processor));
+    return completableFuture;
+  }
+
   @Override
   public CompletableFuture<InterceptionEvent> fail(ErrorType errorType) {
     if (LOGGER.isDebugEnabled()) {
       LOGGER.debug("Called fail() for processor {} with errorType {}", ((Component) processor).getLocation().getLocation(),
                    errorType.getIdentifier());
     }
+    return failWithMessage(errorType, "");
+  }
 
-    Throwable cause = new InterceptionException("");
-    interceptionEvent.setError(errorType, cause);
-    CompletableFuture<InterceptionEvent> completableFuture = new CompletableFuture<>();
-    completableFuture
-        .completeExceptionally(new MessagingException(interceptionEvent.resolve(), cause, (Component) processor));
-    return completableFuture;
+  @Override
+  public CompletableFuture<InterceptionEvent> fail(ErrorType errorType, String msg) {
+    if (LOGGER.isDebugEnabled()) {
+      LOGGER.debug("Called fail() for processor {} with errorType {} and message {}",
+                   ((Component) processor).getLocation().getLocation(), errorType.getIdentifier(), msg);
+    }
+    return failWithMessage(errorType, msg);
   }
 }

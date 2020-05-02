@@ -1,7 +1,209 @@
 {
+  "4.3.0": {
+    "revapi": {
+      "ignore": [
+       {
+         "code": "java.field.constantValueChanged",
+         "old": "field org.mule.runtime.api.exception.MuleException.INFO_SOURCE_XML_KEY @ org.mule.runtime.oauth.api.exception.RequestAuthenticationException",
+         "new": "field org.mule.runtime.api.exception.MuleException.INFO_SOURCE_XML_KEY @ org.mule.runtime.oauth.api.exception.RequestAuthenticationException",
+         "oldValue": "Element XML",
+         "newValue": "Element DSL",
+         "package": "org.mule.runtime.oauth.api.exception",
+         "classSimpleName": "RequestAuthenticationException",
+         "fieldName": "INFO_SOURCE_XML_KEY",
+         "elementKind": "field",
+         "justification": "Make the message more generic"
+       },
+       {
+         "code": "java.field.constantValueChanged",
+         "old": "field org.mule.runtime.api.exception.MuleException.INFO_SOURCE_XML_KEY @ org.mule.runtime.oauth.api.exception.TokenNotFoundException",
+         "new": "field org.mule.runtime.api.exception.MuleException.INFO_SOURCE_XML_KEY @ org.mule.runtime.oauth.api.exception.TokenNotFoundException",
+         "oldValue": "Element XML",
+         "newValue": "Element DSL",
+         "package": "org.mule.runtime.oauth.api.exception",
+         "classSimpleName": "TokenNotFoundException",
+         "fieldName": "INFO_SOURCE_XML_KEY",
+         "elementKind": "field",
+         "justification": "Make the message more generic"
+       },
+       {
+         "code": "java.field.constantValueChanged",
+         "old": "field org.mule.runtime.api.exception.MuleException.INFO_SOURCE_XML_KEY @ org.mule.runtime.oauth.api.exception.TokenUrlResponseException",
+         "new": "field org.mule.runtime.api.exception.MuleException.INFO_SOURCE_XML_KEY @ org.mule.runtime.oauth.api.exception.TokenUrlResponseException",
+         "oldValue": "Element XML",
+         "newValue": "Element DSL",
+         "package": "org.mule.runtime.oauth.api.exception",
+         "classSimpleName": "TokenUrlResponseException",
+         "fieldName": "INFO_SOURCE_XML_KEY",
+         "elementKind": "field",
+         "justification": "Make the message more generic"
+        },
+        {
+          "code": "java.method.addedToInterface",
+          "new": "method void org.mule.runtime.oauth.api.AuthorizationCodeOAuthDancer::addListener(org.mule.runtime.oauth.api.builder.AuthorizationCodeListener)",
+          "package": "org.mule.runtime.oauth.api",
+          "classSimpleName": "AuthorizationCodeOAuthDancer",
+          "methodName": "addListener",
+          "elementKind": "method",
+          "justification": "New feature fixes bug"
+        },
+        {
+          "code": "java.method.addedToInterface",
+          "new": "method void org.mule.runtime.oauth.api.AuthorizationCodeOAuthDancer::removeListener(org.mule.runtime.oauth.api.builder.AuthorizationCodeListener)",
+          "package": "org.mule.runtime.oauth.api",
+          "classSimpleName": "AuthorizationCodeOAuthDancer",
+          "methodName": "removeListener",
+          "elementKind": "method",
+          "justification": "New feature fixes bug"
+        },
+        {
+          "code": "java.method.addedToInterface",
+          "new": "method org.mule.runtime.oauth.api.builder.OAuthAuthorizationCodeDancerBuilder org.mule.runtime.oauth.api.builder.OAuthAuthorizationCodeDancerBuilder::addListener(org.mule.runtime.oauth.api.builder.AuthorizationCodeListener)",
+          "package": "org.mule.runtime.oauth.api.builder",
+          "classSimpleName": "OAuthAuthorizationCodeDancerBuilder",
+          "methodName": "addListener",
+          "elementKind": "method",
+          "justification": "New feature fixes bug"
+        },
+        {
+          "code": "java.annotation.added",
+          "old": "interface org.mule.runtime.oauth.api.AuthorizationCodeOAuthDancer",
+          "new": "interface org.mule.runtime.oauth.api.AuthorizationCodeOAuthDancer",
+          "annotationType": "org.mule.api.annotation.NoImplement",
+          "annotation": "@org.mule.api.annotation.NoImplement",
+          "package": "org.mule.runtime.oauth.api",
+          "classSimpleName": "AuthorizationCodeOAuthDancer",
+          "elementKind": "interface",
+          "justification": "Annotation was missing"
+        },
+        {
+          "code": "java.annotation.added",
+          "old": "interface org.mule.runtime.oauth.api.ClientCredentialsOAuthDancer",
+          "new": "interface org.mule.runtime.oauth.api.ClientCredentialsOAuthDancer",
+          "annotationType": "org.mule.api.annotation.NoImplement",
+          "annotation": "@org.mule.api.annotation.NoImplement",
+          "package": "org.mule.runtime.oauth.api",
+          "classSimpleName": "ClientCredentialsOAuthDancer",
+          "elementKind": "interface",
+          "justification": "Annotation was missing"
+        },
+        {
+          "code": "java.annotation.added",
+          "old": "interface org.mule.runtime.oauth.api.builder.OAuthAuthorizationCodeDancerBuilder",
+          "new": "interface org.mule.runtime.oauth.api.builder.OAuthAuthorizationCodeDancerBuilder",
+          "annotationType": "org.mule.api.annotation.NoImplement",
+          "annotation": "@org.mule.api.annotation.NoImplement",
+          "package": "org.mule.runtime.oauth.api.builder",
+          "classSimpleName": "OAuthAuthorizationCodeDancerBuilder",
+          "elementKind": "interface",
+          "justification": "Annotation was missing"
+        },
+        {
+          "code": "java.annotation.added",
+          "old": "interface org.mule.runtime.oauth.api.builder.OAuthClientCredentialsDancerBuilder",
+          "new": "interface org.mule.runtime.oauth.api.builder.OAuthClientCredentialsDancerBuilder",
+          "annotationType": "org.mule.api.annotation.NoImplement",
+          "annotation": "@org.mule.api.annotation.NoImplement",
+          "package": "org.mule.runtime.oauth.api.builder",
+          "classSimpleName": "OAuthClientCredentialsDancerBuilder",
+          "elementKind": "interface",
+          "justification": "Annotation was missing"
+        },
+        {
+          "code": "java.annotation.added",
+          "old": "interface org.mule.runtime.oauth.api.state.ResourceOwnerOAuthContext",
+          "new": "interface org.mule.runtime.oauth.api.state.ResourceOwnerOAuthContext",
+          "annotationType": "org.mule.api.annotation.NoImplement",
+          "annotation": "@org.mule.api.annotation.NoImplement",
+          "package": "org.mule.runtime.oauth.api.state",
+          "classSimpleName": "ResourceOwnerOAuthContext",
+          "elementKind": "interface",
+          "justification": "Annotation was missing"
+        },
+        {
+          "code": "java.method.parameterTypeChanged",
+          "old": "parameter void org.mule.runtime.oauth.api.AuthorizationCodeOAuthDancer::addListener(===org.mule.runtime.oauth.api.builder.AuthorizationCodeListener===)",
+          "new": "parameter void org.mule.runtime.oauth.api.AuthorizationCodeOAuthDancer::addListener(===org.mule.runtime.oauth.api.listener.AuthorizationCodeListener===)",
+          "oldType": "org.mule.runtime.oauth.api.builder.AuthorizationCodeListener",
+          "newType": "org.mule.runtime.oauth.api.listener.AuthorizationCodeListener",
+          "package": "org.mule.runtime.oauth.api",
+          "classSimpleName": "AuthorizationCodeOAuthDancer",
+          "methodName": "addListener",
+          "parameterIndex": "0",
+          "elementKind": "parameter",
+          "justification": "This is fair deprecation."
+        },
+        {
+          "code": "java.method.parameterTypeChanged",
+          "old": "parameter void org.mule.runtime.oauth.api.AuthorizationCodeOAuthDancer::removeListener(===org.mule.runtime.oauth.api.builder.AuthorizationCodeListener===)",
+          "new": "parameter void org.mule.runtime.oauth.api.AuthorizationCodeOAuthDancer::removeListener(===org.mule.runtime.oauth.api.listener.AuthorizationCodeListener===)",
+          "oldType": "org.mule.runtime.oauth.api.builder.AuthorizationCodeListener",
+          "newType": "org.mule.runtime.oauth.api.listener.AuthorizationCodeListener",
+          "package": "org.mule.runtime.oauth.api",
+          "classSimpleName": "AuthorizationCodeOAuthDancer",
+          "methodName": "removeListener",
+          "parameterIndex": "0",
+          "elementKind": "parameter",
+          "justification": "This is fair deprecation."
+        },
+        {
+          "code": "java.method.parameterTypeChanged",
+          "old": "parameter void org.mule.runtime.oauth.api.ClientCredentialsOAuthDancer::addListener(===org.mule.runtime.oauth.api.builder.ClientCredentialsListener===)",
+          "new": "parameter void org.mule.runtime.oauth.api.ClientCredentialsOAuthDancer::addListener(===org.mule.runtime.oauth.api.listener.ClientCredentialsListener===)",
+          "oldType": "org.mule.runtime.oauth.api.builder.ClientCredentialsListener",
+          "newType": "org.mule.runtime.oauth.api.listener.ClientCredentialsListener",
+          "package": "org.mule.runtime.oauth.api",
+          "classSimpleName": "ClientCredentialsOAuthDancer",
+          "methodName": "addListener",
+          "parameterIndex": "0",
+          "elementKind": "parameter",
+          "justification": "This is fair deprecation."
+        },
+        {
+          "code": "java.method.parameterTypeChanged",
+          "old": "parameter void org.mule.runtime.oauth.api.ClientCredentialsOAuthDancer::removeListener(===org.mule.runtime.oauth.api.builder.ClientCredentialsListener===)",
+          "new": "parameter void org.mule.runtime.oauth.api.ClientCredentialsOAuthDancer::removeListener(===org.mule.runtime.oauth.api.listener.ClientCredentialsListener===)",
+          "oldType": "org.mule.runtime.oauth.api.builder.ClientCredentialsListener",
+          "newType": "org.mule.runtime.oauth.api.listener.ClientCredentialsListener",
+          "package": "org.mule.runtime.oauth.api",
+          "classSimpleName": "ClientCredentialsOAuthDancer",
+          "methodName": "removeListener",
+          "parameterIndex": "0",
+          "elementKind": "parameter",
+          "justification": "This is fair deprecation."
+        },
+        {
+          "code": "java.method.parameterTypeChanged",
+          "old": "parameter org.mule.runtime.oauth.api.builder.OAuthAuthorizationCodeDancerBuilder org.mule.runtime.oauth.api.builder.OAuthAuthorizationCodeDancerBuilder::addListener(===org.mule.runtime.oauth.api.builder.AuthorizationCodeListener===)",
+          "new": "parameter org.mule.runtime.oauth.api.builder.OAuthAuthorizationCodeDancerBuilder org.mule.runtime.oauth.api.builder.OAuthAuthorizationCodeDancerBuilder::addListener(===org.mule.runtime.oauth.api.listener.AuthorizationCodeListener===)",
+          "oldType": "org.mule.runtime.oauth.api.builder.AuthorizationCodeListener",
+          "newType": "org.mule.runtime.oauth.api.listener.AuthorizationCodeListener",
+          "package": "org.mule.runtime.oauth.api.builder",
+          "classSimpleName": "OAuthAuthorizationCodeDancerBuilder",
+          "methodName": "addListener",
+          "parameterIndex": "0",
+          "elementKind": "parameter",
+          "justification": "This is fair deprecation."
+        },
+        {
+          "code": "java.method.parameterTypeChanged",
+          "old": "parameter org.mule.runtime.oauth.api.builder.OAuthClientCredentialsDancerBuilder org.mule.runtime.oauth.api.builder.OAuthClientCredentialsDancerBuilder::addListener(===org.mule.runtime.oauth.api.builder.ClientCredentialsListener===)",
+          "new": "parameter org.mule.runtime.oauth.api.builder.OAuthClientCredentialsDancerBuilder org.mule.runtime.oauth.api.builder.OAuthClientCredentialsDancerBuilder::addListener(===org.mule.runtime.oauth.api.listener.ClientCredentialsListener===)",
+          "oldType": "org.mule.runtime.oauth.api.builder.ClientCredentialsListener",
+          "newType": "org.mule.runtime.oauth.api.listener.ClientCredentialsListener",
+          "package": "org.mule.runtime.oauth.api.builder",
+          "classSimpleName": "OAuthClientCredentialsDancerBuilder",
+          "methodName": "addListener",
+          "parameterIndex": "0",
+          "elementKind": "parameter",
+          "justification": "This is fair deprecation."
+        }
+      ]
+    }
+  },
   "4.1.4": {
-  	"revapi": {
-  	  "ignore" : [
+    "revapi": {
+      "ignore": [
         {
           "code": "java.method.defaultMethodAddedToInterface",
           "new": "method org.mule.runtime.oauth.api.builder.OAuthAuthorizationCodeDancerBuilder org.mule.runtime.oauth.api.builder.OAuthAuthorizationCodeDancerBuilder::encodeClientCredentialsInBody(boolean)",
@@ -11,8 +213,8 @@
           "elementKind": "method",
           "justification": "Needed to fix an issue in the OAuth module. (MULE-15539)"
         }
-  	  ]
-  	}
+      ]
+    }
   },
   "4.1.1": {
     "revapi": {

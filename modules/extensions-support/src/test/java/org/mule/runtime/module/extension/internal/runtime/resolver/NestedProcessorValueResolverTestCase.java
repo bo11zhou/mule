@@ -11,15 +11,18 @@ import static org.hamcrest.CoreMatchers.not;
 import static org.hamcrest.CoreMatchers.sameInstance;
 import static org.junit.Assert.assertThat;
 import static org.junit.Assert.fail;
-import static org.mockito.Matchers.any;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import org.mule.runtime.api.exception.MuleException;
+import org.mule.runtime.core.api.el.ExpressionManager;
 import org.mule.runtime.core.api.event.CoreEvent;
+import org.mule.runtime.core.internal.message.InternalEvent;
 import org.mule.runtime.core.privileged.processor.chain.MessageProcessorChain;
 import org.mule.runtime.extension.api.runtime.route.Chain;
+import org.mule.runtime.module.extension.internal.runtime.execution.SdkInternalContext;
 import org.mule.tck.junit4.AbstractMuleContextTestCase;
 
 import org.junit.Before;
@@ -27,19 +30,24 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
-import org.mockito.runners.MockitoJUnitRunner;
+import org.mockito.junit.MockitoJUnitRunner;
 import org.reactivestreams.Publisher;
+
 import reactor.core.publisher.Mono;
 
 @RunWith(MockitoJUnitRunner.class)
 public class NestedProcessorValueResolverTestCase extends AbstractMuleContextTestCase {
 
-  @Mock
+  @Mock(lenient = true)
   private MessageProcessorChain messageProcessor;
+
+  @Mock
+  private ExpressionManager expressionManager;
 
   @Before
   public void before() throws Exception {
     final CoreEvent testEvent = testEvent();
+    ((InternalEvent) testEvent).setSdkInternalContext(new SdkInternalContext());
     when(messageProcessor.process(any(CoreEvent.class))).thenReturn(testEvent);
     when(messageProcessor.apply(any(Publisher.class))).thenReturn(Mono.just(testEvent));
   }
@@ -49,7 +57,9 @@ public class NestedProcessorValueResolverTestCase extends AbstractMuleContextTes
     ProcessorChainValueResolver resolver = new ProcessorChainValueResolver(muleContext, messageProcessor);
     final CoreEvent event = testEvent();
 
-    Chain nestedProcessor = resolver.resolve(ValueResolvingContext.from(event));
+    Chain nestedProcessor = resolver.resolve(ValueResolvingContext.builder(event)
+        .withExpressionManager(expressionManager)
+        .build());
     nestedProcessor.process(result -> {
       assertThat(result.getOutput(), is(TEST_PAYLOAD));
 
@@ -68,8 +78,9 @@ public class NestedProcessorValueResolverTestCase extends AbstractMuleContextTes
   @Test
   public void alwaysGivesDifferentInstances() throws Exception {
     ProcessorChainValueResolver resolver = new ProcessorChainValueResolver(muleContext, messageProcessor);
-    Chain resolved1 = resolver.resolve(ValueResolvingContext.from(testEvent()));
-    Chain resolved2 = resolver.resolve(ValueResolvingContext.from(testEvent()));
+    ValueResolvingContext ctx = ValueResolvingContext.builder(testEvent()).withExpressionManager(expressionManager).build();
+    Chain resolved1 = resolver.resolve(ctx);
+    Chain resolved2 = resolver.resolve(ctx);
 
     assertThat(resolved1, is(not(sameInstance(resolved2))));
   }
@@ -78,7 +89,9 @@ public class NestedProcessorValueResolverTestCase extends AbstractMuleContextTes
   public void chainIsCalledAsNonBlocking() throws Exception {
     ProcessorChainValueResolver resolver = new ProcessorChainValueResolver(muleContext, messageProcessor);
 
-    Chain resolve = resolver.resolve(ValueResolvingContext.from(testEvent()));
+    Chain resolve = resolver.resolve(ValueResolvingContext.builder(testEvent())
+        .withExpressionManager(expressionManager)
+        .build());
 
     resolve.process(result -> {
     }, (t, r) -> {

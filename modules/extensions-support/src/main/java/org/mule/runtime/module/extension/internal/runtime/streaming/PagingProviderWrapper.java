@@ -6,14 +6,20 @@
  */
 package org.mule.runtime.module.extension.internal.runtime.streaming;
 
+import static java.lang.Thread.currentThread;
 import static java.util.Optional.empty;
 import static org.apache.commons.collections.CollectionUtils.isEmpty;
+import static org.mule.runtime.core.api.util.ClassUtils.setContextClassLoader;
+import static org.mule.runtime.module.extension.internal.util.MuleExtensionUtils.getClassLoader;
 import static org.slf4j.LoggerFactory.getLogger;
+
 import org.mule.runtime.api.exception.MuleException;
+import org.mule.runtime.api.meta.model.ExtensionModel;
 import org.mule.runtime.extension.api.runtime.streaming.PagingProvider;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.slf4j.Logger;
 
@@ -31,10 +37,12 @@ final class PagingProviderWrapper<C, T> implements PagingProvider<C, T> {
   private static final Logger LOGGER = getLogger(PagingProviderWrapper.class);
 
   private final PagingProvider<C, T> delegate;
-  private boolean closed = false;
+  private final ClassLoader extensionClassLoader;
+  private final AtomicBoolean closed = new AtomicBoolean(false);
 
-  public PagingProviderWrapper(PagingProvider<C, T> delegate) {
+  public PagingProviderWrapper(PagingProvider<C, T> delegate, ExtensionModel extensionModel) {
     this.delegate = delegate;
+    extensionClassLoader = getClassLoader(extensionModel);
   }
 
   /**
@@ -42,8 +50,9 @@ final class PagingProviderWrapper<C, T> implements PagingProvider<C, T> {
    */
   @Override
   public void close(C connection) throws MuleException {
-    closed = true;
-    delegate.close(connection);
+    if (closed.compareAndSet(false, true)) {
+      delegate.close(connection);
+    }
   }
 
   private void handleCloseException(Throwable t) {
@@ -58,27 +67,28 @@ final class PagingProviderWrapper<C, T> implements PagingProvider<C, T> {
    */
   @Override
   public List<T> getPage(C connection) {
-    if (closed) {
-      if (LOGGER.isDebugEnabled()) {
-        LOGGER.debug("paging delegate is closed. Returning null");
-      }
+    if (closed.get()) {
+      LOGGER.debug("paging delegate is closed. Returning null");
       return null;
     }
 
-    List<T> page = delegate.getPage(connection);
-    if (isEmpty(page)) {
-      try {
-        if (LOGGER.isDebugEnabled()) {
+    Thread currentThread = currentThread();
+    ClassLoader currentClassLoader = currentThread.getContextClassLoader();
+    setContextClassLoader(currentThread, currentClassLoader, extensionClassLoader);
+    try {
+      List<T> page = delegate.getPage(connection);
+      if (isEmpty(page)) {
+        try {
           LOGGER.debug("Empty page was obtained. Closing delegate since this means that the data source has been consumed");
+          close(connection);
+        } catch (Exception e) {
+          handleCloseException(e);
         }
-
-        close(connection);
-      } catch (Exception e) {
-        handleCloseException(e);
       }
+      return page;
+    } finally {
+      setContextClassLoader(currentThread, extensionClassLoader, currentClassLoader);
     }
-
-    return page;
   }
 
   @Override

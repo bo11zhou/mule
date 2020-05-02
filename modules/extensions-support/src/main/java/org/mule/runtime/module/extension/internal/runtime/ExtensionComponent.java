@@ -7,9 +7,9 @@
 package org.mule.runtime.module.extension.internal.runtime;
 
 import static java.lang.String.format;
+import static java.util.Collections.emptyList;
 import static java.util.Optional.empty;
 import static java.util.Optional.of;
-import static java.util.Optional.ofNullable;
 import static org.mule.runtime.api.exception.ExceptionHelper.getRootException;
 import static org.mule.runtime.api.i18n.I18nMessageFactory.createStaticMessage;
 import static org.mule.runtime.api.metadata.resolving.FailureCode.INVALID_CONFIGURATION;
@@ -18,12 +18,14 @@ import static org.mule.runtime.api.metadata.resolving.MetadataResult.failure;
 import static org.mule.runtime.api.util.NameUtils.hyphenize;
 import static org.mule.runtime.core.api.util.ClassUtils.withContextClassLoader;
 import static org.mule.runtime.core.internal.component.ComponentAnnotations.ANNOTATION_COMPONENT_CONFIG;
+import static org.mule.runtime.core.internal.event.NullEventFactory.getNullEvent;
+import static org.mule.runtime.core.internal.exception.ErrorMapping.ANNOTATION_ERROR_MAPPINGS;
 import static org.mule.runtime.core.privileged.util.TemplateParser.createMuleStyleParser;
-import static org.mule.runtime.extension.api.util.ExtensionModelUtils.requiresConfig;
 import static org.mule.runtime.extension.api.values.ValueResolvingException.UNKNOWN;
 import static org.mule.runtime.module.extension.api.util.MuleExtensionUtils.getInitialiserEvent;
 import static org.mule.runtime.module.extension.internal.util.MuleExtensionUtils.getClassLoader;
 import static org.mule.runtime.module.extension.internal.value.ValueProviderUtils.getValueProviderModels;
+import static org.slf4j.LoggerFactory.getLogger;
 
 import org.mule.metadata.api.ClassTypeLoader;
 import org.mule.runtime.api.component.AbstractComponent;
@@ -31,6 +33,7 @@ import org.mule.runtime.api.component.location.ConfigurationComponentLocator;
 import org.mule.runtime.api.connection.ConnectionException;
 import org.mule.runtime.api.dsl.DslResolvingContext;
 import org.mule.runtime.api.exception.DefaultMuleException;
+import org.mule.runtime.api.exception.ErrorTypeRepository;
 import org.mule.runtime.api.exception.MuleException;
 import org.mule.runtime.api.exception.MuleRuntimeException;
 import org.mule.runtime.api.lifecycle.InitialisationException;
@@ -49,6 +52,7 @@ import org.mule.runtime.api.metadata.descriptor.ComponentMetadataDescriptor;
 import org.mule.runtime.api.metadata.resolving.MetadataResult;
 import org.mule.runtime.api.util.LazyValue;
 import org.mule.runtime.api.value.Value;
+import org.mule.runtime.ast.api.ComponentAst;
 import org.mule.runtime.core.api.MuleContext;
 import org.mule.runtime.core.api.context.MuleContextAware;
 import org.mule.runtime.core.api.el.ExpressionManager;
@@ -58,6 +62,8 @@ import org.mule.runtime.core.api.streaming.CursorProviderFactory;
 import org.mule.runtime.core.api.streaming.StreamingManager;
 import org.mule.runtime.core.api.util.func.CheckedSupplier;
 import org.mule.runtime.core.internal.connection.ConnectionManagerAdapter;
+import org.mule.runtime.core.internal.exception.ErrorMapping;
+import org.mule.runtime.core.internal.exception.ErrorMappingsAware;
 import org.mule.runtime.core.internal.metadata.MuleMetadataService;
 import org.mule.runtime.core.internal.metadata.cache.MetadataCacheId;
 import org.mule.runtime.core.internal.metadata.cache.MetadataCacheIdGenerator;
@@ -65,11 +71,11 @@ import org.mule.runtime.core.internal.metadata.cache.MetadataCacheIdGeneratorFac
 import org.mule.runtime.core.internal.transaction.TransactionFactoryLocator;
 import org.mule.runtime.core.privileged.event.BaseEventContext;
 import org.mule.runtime.core.privileged.util.TemplateParser;
-import org.mule.runtime.dsl.api.component.config.ComponentConfiguration;
 import org.mule.runtime.extension.api.declaration.type.ExtensionsTypeLoaderFactory;
 import org.mule.runtime.extension.api.exception.IllegalModelDefinitionException;
 import org.mule.runtime.extension.api.runtime.config.ConfigurationInstance;
 import org.mule.runtime.extension.api.runtime.config.ConfigurationProvider;
+import org.mule.runtime.extension.api.util.ExtensionModelUtils;
 import org.mule.runtime.extension.api.values.ComponentValueProvider;
 import org.mule.runtime.extension.api.values.ValueResolvingException;
 import org.mule.runtime.extension.internal.property.PagedOperationModelProperty;
@@ -83,16 +89,17 @@ import org.mule.runtime.module.extension.internal.runtime.source.ExtensionMessag
 import org.mule.runtime.module.extension.internal.util.ReflectionCache;
 import org.mule.runtime.module.extension.internal.value.ValueProviderMediator;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 
 import javax.inject.Inject;
+import javax.xml.namespace.QName;
+
+import org.slf4j.Logger;
 
 /**
  * Class that groups all the common behaviour between different extension's components, like {@link OperationMessageProcessor} and
@@ -103,10 +110,10 @@ import javax.inject.Inject;
  * @since 4.0
  */
 public abstract class ExtensionComponent<T extends ComponentModel> extends AbstractComponent
-    implements MuleContextAware, MetadataKeyProvider, MetadataProvider<T>, ComponentValueProvider,
+    implements MuleContextAware, ErrorMappingsAware, MetadataKeyProvider, MetadataProvider<T>, ComponentValueProvider,
     Lifecycle {
 
-  private final static Logger LOGGER = LoggerFactory.getLogger(ExtensionComponent.class);
+  private final static Logger LOGGER = getLogger(ExtensionComponent.class);
 
   private final TemplateParser expressionParser = createMuleStyleParser();
   private final ExtensionModel extensionModel;
@@ -139,17 +146,21 @@ public abstract class ExtensionComponent<T extends ComponentModel> extends Abstr
   @Inject
   protected MuleMetadataService metadataService;
 
-  @Inject
-  private ConfigurationComponentLocator componentLocator;
+  protected ConfigurationComponentLocator componentLocator;
 
   @Inject
   protected ReflectionCache reflectionCache;
 
   @Inject
-  private MetadataCacheIdGeneratorFactory<ComponentConfiguration> cacheIdGeneratorFactory;
+  protected ErrorTypeRepository errorTypeRepository;
 
-  protected MetadataCacheIdGenerator<ComponentConfiguration> cacheIdGenerator;
+  private MetadataCacheIdGeneratorFactory<ComponentAst> cacheIdGeneratorFactory;
 
+  protected MetadataCacheIdGenerator<ComponentAst> cacheIdGenerator;
+
+  private Function<CoreEvent, Optional<ConfigurationInstance>> configurationResolver;
+
+  private List<ErrorMapping> errorMappings = emptyList();
 
   protected ExtensionComponent(ExtensionModel extensionModel,
                                T componentModel,
@@ -182,6 +193,7 @@ public abstract class ExtensionComponent<T extends ComponentModel> extends Abstr
     }
     withContextClassLoader(classLoader, () -> {
       validateConfigurationProviderIsNotExpression();
+      initConfigurationResolver();
       findConfigurationProvider().ifPresent(this::validateOperationConfiguration);
       doInitialise();
       return null;
@@ -190,6 +202,40 @@ public abstract class ExtensionComponent<T extends ComponentModel> extends Abstr
     });
 
     setCacheIdGenerator();
+  }
+
+  private void initConfigurationResolver() {
+    if (!requiresConfig.get()) {
+      configurationResolver = event -> empty();
+      return;
+    }
+
+    // check for implicit provider
+    findConfigurationProvider().ifPresent(configurationProvider::set);
+
+    Optional<ConfigurationInstance> staticConfiguration = getStaticConfiguration();
+    if (staticConfiguration.isPresent()) {
+      configurationResolver = event -> staticConfiguration;
+      return;
+    }
+
+    if (isConfigurationSpecified()) {
+      // the config is dynamic
+      configurationResolver = event -> {
+        ConfigurationInstance instance = configurationProvider.get().get(event);
+        if (instance == null) {
+          throw new IllegalModelDefinitionException(format(
+                                                           "Root component '%s' contains a reference to config '%s' but it doesn't exists",
+                                                           getLocation().getRootContainerName(),
+                                                           configurationProvider));
+        }
+
+        return of(instance);
+      };
+    } else {
+      // obtain implicit instance
+      configurationResolver = event -> extensionManager.getConfiguration(extensionModel, componentModel, event);
+    }
   }
 
   /**
@@ -379,7 +425,7 @@ public abstract class ExtensionComponent<T extends ComponentModel> extends Abstr
   }
 
   private MetadataCacheId getMetadataCacheId() {
-    return cacheIdGenerator.getIdForGlobalMetadata((ComponentConfiguration) this.getAnnotation(ANNOTATION_COMPONENT_CONFIG))
+    return cacheIdGenerator.getIdForGlobalMetadata((ComponentAst) this.getAnnotation(ANNOTATION_COMPONENT_CONFIG))
         .map(id -> {
           if (LOGGER.isDebugEnabled()) {
             LOGGER.debug(id.getParts().toString());
@@ -389,7 +435,7 @@ public abstract class ExtensionComponent<T extends ComponentModel> extends Abstr
         .orElseThrow(() -> new IllegalStateException(
                                                      format("Missing information to obtain the MetadataCache for the component '%s'. "
                                                          +
-                                                         "Expected to have the ComponentConfiguration information in the '%s' annotation but none was found.",
+                                                         "Expected to have the ComponentAst information in the '%s' annotation but none was found.",
                                                             this.getLocation().toString(), ANNOTATION_COMPONENT_CONFIG)));
   }
 
@@ -414,7 +460,8 @@ public abstract class ExtensionComponent<T extends ComponentModel> extends Abstr
 
       if (configuration.isPresent()) {
         ConfigurationProvider configurationProvider = findConfigurationProvider()
-            .orElseThrow(() -> new MetadataResolvingException("Failed to create the required configuration for Metadata retrieval",
+            .orElseThrow(
+                         () -> new MetadataResolvingException("Failed to create the required configuration for Metadata retrieval",
                                                               INVALID_CONFIGURATION));
 
         if (configurationProvider instanceof DynamicConfigurationProvider) {
@@ -451,28 +498,19 @@ public abstract class ExtensionComponent<T extends ComponentModel> extends Abstr
    * @return a configuration instance for the current component with a given {@link CoreEvent}
    */
   protected Optional<ConfigurationInstance> getConfiguration(CoreEvent event) {
-    if (!requiresConfig.get()) {
-      return empty();
-    }
-
-    if (isConfigurationSpecified()) {
-      return of(configurationProvider.get())
-          .map(provider -> ofNullable(provider.get(event)))
-          .orElseThrow(() -> new IllegalModelDefinitionException(format(
-                                                                        "Root component '%s' contains a reference to config '%s' but it doesn't exists",
-                                                                        getLocation().getRootContainerName(),
-                                                                        configurationProvider)));
-    }
-
-    return getDefaultConfiguraiton(event);
+    return configurationResolver.apply(event);
   }
 
-  private Optional<ConfigurationInstance> getDefaultConfiguraiton(CoreEvent event) {
-    return extensionManager.getConfigurationProvider(extensionModel, componentModel)
-        .map(provider -> {
-          configurationProvider.set(provider);
-          return ofNullable(provider.get(event));
-        }).orElseGet(() -> extensionManager.getConfiguration(extensionModel, componentModel, event));
+  protected boolean requiresConfig() {
+    return requiresConfig.get();
+  }
+
+  protected ConfigurationProvider getConfigurationProvider() {
+    return configurationProvider.get();
+  }
+
+  protected boolean usesDynamicConfiguration() {
+    return isConfigurationSpecified() && configurationProvider.get().isDynamic();
   }
 
   /**
@@ -480,14 +518,18 @@ public abstract class ExtensionComponent<T extends ComponentModel> extends Abstr
    * returns an empty value.
    */
   protected Optional<ConfigurationInstance> getStaticConfiguration() {
-    if (!requiresConfig.get() || (isConfigurationSpecified() && configurationProvider.get().isDynamic())) {
+    if (!requiresConfig()) {
+      return empty();
+    }
+
+    if (configurationResolver == null || usesDynamicConfiguration()) {
       return empty();
     }
 
     CoreEvent initialiserEvent = null;
     try {
-      initialiserEvent = getInitialiserEvent(muleContext);
-      return getConfiguration(initialiserEvent);
+      initialiserEvent = getNullEvent(muleContext);
+      return configurationResolver.apply(initialiserEvent);
     } finally {
       if (initialiserEvent != null) {
         ((BaseEventContext) initialiserEvent.getContext()).success();
@@ -512,7 +554,7 @@ public abstract class ExtensionComponent<T extends ComponentModel> extends Abstr
   }
 
   private boolean computeRequiresConfig() {
-    return requiresConfig(extensionModel, componentModel);
+    return ExtensionModelUtils.requiresConfig(extensionModel, componentModel);
   }
 
   private void validateConfigurationProviderIsNotExpression() throws InitialisationException {
@@ -530,9 +572,9 @@ public abstract class ExtensionComponent<T extends ComponentModel> extends Abstr
 
   private void setCacheIdGenerator() {
     DslResolvingContext context = DslResolvingContext.getDefault(extensionManager.getExtensions());
-    MetadataCacheIdGeneratorFactory.ComponentLocator<ComponentConfiguration> configLocator = location -> componentLocator
+    MetadataCacheIdGeneratorFactory.ComponentLocator<ComponentAst> configLocator = location -> componentLocator
         .find(location)
-        .map(component -> (ComponentConfiguration) component.getAnnotation(ANNOTATION_COMPONENT_CONFIG));
+        .map(component -> (ComponentAst) component.getAnnotation(ANNOTATION_COMPONENT_CONFIG));
 
     this.cacheIdGenerator = cacheIdGeneratorFactory.create(context, configLocator);
   }
@@ -549,5 +591,28 @@ public abstract class ExtensionComponent<T extends ComponentModel> extends Abstr
   @Override
   public List<ValueProviderModel> getModels(String providerName) {
     return getValueProviderModels(componentModel.getAllParameterModels());
+  }
+
+  @Inject
+  public void setCacheIdGeneratorFactory(MetadataCacheIdGeneratorFactory<ComponentAst> cacheIdGeneratorFactory) {
+    this.cacheIdGeneratorFactory = cacheIdGeneratorFactory;
+  }
+
+  @Inject
+  public void setComponentLocator(ConfigurationComponentLocator componentLocator) {
+    this.componentLocator = componentLocator;
+  }
+
+  @Override
+  public List<ErrorMapping> getErrorMappings() {
+    return errorMappings;
+  }
+
+  @Override
+  public void setAnnotations(Map<QName, Object> newAnnotations) {
+    super.setAnnotations(newAnnotations);
+
+    List<ErrorMapping> list = (List<ErrorMapping>) getAnnotation(ANNOTATION_ERROR_MAPPINGS);
+    this.errorMappings = list != null ? list : emptyList();
   }
 }

@@ -24,6 +24,7 @@ import org.mule.runtime.deployment.model.api.plugin.LoaderDescriber;
 import org.mule.runtime.module.artifact.api.descriptor.AbstractArtifactDescriptorFactory;
 import org.mule.runtime.module.artifact.api.descriptor.ArtifactDescriptorCreateException;
 import org.mule.runtime.module.artifact.api.descriptor.ArtifactDescriptorValidatorBuilder;
+import org.mule.runtime.module.artifact.api.descriptor.BundleDescriptor;
 import org.mule.runtime.module.artifact.api.descriptor.ClassLoaderModelLoader;
 import org.mule.runtime.module.artifact.api.descriptor.DescriptorLoaderRepository;
 import org.mule.runtime.module.deployment.impl.internal.artifact.ServiceRegistryDescriptorLoaderRepository;
@@ -83,9 +84,10 @@ public class ArtifactPluginDescriptorFactory
 
   @Override
   protected Map<String, Object> getClassLoaderModelAttributes(Optional<Properties> deploymentPropertiesOptional,
-                                                              MuleArtifactLoaderDescriptor classLoaderModelLoaderDescriptor) {
+                                                              MuleArtifactLoaderDescriptor classLoaderModelLoaderDescriptor,
+                                                              BundleDescriptor bundleDescriptor) {
     Map<String, Object> attributes =
-        super.getClassLoaderModelAttributes(deploymentPropertiesOptional, classLoaderModelLoaderDescriptor);
+        super.getClassLoaderModelAttributes(deploymentPropertiesOptional, classLoaderModelLoaderDescriptor, bundleDescriptor);
 
     if (deploymentPropertiesOptional.isPresent()) {
       Properties deploymentProperties = deploymentPropertiesOptional.get();
@@ -94,6 +96,24 @@ public class ArtifactPluginDescriptorFactory
             (PluginExtendedDeploymentProperties) deploymentProperties;
         return new PluginExtendedClassLoaderModelAttributes(attributes,
                                                             pluginExtendedDeploymentProperties.getDeployableArtifactDescriptor());
+      }
+    }
+    return attributes;
+  }
+
+  @Override
+  protected Map<String, Object> getBundleDescriptorAttributes(MuleArtifactLoaderDescriptor bundleDescriptorLoader,
+                                                              Optional<Properties> deploymentPropertiesOptional) {
+    Map<String, Object> attributes =
+        super.getBundleDescriptorAttributes(bundleDescriptorLoader, deploymentPropertiesOptional);
+
+    if (deploymentPropertiesOptional.isPresent()) {
+      Properties deploymentProperties = deploymentPropertiesOptional.get();
+      if (deploymentProperties instanceof PluginExtendedDeploymentProperties) {
+        PluginExtendedDeploymentProperties pluginExtendedDeploymentProperties =
+            (PluginExtendedDeploymentProperties) deploymentProperties;
+        return new PluginExtendedBundleDescriptorAttributes(attributes,
+                                                            pluginExtendedDeploymentProperties.getPluginBundleDescriptor());
       }
     }
     return attributes;

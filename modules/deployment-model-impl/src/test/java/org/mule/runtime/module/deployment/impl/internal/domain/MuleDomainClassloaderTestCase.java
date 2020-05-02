@@ -17,16 +17,14 @@ import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 import static org.mule.runtime.core.internal.config.RuntimeComponentBuildingDefinitionsUtil.getRuntimeComponentBuildingDefinitionProvider;
+import static org.mule.runtime.core.internal.config.RuntimeLockFactoryUtil.getRuntimeLockFactory;
 import static org.mule.tck.mockito.answer.BuilderAnswer.BUILDER_ANSWER;
 
-import java.io.File;
-import java.util.List;
-
-import org.junit.Before;
-import org.junit.Test;
-
+import org.mule.runtime.api.lifecycle.Stoppable;
+import org.mule.runtime.api.lock.LockFactory;
 import org.mule.runtime.api.service.ServiceRepository;
 import org.mule.runtime.core.api.MuleContext;
+import org.mule.runtime.core.api.lifecycle.LifecycleManager;
 import org.mule.runtime.deployment.model.api.artifact.ArtifactContext;
 import org.mule.runtime.deployment.model.api.domain.Domain;
 import org.mule.runtime.deployment.model.api.domain.DomainDescriptor;
@@ -39,10 +37,22 @@ import org.mule.runtime.module.extension.internal.loader.ExtensionModelLoaderMan
 import org.mule.tck.junit4.AbstractMuleTestCase;
 import org.mule.tck.size.SmallTest;
 
+import java.io.File;
+import java.util.List;
+
+import org.junit.Before;
+import org.junit.ClassRule;
+import org.junit.Test;
+import org.junit.rules.TemporaryFolder;
+
 @SmallTest
 public class MuleDomainClassloaderTestCase extends AbstractMuleTestCase {
 
   private static final ArtifactContextBuilder artifactContextBuilder = mock(ArtifactContextBuilder.class, BUILDER_ANSWER);
+
+  @ClassRule
+  public static TemporaryFolder artifactInstallationDirectory = new TemporaryFolder();
+
   private final ClassLoaderRepository domainClassLoaderRepository = mock(ClassLoaderRepository.class);
   private final DomainDescriptor domainDescriptor = mock(DomainDescriptor.class);
   private final ArtifactClassLoader artifactClassLoader = mock(ArtifactClassLoader.class);
@@ -53,6 +63,7 @@ public class MuleDomainClassloaderTestCase extends AbstractMuleTestCase {
   private final ClassLoader domainClassloader = mock(ClassLoader.class);
   private final ArtifactContext artifactContext = mock(ArtifactContext.class);
   private final MuleContext muleContext = mock(MuleContext.class);
+  private final LifecycleManager lifecycleManager = mock(LifecycleManager.class);
   private ClassLoader classloaderUsedInDispose;
   private Domain domain;
 
@@ -60,12 +71,17 @@ public class MuleDomainClassloaderTestCase extends AbstractMuleTestCase {
   public void setUp() throws Exception {
 
     domain = new TestMuleDomain(domainDescriptor, artifactClassLoader, domainClassLoaderRepository, serviceRepository,
-                                artifactPlugins, extensionModelLoaderManager, getRuntimeComponentBuildingDefinitionProvider());
+                                artifactPlugins, extensionModelLoaderManager, getRuntimeComponentBuildingDefinitionProvider(),
+                                getRuntimeLockFactory());
     currentThread().setContextClassLoader(originalThreadClassloader);
     when(domainDescriptor.getDeploymentProperties()).thenReturn(empty());
     when(domainDescriptor.getDataFolderName()).thenReturn("dataFolderName");
     when(artifactContextBuilder.build()).thenReturn(artifactContext);
     when(artifactContext.getMuleContext()).thenReturn(muleContext);
+    when(muleContext.getLifecycleManager()).thenReturn(lifecycleManager);
+
+    when(lifecycleManager.isDirectTransition(Stoppable.PHASE_NAME)).thenReturn(true);
+
     domain.init();
     when(artifactClassLoader.getClassLoader()).thenReturn(domainClassloader);
   }
@@ -101,9 +117,10 @@ public class MuleDomainClassloaderTestCase extends AbstractMuleTestCase {
     public TestMuleDomain(DomainDescriptor descriptor, ArtifactClassLoader deploymentClassLoader,
                           ClassLoaderRepository classLoaderRepository, ServiceRepository serviceRepository,
                           List<ArtifactPlugin> artifactPlugins, ExtensionModelLoaderManager extensionModelLoaderManager,
-                          ComponentBuildingDefinitionProvider runtimeComponentBuildingDefinitionProvider) {
+                          ComponentBuildingDefinitionProvider runtimeComponentBuildingDefinitionProvider,
+                          LockFactory runtimeLockFactory) {
       super(descriptor, deploymentClassLoader, classLoaderRepository, serviceRepository, artifactPlugins,
-            extensionModelLoaderManager, runtimeComponentBuildingDefinitionProvider);
+            extensionModelLoaderManager, runtimeComponentBuildingDefinitionProvider, runtimeLockFactory);
     }
 
     @Override
@@ -113,7 +130,7 @@ public class MuleDomainClassloaderTestCase extends AbstractMuleTestCase {
 
     @Override
     protected File getArtifactInstallationDirectory() {
-      return mock(File.class);
+      return MuleDomainClassloaderTestCase.artifactInstallationDirectory.getRoot();
     }
   }
 

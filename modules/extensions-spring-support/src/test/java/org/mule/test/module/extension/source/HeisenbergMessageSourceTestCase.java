@@ -12,6 +12,7 @@ import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.CoreMatchers.not;
 import static org.hamcrest.CoreMatchers.notNullValue;
 import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.greaterThan;
 import static org.hamcrest.Matchers.hasSize;
 import static org.junit.Assert.assertThat;
 import static org.mule.functional.junit4.matchers.MessageMatchers.hasPayload;
@@ -22,15 +23,28 @@ import static org.mule.runtime.core.api.exception.Errors.ComponentIdentifiers.Ha
 import static org.mule.runtime.core.api.rx.Exceptions.unwrap;
 import static org.mule.tck.junit4.matcher.ErrorTypeMatcher.errorType;
 import static org.mule.tck.junit4.matcher.IsEmptyOptional.empty;
+import static org.mule.tck.probe.PollingProber.check;
+import static org.mule.tck.probe.PollingProber.checkNot;
 import static org.mule.tck.probe.PollingProber.probe;
 import static org.mule.test.heisenberg.extension.HeisenbergConnectionProvider.SAUL_OFFICE_NUMBER;
 import static org.mule.test.heisenberg.extension.HeisenbergExtension.sourceTimesStarted;
 import static org.mule.test.heisenberg.extension.HeisenbergSource.CORE_POOL_SIZE_ERROR_MESSAGE;
+import static org.mule.test.heisenberg.extension.HeisenbergSource.resetHeisenbergSource;
 import static org.mule.test.heisenberg.extension.HeisenbergSource.TerminateStatus.ERROR_BODY;
 import static org.mule.test.heisenberg.extension.HeisenbergSource.TerminateStatus.ERROR_INVOKE;
 import static org.mule.test.heisenberg.extension.HeisenbergSource.TerminateStatus.SUCCESS;
 import static org.mule.test.heisenberg.extension.exception.HeisenbergConnectionExceptionEnricher.ENRICHED_MESSAGE;
 import static org.mule.test.heisenberg.extension.model.HealthStatus.CANCER;
+
+import java.math.BigDecimal;
+import java.util.Map;
+import java.util.Optional;
+
+import org.hamcrest.Matcher;
+import org.junit.Ignore;
+import org.junit.Rule;
+import org.junit.Test;
+import org.junit.rules.ExpectedException;
 import org.mule.functional.api.component.TestConnectorQueueHandler;
 import org.mule.runtime.api.component.Component;
 import org.mule.runtime.api.component.location.Location;
@@ -43,19 +57,12 @@ import org.mule.runtime.extension.api.runtime.source.ParameterizedSource;
 import org.mule.test.heisenberg.extension.HeisenbergSource;
 import org.mule.test.module.extension.AbstractExtensionFunctionalTestCase;
 
-import java.math.BigDecimal;
-import java.util.Map;
-import java.util.Optional;
-
-import org.hamcrest.Matcher;
-import org.junit.Rule;
-import org.junit.Test;
-import org.junit.rules.ExpectedException;
-
+@Ignore("MULE-18067")
 public class HeisenbergMessageSourceTestCase extends AbstractExtensionFunctionalTestCase {
 
   public static final int TIMEOUT_MILLIS = 50000;
   public static final int POLL_DELAY_MILLIS = 100;
+  public static final int TIME_WAIT_MILLIS = 3000;
 
   private static final String OUT = "out";
 
@@ -72,7 +79,7 @@ public class HeisenbergMessageSourceTestCase extends AbstractExtensionFunctional
   @Override
   protected void doSetUp() throws Exception {
     sourceTimesStarted = 0;
-    reset();
+    resetHeisenbergSource();
     super.doSetUp();
   }
 
@@ -83,20 +90,7 @@ public class HeisenbergMessageSourceTestCase extends AbstractExtensionFunctional
     }
 
     super.doTearDown();
-    reset();
-  }
-
-  private void reset() {
-    HeisenbergSource.receivedGroupOnSource = false;
-    HeisenbergSource.receivedInlineOnError = false;
-    HeisenbergSource.receivedInlineOnSuccess = false;
-    HeisenbergSource.executedOnSuccess = false;
-    HeisenbergSource.executedOnError = false;
-    HeisenbergSource.executedOnTerminate = false;
-    HeisenbergSource.error = Optional.empty();
-    HeisenbergSource.gatheredMoney = 0;
-    HeisenbergSource.configName = null;
-    HeisenbergSource.location = null;
+    resetHeisenbergSource();
   }
 
   @Test
@@ -104,6 +98,38 @@ public class HeisenbergMessageSourceTestCase extends AbstractExtensionFunctional
     startFlow("source");
 
     assertSourceCompleted();
+  }
+
+  @Test
+  public void sourceRestartedWithDynamicConfig() throws Exception {
+    final Long gatheredMoney = HeisenbergSource.gatheredMoney;
+    startFlow("source");
+
+    check(TIMEOUT_MILLIS, POLL_DELAY_MILLIS,
+          () -> {
+            assertThat(HeisenbergSource.gatheredMoney, greaterThan(gatheredMoney));
+            return true;
+          });
+
+    stopFlow("source");
+
+    final Long gatheredMoneyAfterStop = HeisenbergSource.gatheredMoney;
+
+    // Check that money is NOT gathered while flow is stopped
+    checkNot(TIME_WAIT_MILLIS, POLL_DELAY_MILLIS,
+             () -> {
+               assertThat(HeisenbergSource.gatheredMoney, greaterThan(gatheredMoneyAfterStop));
+               return true;
+             });
+
+    startFlow("source");
+
+    // Check that money is gathered after flow is restarted
+    check(TIMEOUT_MILLIS, POLL_DELAY_MILLIS,
+          () -> {
+            assertThat(HeisenbergSource.gatheredMoney, greaterThan(gatheredMoneyAfterStop));
+            return true;
+          });
   }
 
   protected void assertSourceCompleted() {
@@ -215,6 +241,12 @@ public class HeisenbergMessageSourceTestCase extends AbstractExtensionFunctional
   }
 
   @Test
+  public void failureInFlowErrorHandlerCallsOnErrorDirectlyAndHandlesItCorrectly() throws Exception {
+    startFlow("failureInFlowErrorHandlerCallsOnErrorDirectly");
+    probe(TIMEOUT_MILLIS, POLL_DELAY_MILLIS, () -> assertState(false, true, true));
+  }
+
+  @Test
   public void failureInFlowCallsOnErrorDirectlyAndFailsHandlingIt() throws Exception {
     startFlow("failureInFlowCallsOnErrorDirectlyAndFailsHandlingIt");
     probe(TIMEOUT_MILLIS, POLL_DELAY_MILLIS, () -> assertState(false, false, true));
@@ -232,7 +264,7 @@ public class HeisenbergMessageSourceTestCase extends AbstractExtensionFunctional
   }
 
   @Test
-  public void obtainSourceParameters() throws Exception {
+  public void obtainSourceParameters() {
     Component element = locator.find(Location.builder().globalName("source").addSourcePart().build()).get();
     assertThat(element, is(instanceOf(ParameterizedSource.class)));
 
@@ -243,7 +275,7 @@ public class HeisenbergMessageSourceTestCase extends AbstractExtensionFunctional
   }
 
   @Test
-  public void obtainSourceConfigParameters() throws Exception {
+  public void obtainSourceConfigParameters() {
     Component element = locator.find(Location.builder().globalName("source").addSourcePart().build()).get();
     assertThat(element, is(instanceOf(ConfiguredComponent.class)));
 
@@ -253,7 +285,6 @@ public class HeisenbergMessageSourceTestCase extends AbstractExtensionFunctional
     Map<String, Object> configParameters = configurationState.getConfigParameters();
 
     assertThat(configParameters.size(), is(13));
-    assertParameter(configParameters, "enemies", hasSize(0));
     assertParameter(configParameters, "monthlyIncomes", hasSize(2));
     assertParameter(configParameters, "cancer", is(true));
     assertParameter(configParameters, "money", equalTo(new BigDecimal("0")));
@@ -289,9 +320,16 @@ public class HeisenbergMessageSourceTestCase extends AbstractExtensionFunctional
     flow.start();
   }
 
+  protected void stopFlow(String flowName) throws Exception {
+    flow = (Flow) getFlowConstruct(flowName);
+    flow.stop();
+  }
+
   private boolean assertState(boolean executedOnSuccess, boolean executedOnError, boolean executedOnTerminate) {
-    return HeisenbergSource.executedOnSuccess == executedOnSuccess
-        && HeisenbergSource.executedOnError == executedOnError
-        && HeisenbergSource.executedOnTerminate == executedOnTerminate;
+    assertThat("OnSuccess", HeisenbergSource.executedOnSuccess, is(executedOnSuccess));
+    assertThat("OnError", HeisenbergSource.executedOnError, is(executedOnError));
+    assertThat("OnTerminate", HeisenbergSource.executedOnTerminate, is(executedOnTerminate));
+
+    return true;
   }
 }

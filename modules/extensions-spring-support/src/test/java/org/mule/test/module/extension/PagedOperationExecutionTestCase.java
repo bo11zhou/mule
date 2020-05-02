@@ -13,6 +13,10 @@ import static org.hamcrest.Matchers.instanceOf;
 import static org.hamcrest.Matchers.isIn;
 import static org.hamcrest.core.Is.is;
 import static org.mule.test.heisenberg.extension.MoneyLaunderingOperation.INVOLVED_PEOPLE;
+import static org.mule.test.heisenberg.extension.MoneyLaunderingOperation.closeEmptyOperationCalls;
+import static org.mule.test.heisenberg.extension.MoneyLaunderingOperation.closePagingProviderCalls;
+import static org.mule.test.heisenberg.extension.MoneyLaunderingOperation.getPageCalls;
+
 import org.mule.runtime.api.connection.ConnectionException;
 import org.mule.runtime.api.streaming.object.CursorIterator;
 import org.mule.runtime.api.streaming.object.CursorIteratorProvider;
@@ -55,6 +59,7 @@ public class PagedOperationExecutionTestCase extends AbstractExtensionFunctional
     CursorIterator iterator = getCursor("emptyPagedOperation");
     assertThat(iterator.hasNext(), is(false));
     assertThat(iterator.getSize(), is(0));
+    assertThat(closeEmptyOperationCalls, is(1));
   }
 
   @Test
@@ -79,11 +84,41 @@ public class PagedOperationExecutionTestCase extends AbstractExtensionFunctional
     assertThat(connectionId1, equalTo(connectionId2));
   }
 
-  private <T> CursorIterator<T> getCursor(String flowName) throws Exception {
+  @Test
+  public void pagedOperationWithExtensionClassLoader() throws Exception {
+    Iterator iterator = getCursor("pagedOperationWithExtensionClassLoader");
+    assertThat(iterator.next(), is(1));
+  }
+
+  @Test
+  public void pagingProviderIsClosedSafelyDuringExceptionOnFirstPage() throws Exception {
+    resetCounters();
+    Iterator iterator = getCursorWithPayload("failAtClosePagedOperation", 1);
+    iterator.next();
+    assertThat("Paging provider was not closed.", closePagingProviderCalls, is(1));
+  }
+
+  @Test
+  public void pagingProviderIsClosedSafelyAfterDataSourceIsFullyConsumed() throws Exception {
+    resetCounters();
+    flowRunner("consumeFailAtClosePagedOperation").withPayload(4).run();
+    assertThat("Paging provider was not closed.", closePagingProviderCalls, is(1));
+  }
+
+  private <T> CursorIterator<T> getCursorWithPayload(String flowName, Object payload) throws Exception {
     CursorIteratorProvider provider =
-        (CursorIteratorProvider) flowRunner(flowName).keepStreamsOpen().run().getMessage().getPayload()
+        (CursorIteratorProvider) flowRunner(flowName).keepStreamsOpen().withPayload(payload).run().getMessage().getPayload()
             .getValue();
 
     return provider.openCursor();
+  }
+
+  private <T> CursorIterator<T> getCursor(String flowName) throws Exception {
+    return getCursorWithPayload(flowName, "");
+  }
+
+  public static void resetCounters() {
+    closePagingProviderCalls = 0;
+    getPageCalls = 0;
   }
 }

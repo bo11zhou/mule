@@ -12,17 +12,21 @@ import static org.hamcrest.CoreMatchers.notNullValue;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.nullValue;
 import static org.hamcrest.core.Is.is;
-import org.junit.Test;
-import org.junit.runners.Parameterized;
+import static org.mule.tck.junit4.matcher.ErrorTypeMatcher.errorType;
+
 import org.mule.runtime.api.message.Message;
 import org.mule.runtime.api.metadata.TypedValue;
 import org.mule.runtime.core.api.event.CoreEvent;
+import org.mule.runtime.core.privileged.exception.EventProcessingException;
 import org.mule.test.runner.RunnerDelegateTo;
 
 import java.util.Collection;
 
+import org.junit.Test;
+import org.junit.runners.Parameterized;
+
 @RunnerDelegateTo(Parameterized.class)
-public class ModuleSimpleTestCase extends AbstractXmlExtensionMuleArtifactFunctionalTestCase {
+public class ModuleSimpleTestCase extends AbstractCeXmlExtensionMuleArtifactFunctionalTestCase {
 
   @Parameterized.Parameter
   public String configFile;
@@ -61,6 +65,22 @@ public class ModuleSimpleTestCase extends AbstractXmlExtensionMuleArtifactFuncti
   public void testSetPayloadParamFlow() throws Exception {
     CoreEvent muleEvent = flowRunner("testSetPayloadParamFlow").run();
     assertThat(muleEvent.getMessage().getPayload().getValue(), is("new payload"));
+  }
+
+  @Test
+  public void testSetPayloadParamInvalidExpressionFlow() throws Exception {
+    flowRunner("testSetPayloadParamInvalidExpressionFlow").runExpectingException(errorType("MULE", "EXPRESSION"));
+  }
+
+  @Test
+  public void testSetPayloadParamInvalidExpressionFlowFailingComponent() throws Exception {
+    final EventProcessingException me =
+        (EventProcessingException) flowRunner("testSetPayloadParamInvalidExpressionFlow").runExpectingException();
+
+    assertThat(me.getFailingComponent().getLocation().getLocation(),
+               is(configFile.equals("flows/flows-using-module-simple.xml")
+                   ? "testSetPayloadParamInvalidExpressionFlow/processors/0"
+                   : "set-payload-param-value-invalid-expression/processors/0"));
   }
 
   @Test

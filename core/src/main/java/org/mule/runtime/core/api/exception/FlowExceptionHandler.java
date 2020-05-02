@@ -9,10 +9,12 @@ package org.mule.runtime.core.api.exception;
 import static org.mule.runtime.core.api.rx.Exceptions.propagateWrappingFatal;
 import static reactor.core.publisher.Flux.error;
 import static reactor.core.publisher.Mono.just;
+
 import org.mule.api.annotation.NoImplement;
 import org.mule.runtime.core.api.event.CoreEvent;
 import org.mule.runtime.core.internal.exception.MessagingException;
 
+import java.util.function.Consumer;
 import java.util.function.Function;
 
 import org.reactivestreams.Publisher;
@@ -29,10 +31,18 @@ public interface FlowExceptionHandler extends Function<Exception, Publisher<Core
    * @param exception which occurred
    * @param event which was being processed when the exception occurred
    * @return new event to route on to the rest of the flow, generally with ExceptionPayload set on the message
+   * @deprecated Use {@link FlowExceptionHandler#router(Consumer, Consumer)}
    */
+  @Deprecated
   CoreEvent handleException(Exception exception, CoreEvent event);
 
+  /**
+   * @param exception the exception to handle
+   * @return the publisher with the handling result
+   * @deprecated Use {@link FlowExceptionHandler#router(Consumer, Consumer)}
+   */
   @Override
+  @Deprecated
   default Publisher<CoreEvent> apply(Exception exception) {
     try {
       if (exception instanceof MessagingException) {
@@ -49,6 +59,23 @@ public interface FlowExceptionHandler extends Function<Exception, Publisher<Core
     } catch (Throwable throwable) {
       return error(propagateWrappingFatal(throwable));
     }
+  }
+
+  /**
+   * Provides a router for an error towards the destination error handler, calling the corresponding callback in case of failure
+   * or success.
+   *
+   * @param publisherPostProcessor allows to modify the publisher that will handle the error.
+   * @param continueCallback the callback called in case the error is successfully handled
+   * @param propagateCallback the callback is called in case the error-handling fails
+   * @return the router for an error.
+   *
+   * @since 4.3
+   */
+  default Consumer<Exception> router(Function<Publisher<CoreEvent>, Publisher<CoreEvent>> publisherPostProcessor,
+                                     Consumer<CoreEvent> continueCallback,
+                                     Consumer<Throwable> propagateCallback) {
+    return error -> propagateCallback.accept(error);
   }
 }
 

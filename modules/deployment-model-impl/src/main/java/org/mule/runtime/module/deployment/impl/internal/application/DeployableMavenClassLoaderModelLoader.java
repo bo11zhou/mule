@@ -12,19 +12,24 @@ import static org.mule.runtime.core.api.config.bootstrap.ArtifactType.POLICY;
 import static org.mule.runtime.deployment.model.api.artifact.ArtifactDescriptorConstants.INCLUDE_TEST_DEPENDENCIES;
 import static org.mule.runtime.deployment.model.api.artifact.ArtifactDescriptorConstants.MULE_LOADER_ID;
 import static org.mule.tools.api.classloader.AppClassLoaderModelJsonSerializer.deserialize;
+
 import org.mule.maven.client.api.MavenClient;
 import org.mule.runtime.core.api.config.bootstrap.ArtifactType;
 import org.mule.runtime.module.artifact.api.descriptor.BundleDependency;
 import org.mule.runtime.module.artifact.api.descriptor.BundleDescriptor;
 import org.mule.runtime.module.artifact.api.descriptor.ClassLoaderModel;
+import org.mule.runtime.module.artifact.internal.util.JarExplorer;
 import org.mule.runtime.module.deployment.impl.internal.maven.AbstractMavenClassLoaderModelLoader;
 import org.mule.runtime.module.deployment.impl.internal.maven.ArtifactClassLoaderModelBuilder;
 import org.mule.runtime.module.deployment.impl.internal.maven.HeavyweightClassLoaderModelBuilder;
 import org.mule.runtime.module.deployment.impl.internal.maven.LightweightClassLoaderModelBuilder;
 
 import java.io.File;
+import java.net.URL;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Supplier;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -43,29 +48,38 @@ public class DeployableMavenClassLoaderModelLoader extends AbstractMavenClassLoa
     super(mavenClient);
   }
 
+  public DeployableMavenClassLoaderModelLoader(MavenClient mavenClient, Supplier<JarExplorer> jarExplorerFactory) {
+    super(mavenClient, jarExplorerFactory);
+  }
+
   @Override
   public String getId() {
     return MULE_LOADER_ID;
   }
 
   @Override
-  protected LightweightClassLoaderModelBuilder newLightweightClassLoaderModelBuilder(File artifactFile, MavenClient mavenClient,
+  protected LightweightClassLoaderModelBuilder newLightweightClassLoaderModelBuilder(File artifactFile,
+                                                                                     BundleDescriptor artifactBundleDescriptor,
+                                                                                     MavenClient mavenClient,
                                                                                      Map<String, Object> attributes,
-                                                                                     Set<BundleDependency> nonProvidedDependencies) {
-    return new LightweightClassLoaderModelBuilder(artifactFile, mavenClient, nonProvidedDependencies);
+                                                                                     List<BundleDependency> nonProvidedDependencies) {
+    return new LightweightClassLoaderModelBuilder(artifactFile, artifactBundleDescriptor, mavenClient, nonProvidedDependencies);
   }
 
   @Override
   protected HeavyweightClassLoaderModelBuilder newHeavyWeightClassLoaderModelBuilder(File artifactFile,
+                                                                                     BundleDescriptor artifactBundleDescriptor,
                                                                                      org.mule.tools.api.classloader.model.ClassLoaderModel packagerClassLoaderModel,
                                                                                      Map<String, Object> attributes) {
-    return new HeavyweightClassLoaderModelBuilder(artifactFile, packagerClassLoaderModel);
+    return new HeavyweightClassLoaderModelBuilder(artifactFile, artifactBundleDescriptor, packagerClassLoaderModel);
   }
 
   @Override
-  protected void addArtifactSpecificClassloaderConfiguration(ArtifactClassLoaderModelBuilder classLoaderModelBuilder) {
+  protected List<URL> addArtifactSpecificClassloaderConfiguration(ArtifactClassLoaderModelBuilder classLoaderModelBuilder) {
     classLoaderModelBuilder.exportingSharedLibraries();
     classLoaderModelBuilder.additionalPluginLibraries();
+
+    return super.addArtifactSpecificClassloaderConfiguration(classLoaderModelBuilder);
   }
 
   @Override

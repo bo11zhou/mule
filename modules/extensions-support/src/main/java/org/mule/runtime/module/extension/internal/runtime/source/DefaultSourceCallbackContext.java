@@ -11,6 +11,7 @@ import static java.util.Optional.ofNullable;
 import static org.mule.runtime.api.i18n.I18nMessageFactory.createStaticMessage;
 import static org.mule.runtime.api.util.Preconditions.checkArgument;
 import static org.mule.runtime.api.util.Preconditions.checkState;
+
 import org.mule.runtime.api.component.Component;
 import org.mule.runtime.api.connection.ConnectionException;
 import org.mule.runtime.api.connection.ConnectionHandler;
@@ -19,17 +20,17 @@ import org.mule.runtime.api.i18n.I18nMessage;
 import org.mule.runtime.api.metadata.TypedValue;
 import org.mule.runtime.api.notification.Notification;
 import org.mule.runtime.api.tx.TransactionException;
+import org.mule.runtime.api.util.collection.SmallMap;
 import org.mule.runtime.core.internal.execution.NotificationFunction;
-import org.mule.runtime.module.extension.internal.runtime.notification.DefaultExtensionNotification;
 import org.mule.runtime.extension.api.connectivity.TransactionalConnection;
 import org.mule.runtime.extension.api.notification.NotificationActionDefinition;
 import org.mule.runtime.extension.api.runtime.source.SourceCallback;
 import org.mule.runtime.extension.api.runtime.source.SourceCallbackContext;
 import org.mule.runtime.extension.api.tx.TransactionHandle;
+import org.mule.runtime.module.extension.internal.runtime.notification.DefaultExtensionNotification;
 import org.mule.runtime.module.extension.internal.runtime.transaction.DefaultTransactionHandle;
 import org.mule.runtime.module.extension.internal.runtime.transaction.NullTransactionHandle;
 
-import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
@@ -46,12 +47,12 @@ class DefaultSourceCallbackContext implements SourceCallbackContextAdapter {
   private static final TransactionHandle DEFAULT_TRANSACTION_HANDLE = new DefaultTransactionHandle();
 
   private final SourceCallbackAdapter sourceCallback;
-  private final Map<String, Object> variables = new HashMap<>();
+  private final Map<String, Object> variables = new SmallMap<>();
   private String correlationId;
   private Object connection = null;
   private TransactionHandle transactionHandle = NULL_TRANSACTION_HANDLE;
   private boolean dispatched = false;
-  private List<NotificationFunction> notificationFunctions = new LinkedList<>();
+  private final List<NotificationFunction> notificationFunctions = new LinkedList<>();
 
   /**
    * Creates a new instance
@@ -69,19 +70,26 @@ class DefaultSourceCallbackContext implements SourceCallbackContextAdapter {
   public TransactionHandle bindConnection(Object connection) throws ConnectionException, TransactionException {
     checkArgument(connection != null, "Cannot bind a null connection");
     if (this.connection != null) {
-      throw new IllegalArgumentException("Connection can only be set once per " + SourceCallbackContext.class.getSimpleName());
+      throw new IllegalStateException("Connection can only be set once per " + SourceCallbackContext.class.getSimpleName());
     }
 
     this.connection = connection;
 
-    if (sourceCallback.getTransactionConfig().isTransacted() && connection instanceof TransactionalConnection) {
-      ConnectionHandler<Object> connectionHandler = sourceCallback.getSourceConnectionManager().getConnectionHandler(connection)
-          .orElseThrow(() -> new TransactionException(createWrongConnectionMessage(connection)));
+    try {
+      if (sourceCallback.getTransactionConfig().isTransacted() && connection instanceof TransactionalConnection) {
+        ConnectionHandler<Object> connectionHandler = sourceCallback.getSourceConnectionManager().getConnectionHandler(connection)
+            .orElseThrow(() -> new TransactionException(createWrongConnectionMessage(connection)));
 
-      sourceCallback.getTransactionSourceBinder().bindToTransaction(sourceCallback.getTransactionConfig(),
-                                                                    sourceCallback.getConfigurationInstance(),
-                                                                    connectionHandler);
-      transactionHandle = DEFAULT_TRANSACTION_HANDLE;
+        sourceCallback.getTransactionSourceBinder().bindToTransaction(sourceCallback.getTransactionConfig(),
+                                                                      sourceCallback.getConfigurationInstance(),
+                                                                      sourceCallback.getSourceLocation(),
+                                                                      connectionHandler, sourceCallback.getTransactionManager(),
+                                                                      sourceCallback.getTimeout());
+        transactionHandle = DEFAULT_TRANSACTION_HANDLE;
+      }
+    } catch (Exception e) {
+      releaseConnection();
+      throw e;
     }
 
     return transactionHandle;
@@ -93,7 +101,7 @@ class DefaultSourceCallbackContext implements SourceCallbackContextAdapter {
   @Override
   public <T> T getConnection() {
     if (connection == null) {
-      throw new IllegalArgumentException("No connection has been bound");
+      throw new IllegalStateException("No connection has been bound");
     }
 
     return (T) connection;

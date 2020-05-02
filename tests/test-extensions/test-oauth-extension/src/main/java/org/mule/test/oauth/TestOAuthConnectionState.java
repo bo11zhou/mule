@@ -10,9 +10,14 @@ import org.mule.runtime.extension.api.annotation.connectivity.oauth.OAuthCallbac
 import org.mule.runtime.extension.api.annotation.connectivity.oauth.OAuthParameter;
 import org.mule.runtime.extension.api.annotation.param.Optional;
 import org.mule.runtime.extension.api.annotation.param.Parameter;
+import org.mule.runtime.extension.api.annotation.param.RefName;
 import org.mule.runtime.extension.api.connectivity.oauth.AuthorizationCodeState;
+import org.mule.runtime.extension.api.connectivity.oauth.OAuthState;
 
 public class TestOAuthConnectionState {
+
+  @RefName
+  private String configName;
 
   @Parameter
   @Optional(defaultValue = "34.0")
@@ -71,7 +76,11 @@ public class TestOAuthConnectionState {
     return userId;
   }
 
-  public AuthorizationCodeState getState() {
+  public OAuthState getState() {
     return state;
+  }
+
+  public String getConfigName() {
+    return configName;
   }
 }

@@ -9,64 +9,84 @@ package org.mule.runtime.core.privileged.processor.chain;
 import static java.lang.String.format;
 import static java.lang.Thread.currentThread;
 import static org.apache.commons.lang3.StringUtils.replace;
+import static org.mule.runtime.api.functional.Either.left;
+import static org.mule.runtime.api.functional.Either.right;
 import static org.mule.runtime.api.notification.MessageProcessorNotification.MESSAGE_PROCESSOR_POST_INVOKE;
 import static org.mule.runtime.api.notification.MessageProcessorNotification.MESSAGE_PROCESSOR_PRE_INVOKE;
 import static org.mule.runtime.api.notification.MessageProcessorNotification.createFrom;
+import static org.mule.runtime.core.api.config.i18n.CoreMessages.isStopped;
 import static org.mule.runtime.core.api.lifecycle.LifecycleUtils.disposeIfNeeded;
 import static org.mule.runtime.core.api.lifecycle.LifecycleUtils.initialiseIfNeeded;
 import static org.mule.runtime.core.api.lifecycle.LifecycleUtils.setMuleContextIfNeeded;
 import static org.mule.runtime.core.api.lifecycle.LifecycleUtils.stopIfNeeded;
+import static org.mule.runtime.core.api.rx.Exceptions.propagateWrappingFatal;
+import static org.mule.runtime.core.api.rx.Exceptions.unwrap;
 import static org.mule.runtime.core.api.util.StreamingUtils.updateEventForStreaming;
 import static org.mule.runtime.core.api.util.StringUtils.isBlank;
 import static org.mule.runtime.core.internal.context.DefaultMuleContext.currentMuleContext;
 import static org.mule.runtime.core.internal.context.thread.notification.ThreadNotificationLogger.THREAD_NOTIFICATION_LOGGER_CONTEXT_KEY;
+import static org.mule.runtime.core.internal.util.rx.RxUtils.subscribeFluxOnPublisherSubscription;
 import static org.mule.runtime.core.privileged.event.PrivilegedEvent.setCurrentEvent;
 import static org.mule.runtime.core.privileged.processor.MessageProcessors.processToApply;
+import static org.mule.runtime.core.privileged.processor.chain.ChainErrorHandlingUtils.getLocalOperatorErrorHook;
+import static org.mule.runtime.core.privileged.processor.chain.ChainErrorHandlingUtils.resolveException;
+import static org.mule.runtime.core.privileged.processor.chain.ChainErrorHandlingUtils.resolveMessagingException;
 import static org.slf4j.LoggerFactory.getLogger;
+import static reactor.core.Exceptions.propagate;
 import static reactor.core.publisher.Flux.from;
+import static reactor.core.publisher.Mono.subscriberContext;
 import static reactor.core.publisher.Operators.lift;
 
+import org.mule.runtime.api.artifact.Registry;
 import org.mule.runtime.api.component.Component;
 import org.mule.runtime.api.exception.MuleException;
 import org.mule.runtime.api.exception.MuleRuntimeException;
+import org.mule.runtime.api.functional.Either;
 import org.mule.runtime.api.lifecycle.InitialisationException;
+import org.mule.runtime.api.lifecycle.LifecycleException;
 import org.mule.runtime.api.lifecycle.Startable;
-import org.mule.runtime.api.notification.MessageProcessorNotification;
 import org.mule.runtime.core.api.MuleContext;
-import org.mule.runtime.core.api.context.notification.ServerNotificationManager;
+import org.mule.runtime.core.api.context.notification.MuleContextListener;
+import org.mule.runtime.core.api.context.notification.ServerNotificationHandler;
 import org.mule.runtime.core.api.context.thread.notification.ThreadNotificationService;
 import org.mule.runtime.core.api.event.CoreEvent;
+import org.mule.runtime.core.api.exception.FlowExceptionHandler;
+import org.mule.runtime.core.api.execution.ExceptionContextProvider;
 import org.mule.runtime.core.api.processor.Processor;
 import org.mule.runtime.core.api.processor.ReactiveProcessor;
 import org.mule.runtime.core.api.processor.strategy.ProcessingStrategy;
-import org.mule.runtime.core.api.rx.Exceptions;
 import org.mule.runtime.core.api.streaming.StreamingManager;
+import org.mule.runtime.core.internal.context.DefaultMuleContext;
 import org.mule.runtime.core.internal.context.thread.notification.ThreadNotificationLogger;
 import org.mule.runtime.core.internal.exception.MessagingException;
 import org.mule.runtime.core.internal.interception.InterceptorManager;
 import org.mule.runtime.core.internal.processor.chain.InterceptedReactiveProcessor;
 import org.mule.runtime.core.internal.processor.interceptor.ReactiveAroundInterceptorAdapter;
 import org.mule.runtime.core.internal.processor.interceptor.ReactiveInterceptorAdapter;
+import org.mule.runtime.core.internal.rx.FluxSinkRecorder;
 import org.mule.runtime.core.internal.util.MessagingExceptionResolver;
 import org.mule.runtime.core.privileged.component.AbstractExecutableComponent;
 import org.mule.runtime.core.privileged.event.BaseEventContext;
 import org.mule.runtime.core.privileged.event.PrivilegedEvent;
-
-import org.reactivestreams.Publisher;
-import org.reactivestreams.Subscription;
-import org.slf4j.Logger;
+import org.mule.runtime.core.privileged.exception.ErrorTypeLocator;
+import org.mule.runtime.core.privileged.interception.ReactiveInterceptor;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Optional;
 import java.util.function.BiConsumer;
-import java.util.function.BiFunction;
 import java.util.function.Consumer;
 import java.util.function.Function;
 
 import javax.inject.Inject;
+
+import org.reactivestreams.Publisher;
+import org.reactivestreams.Subscription;
+import org.slf4j.Logger;
+import org.slf4j.MDC;
 
 import reactor.core.CoreSubscriber;
 import reactor.core.publisher.Flux;
@@ -101,15 +121,26 @@ abstract class AbstractMessageProcessorChain extends AbstractExecutableComponent
       appClClass = (Class<ClassLoader>) AbstractMessageProcessorChain.class.getClassLoader()
           .loadClass("org.mule.runtime.deployment.model.api.application.ApplicationClassLoader");
     } catch (ClassNotFoundException e) {
-      LOGGER.debug("ApplicationClassLoader interface not avialable in current context", e);
+      LOGGER.debug("ApplicationClassLoader interface not available in current context", e);
     }
-
   }
 
   private final String name;
   private final List<Processor> processors;
-  private ProcessingStrategy processingStrategy;
-  private List<ReactiveInterceptorAdapter> additionalInterceptors = new LinkedList<>();
+  private final FlowExceptionHandler messagingExceptionHandler;
+  private final ProcessingStrategy processingStrategy;
+  private final List<ReactiveInterceptorAdapter> additionalInterceptors = new LinkedList<>();
+
+  private boolean canProcessMessage = true;
+
+  @Inject
+  private ServerNotificationHandler serverNotificationHandler;
+
+  @Inject
+  private ErrorTypeLocator errorTypeLocator;
+
+  @Inject
+  private Collection<ExceptionContextProvider> exceptionContextProviders;
 
   @Inject
   private InterceptorManager processorInterceptorManager;
@@ -121,11 +152,13 @@ abstract class AbstractMessageProcessorChain extends AbstractExecutableComponent
   private ThreadNotificationService threadNotificationService;
   private ThreadNotificationLogger threadNotificationLogger;
 
-  AbstractMessageProcessorChain(String name, Optional<ProcessingStrategy> processingStrategyOptional,
-                                List<Processor> processors) {
+  AbstractMessageProcessorChain(String name,
+                                Optional<ProcessingStrategy> processingStrategyOptional,
+                                List<Processor> processors, FlowExceptionHandler messagingExceptionHandler) {
     this.name = name;
     this.processingStrategy = processingStrategyOptional.orElse(null);
     this.processors = processors;
+    this.messagingExceptionHandler = messagingExceptionHandler;
   }
 
   @Override
@@ -135,18 +168,66 @@ abstract class AbstractMessageProcessorChain extends AbstractExecutableComponent
 
   @Override
   public Publisher<CoreEvent> apply(Publisher<CoreEvent> publisher) {
-    List<BiFunction<Processor, ReactiveProcessor, ReactiveProcessor>> interceptors = resolveInterceptors();
+    final List<ReactiveInterceptor> interceptors = resolveInterceptors();
+
+    if (messagingExceptionHandler != null) {
+      final FluxSinkRecorder<Either<MessagingException, CoreEvent>> errorSwitchSinkSinkRef = new FluxSinkRecorder<>();
+
+      return subscriberContext()
+          .flatMapMany(ctx -> {
+            final Consumer<Exception> errorRouter = messagingExceptionHandler
+                .router(pub -> from(pub).subscriberContext(ctx),
+                        handled -> errorSwitchSinkSinkRef.next(right(handled)),
+                        rethrown -> errorSwitchSinkSinkRef.next(left((MessagingException) rethrown, CoreEvent.class)));
+
+            final Flux<Either<MessagingException, CoreEvent>> upstream =
+                from(doApply(publisher, interceptors, (context, throwable) -> errorRouter.accept(throwable)))
+                    // This Either here is used to propagate errors. If the error is sent directly through the merged Flux,
+                    // it will be cancelled, ignoring the onErrorContinue of the parent Flux.
+                    .map(event -> right(MessagingException.class, event))
+                    .doOnNext(r -> errorSwitchSinkSinkRef.next(r))
+                    .doOnError(t -> errorSwitchSinkSinkRef.error(t))
+                    .doOnComplete(() -> errorSwitchSinkSinkRef.complete())
+                    .doOnTerminate(() -> disposeIfNeeded(errorRouter, LOGGER));
+
+            return subscribeFluxOnPublisherSubscription(errorSwitchSinkSinkRef.flux()
+                .map(result -> result.reduce(me -> {
+                  throw propagateWrappingFatal(me);
+                }, response -> response)), upstream);
+          });
+
+    } else {
+      return doApply(publisher, interceptors, (context, throwable) -> context.error(throwable));
+    }
+  }
+
+  /**
+   * @deprecated Since 4.3, kept for backwards compatibility since this is public in a privileged package.
+   */
+  @Deprecated
+  public Publisher<CoreEvent> doApply(Publisher<CoreEvent> publisher,
+                                      BiConsumer<BaseEventContext, ? super Exception> errorBubbler) {
+    return doApply(publisher, resolveInterceptors(), errorBubbler);
+  }
+
+  private Publisher<CoreEvent> doApply(Publisher<CoreEvent> publisher,
+                                       List<ReactiveInterceptor> interceptors,
+                                       BiConsumer<BaseEventContext, ? super Exception> errorBubbler) {
     Flux<CoreEvent> stream = from(publisher);
     for (Processor processor : getProcessorsToExecute()) {
       // Perform assembly for processor chain by transforming the existing publisher with a publisher function for each processor
       // along with the interceptors that decorate it.
       stream = stream.transform(applyInterceptors(interceptors, processor))
           // #1 Register local error hook to wrap exceptions in a MessagingException maintaining failed event.
-          .subscriberContext(context -> context.put(REACTOR_ON_OPERATOR_ERROR_LOCAL, getLocalOperatorErrorHook(processor)))
+          .subscriberContext(context -> context.put(REACTOR_ON_OPERATOR_ERROR_LOCAL,
+                                                    getLocalOperatorErrorHook(processor, errorTypeLocator,
+                                                                              exceptionContextProviders)))
           // #2 Register continue error strategy to handle errors without stopping the stream.
-          .onErrorContinue(getContinueStrategyErrorHandler(processor));
+          .onErrorContinue(exception -> !(exception instanceof LifecycleException),
+                           getContinueStrategyErrorHandler(processor, errorBubbler));
     }
-    return stream.subscriberContext(ctx -> {
+
+    stream = stream.subscriberContext(ctx -> {
       ClassLoader tccl = currentThread().getContextClassLoader();
       if (tccl == null || tccl.getParent() == null
           || appClClass == null || !appClClass.isAssignableFrom(tccl.getClass())) {
@@ -157,63 +238,67 @@ abstract class AbstractMessageProcessorChain extends AbstractExecutableComponent
             .put(TCCL_REACTOR_CTX_KEY, tccl.getParent());
       }
     });
-  }
 
-  /*
-   * Used to catch exceptions emitted by reactor operators and wrap these in a MessagingException while conserving a reference to
-   * the failed Event.
-   */
-  private BiFunction<Throwable, Object, Throwable> getLocalOperatorErrorHook(Processor processor) {
-    return (throwable, event) -> {
-      throwable = Exceptions.unwrap(throwable);
-      if (event instanceof CoreEvent) {
-        if (throwable instanceof MessagingException) {
-          return resolveMessagingException(processor).apply((MessagingException) throwable);
-        } else {
-          return resolveException(processor, (CoreEvent) event, throwable);
-        }
-      } else {
-        return throwable;
-      }
-    };
+    return stream;
   }
 
   /*
    * Used to process failed events which are dropped from the reactor stream due to error. Errors are processed by invoking the
    * current EventContext error callback.
    */
-  private BiConsumer<Throwable, Object> getContinueStrategyErrorHandler(Processor processor) {
+  private BiConsumer<Throwable, Object> getContinueStrategyErrorHandler(Processor processor,
+                                                                        BiConsumer<BaseEventContext, ? super Exception> errorBubbler) {
+    final MessagingExceptionResolver exceptionResolver =
+        (processor instanceof Component) ? new MessagingExceptionResolver((Component) processor) : null;
+    final Function<MessagingException, MessagingException> messagingExceptionMapper =
+        resolveMessagingException(processor, e -> exceptionResolver.resolve(e, errorTypeLocator, exceptionContextProviders));
+
     return (throwable, object) -> {
-      if (object != null && !(object instanceof CoreEvent)) {
+      throwable = unwrap(throwable);
+
+      if (object == null && !(throwable instanceof MessagingException)) {
         LOGGER.error(UNEXPECTED_ERROR_HANDLER_STATE_MESSAGE, throwable);
         throw new IllegalStateException(UNEXPECTED_ERROR_HANDLER_STATE_MESSAGE);
       }
-      CoreEvent event = (CoreEvent) object;
-      throwable = Exceptions.unwrap(throwable);
-      if (throwable instanceof MessagingException) {
-        // Give priority to failed event from reactor over MessagingException event.
-        BaseEventContext context = (BaseEventContext) (event != null ? event.getContext()
-            : ((MessagingException) throwable).getEvent().getContext());
-        errorNotification(processor).andThen(e -> context.error(e))
-            .accept(resolveMessagingException(processor).apply((MessagingException) throwable));
+
+      if (object != null && !(object instanceof CoreEvent) && throwable instanceof MessagingException) {
+        notifyError(processor,
+                    (BaseEventContext) ((MessagingException) throwable).getEvent().getContext(),
+                    messagingExceptionMapper.apply((MessagingException) throwable),
+                    errorBubbler);
       } else {
-        if (event == null) {
-          LOGGER.error(UNEXPECTED_ERROR_HANDLER_STATE_MESSAGE, throwable);
-          throw new IllegalStateException(UNEXPECTED_ERROR_HANDLER_STATE_MESSAGE);
+        CoreEvent event = (CoreEvent) object;
+        if (throwable instanceof MessagingException) {
+          // Give priority to failed event from reactor over MessagingException event.
+          notifyError(processor,
+                      (BaseEventContext) (event != null
+                          ? event.getContext()
+                          : ((MessagingException) throwable).getEvent().getContext()),
+                      messagingExceptionMapper.apply((MessagingException) throwable),
+                      errorBubbler);
         } else {
-          BaseEventContext context = ((BaseEventContext) event.getContext());
-          errorNotification(processor).andThen(e -> context.error(e))
-              .accept(resolveException(processor, event, throwable));
+          notifyError(processor,
+                      ((BaseEventContext) event.getContext()),
+                      resolveException(processor, event, throwable, errorTypeLocator, exceptionContextProviders,
+                                       exceptionResolver),
+                      errorBubbler);
         }
       }
     };
   }
 
-  private ReactiveProcessor applyInterceptors(List<BiFunction<Processor, ReactiveProcessor, ReactiveProcessor>> interceptorsToBeExecuted,
+  private void notifyError(Processor processor, BaseEventContext context, final MessagingException resolvedException,
+                           BiConsumer<BaseEventContext, ? super Exception> errorBubbler) {
+    errorNotification(processor)
+        .andThen(t -> errorBubbler.accept(context, t))
+        .accept(resolvedException);
+  }
+
+  private ReactiveProcessor applyInterceptors(List<ReactiveInterceptor> interceptorsToBeExecuted,
                                               Processor processor) {
     ReactiveProcessor interceptorWrapperProcessorFunction = processor;
     // Take processor publisher function itself and transform it by applying interceptor transformations onto it.
-    for (BiFunction<Processor, ReactiveProcessor, ReactiveProcessor> interceptor : interceptorsToBeExecuted) {
+    for (ReactiveInterceptor interceptor : interceptorsToBeExecuted) {
       interceptorWrapperProcessorFunction = interceptor.apply(processor, interceptorWrapperProcessorFunction);
     }
     return interceptorWrapperProcessorFunction;
@@ -222,8 +307,8 @@ abstract class AbstractMessageProcessorChain extends AbstractExecutableComponent
   /**
    * @return the interceptors to apply to a processor, sorted from inside-out.
    */
-  private List<BiFunction<Processor, ReactiveProcessor, ReactiveProcessor>> resolveInterceptors() {
-    List<BiFunction<Processor, ReactiveProcessor, ReactiveProcessor>> interceptors = new ArrayList<>();
+  private List<ReactiveInterceptor> resolveInterceptors() {
+    List<ReactiveInterceptor> interceptors = new ArrayList<>();
 
     // Set thread context
     interceptors.add((processor, next) -> stream -> from(stream)
@@ -258,33 +343,83 @@ abstract class AbstractMessageProcessorChain extends AbstractExecutableComponent
     interceptors.addAll(additionalInterceptors);
 
     // #4 Wrap execution, before processing strategy, on flow thread.
-    interceptors.add((processor, next) -> stream -> from(stream)
-        .doOnNext(preNotification(processor))
-        .transform(next)
-        .map(result -> {
-          postNotification(processor).accept(result);
-          setCurrentEvent((PrivilegedEvent) result);
-          // If the processor returns a CursorProvider, then have the StreamingManager manage it
-          return updateEventForStreaming(streamingManager).apply(result);
-        }));
+    interceptors.add((processor, next) -> {
+      String processorPath;
+      if (processor instanceof Component && ((Component) processor).getLocation() != null) {
+        processorPath = ((Component) processor).getLocation().getLocation();
+      } else {
+        processorPath = null;
+      }
+
+      return stream -> from(stream)
+          .doOnNext(event -> {
+            if (!canProcessMessage) {
+              throw propagate(new MessagingException(event, new LifecycleException(isStopped(name), event.getMessage())));
+            }
+            if (processorPath != null) {
+              MDC.put("processorPath", processorPath);
+            }
+            preNotification(event, processor);
+          })
+          .transform(next)
+          .map(result -> {
+            try {
+              postNotification(processor).accept(result);
+              setCurrentEvent((PrivilegedEvent) result);
+              // If the processor returns a CursorProvider, then have the StreamingManager manage it
+              return updateEventForStreaming(streamingManager).apply(result);
+            } finally {
+              if (processorPath != null) {
+                MDC.remove("processorPath");
+              }
+            }
+          });
+    });
 
     return interceptors;
+  }
+
+  private void registerStopListener() {
+    if (muleContext instanceof DefaultMuleContext) {
+      MuleContextListener listener = new MuleContextListener() {
+
+        @Override
+        public void onCreation(MuleContext context) {
+
+        }
+
+        @Override
+        public void onInitialization(MuleContext context, Registry registry) {
+
+        }
+
+        @Override
+        public void onStart(MuleContext context, Registry registry) {
+
+        }
+
+        @Override
+        public void onStop(MuleContext context, Registry registry) {
+          canProcessMessage = false;
+          ((DefaultMuleContext) muleContext).removeListener(this);
+        }
+      };
+      ((DefaultMuleContext) muleContext).addListener(listener);
+    }
   }
 
   private Function<? super Publisher<CoreEvent>, ? extends Publisher<CoreEvent>> doOnNextOrErrorWithContext(Consumer<Context> contextConsumer) {
     return lift((scannable, subscriber) -> new CoreSubscriber<CoreEvent>() {
 
-      private Context context = subscriber.currentContext();
-
       @Override
       public void onNext(CoreEvent event) {
-        contextConsumer.accept(context);
+        contextConsumer.accept(currentContext());
         subscriber.onNext(event);
       }
 
       @Override
       public void onError(Throwable throwable) {
-        contextConsumer.accept(context);
+        contextConsumer.accept(currentContext());
         subscriber.onError(throwable);
       }
 
@@ -295,7 +430,7 @@ abstract class AbstractMessageProcessorChain extends AbstractExecutableComponent
 
       @Override
       public Context currentContext() {
-        return context;
+        return subscriber.currentContext();
       }
 
       @Override
@@ -305,38 +440,16 @@ abstract class AbstractMessageProcessorChain extends AbstractExecutableComponent
     });
   }
 
-  private MessagingException resolveException(Processor processor, CoreEvent event, Throwable throwable) {
-    if (processor instanceof Component) {
-      MessagingExceptionResolver exceptionResolver = new MessagingExceptionResolver((Component) processor);
-      return exceptionResolver.resolve(new MessagingException(event, throwable, (Component) processor), muleContext);
-    } else {
-      return new MessagingException(event, throwable);
+  private void preNotification(CoreEvent event, Processor processor) {
+    if (((PrivilegedEvent) event).isNotificationsEnabled()) {
+      fireNotification(event, processor, null, MESSAGE_PROCESSOR_PRE_INVOKE);
     }
-  }
-
-  private Function<MessagingException, MessagingException> resolveMessagingException(Processor processor) {
-    if (processor instanceof Component) {
-      MessagingExceptionResolver exceptionResolver = new MessagingExceptionResolver((Component) processor);
-      return exception -> exceptionResolver.resolve(exception, muleContext);
-    } else {
-      return exception -> exception;
-    }
-  }
-
-  private Consumer<CoreEvent> preNotification(Processor processor) {
-    return event -> {
-      if (((PrivilegedEvent) event).isNotificationsEnabled()) {
-        fireNotification(muleContext.getNotificationManager(), event, processor, null,
-                         MESSAGE_PROCESSOR_PRE_INVOKE);
-      }
-    };
   }
 
   private Consumer<CoreEvent> postNotification(Processor processor) {
     return event -> {
       if (((PrivilegedEvent) event).isNotificationsEnabled()) {
-        fireNotification(muleContext.getNotificationManager(), event, processor, null,
-                         MESSAGE_PROCESSOR_POST_INVOKE);
+        fireNotification(event, processor, null, MESSAGE_PROCESSOR_POST_INVOKE);
 
       }
     };
@@ -346,22 +459,18 @@ abstract class AbstractMessageProcessorChain extends AbstractExecutableComponent
     return exception -> {
       if (exception instanceof MessagingException
           && ((PrivilegedEvent) ((MessagingException) exception).getEvent()).isNotificationsEnabled()) {
-        fireNotification(muleContext.getNotificationManager(), ((MessagingException) exception).getEvent(), processor,
-                         (MessagingException) exception,
+        fireNotification(((MessagingException) exception).getEvent(), processor, (MessagingException) exception,
                          MESSAGE_PROCESSOR_POST_INVOKE);
       }
     };
   }
 
-  private void fireNotification(ServerNotificationManager serverNotificationManager, CoreEvent event, Processor processor,
+  private void fireNotification(CoreEvent event, Processor processor,
                                 MessagingException exceptionThrown, int action) {
-    if (serverNotificationManager != null
-        && serverNotificationManager.isNotificationEnabled(MessageProcessorNotification.class)) {
-
-      if (((Component) processor).getLocation() != null) {
-        serverNotificationManager
-            .fireNotification(createFrom(event, ((Component) processor).getLocation(), (Component) processor,
-                                         exceptionThrown, action));
+    if (serverNotificationHandler != null) {
+      if (processor instanceof Component && ((Component) processor).getLocation() != null) {
+        serverNotificationHandler.fireNotification(createFrom(event, ((Component) processor).getLocation(), (Component) processor,
+                                                              exceptionThrown, action));
       }
     }
   }
@@ -455,10 +564,14 @@ abstract class AbstractMessageProcessorChain extends AbstractExecutableComponent
       stopIfNeeded(getMessageProcessorsForLifecycle());
       throw e;
     }
+
+    registerStopListener();
+    canProcessMessage = true;
   }
 
   @Override
   public void stop() throws MuleException {
+    canProcessMessage = false;
     stopIfNeeded(getMessageProcessorsForLifecycle());
   }
 

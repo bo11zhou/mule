@@ -6,7 +6,6 @@
  */
 package org.mule.runtime.core.api;
 
-import org.mule.runtime.api.artifact.Registry;
 import org.mule.runtime.api.component.location.ConfigurationComponentLocator;
 import org.mule.runtime.api.config.custom.CustomizationService;
 import org.mule.runtime.api.event.EventContext;
@@ -72,9 +71,9 @@ public interface MuleContext extends Lifecycle {
   void setTransactionManager(TransactionManager manager) throws Exception;
 
   /**
-   * Returns the Jta transaction manager used by this Mule server instance. or null if a transaction manager has not been set
+   * Returns the Jta transaction manager used by this Mule server instance, or null if a transaction manager has not been set
    *
-   * @return the Jta transaction manager used by this Mule server instance. or null if a transaction manager has not been set
+   * @return the Jta transaction manager used by this Mule server instance, or null if a transaction manager has not been set
    */
   TransactionManager getTransactionManager();
 

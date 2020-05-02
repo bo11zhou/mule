@@ -6,10 +6,12 @@
  */
 package org.mule.runtime.core.internal.processor.strategy;
 
+import static org.mule.runtime.core.api.processor.ReactiveProcessor.ProcessingType.CPU_LITE_ASYNC;
 import static org.mule.runtime.core.api.rx.Exceptions.unwrap;
 import static org.mule.runtime.core.api.rx.Exceptions.wrapFatal;
 import static reactor.core.publisher.Flux.from;
 import static reactor.core.publisher.Mono.just;
+import static reactor.core.publisher.Mono.subscriberContext;
 
 import org.mule.runtime.core.api.MuleContext;
 import org.mule.runtime.core.api.construct.FlowConstruct;
@@ -59,16 +61,24 @@ public class BlockingProcessingStrategyFactory implements ProcessingStrategyFact
 
     @Override
     public ReactiveProcessor onProcessor(ReactiveProcessor processor) {
-      return publisher -> from(publisher).handle((event, sink) -> {
-        try {
-          CoreEvent result = just(event).transform(processor).block();
-          if (result != null) {
-            sink.next(result);
-          }
-        } catch (Throwable throwable) {
-          sink.error(wrapFatal(unwrap(throwable)));
-        }
-      });
+      if (processor.getProcessingType() == CPU_LITE_ASYNC) {
+        return publisher -> subscriberContext()
+            .flatMapMany(ctx -> from(publisher).handle((event, sink) -> {
+              try {
+                CoreEvent result = just(event).transform(processor)
+                    .onErrorStop()
+                    .subscriberContext(ctx)
+                    .block();
+                if (result != null) {
+                  sink.next(result);
+                }
+              } catch (Throwable throwable) {
+                sink.error(wrapFatal(unwrap(throwable)));
+              }
+            }));
+      } else {
+        return processor;
+      }
     }
 
   }

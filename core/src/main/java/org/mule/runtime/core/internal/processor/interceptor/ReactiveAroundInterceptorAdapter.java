@@ -6,11 +6,14 @@
  */
 package org.mule.runtime.core.internal.processor.interceptor;
 
+import static java.lang.Thread.currentThread;
 import static java.util.Optional.empty;
-import static org.mule.runtime.core.api.util.ClassUtils.withContextClassLoader;
+import static org.mule.runtime.core.api.util.ClassUtils.setContextClassLoader;
+import static org.slf4j.LoggerFactory.getLogger;
 import static reactor.core.Exceptions.propagate;
 import static reactor.core.publisher.Flux.from;
 import static reactor.core.publisher.Mono.fromFuture;
+import static reactor.core.publisher.Mono.subscriberContext;
 
 import org.mule.runtime.api.component.Component;
 import org.mule.runtime.api.component.location.ComponentLocation;
@@ -24,25 +27,25 @@ import org.mule.runtime.core.api.processor.ReactiveProcessor;
 import org.mule.runtime.core.internal.exception.MessagingException;
 import org.mule.runtime.core.internal.interception.DefaultInterceptionEvent;
 import org.mule.runtime.core.internal.message.InternalEvent;
-import org.mule.runtime.core.privileged.PrivilegedMuleContext;
-
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 
+import org.slf4j.Logger;
+
+import reactor.util.context.Context;
+
 /**
  * Hooks the {@link ProcessorInterceptor}s
- * {@link ProcessorInterceptor#around(org.mule.runtime.api.component.location.ComponentLocation, java.util.Map, org.mule.runtime.api.interception.InterceptionEvent, org.mule.runtime.api.interception.InterceptionAction)
+ * {@link ProcessorInterceptor#around(ComponentLocation, Map, InterceptionEvent, InterceptionAction)
  * around} method for a {@link Processor} into the {@code Reactor} pipeline.
  *
  * @since 4.0
  */
 public class ReactiveAroundInterceptorAdapter extends ReactiveInterceptorAdapter {
 
-  private static final Logger LOGGER = LoggerFactory.getLogger(ReactiveAroundInterceptorAdapter.class);
+  private static final Logger LOGGER = getLogger(ReactiveAroundInterceptorAdapter.class);
 
   private static final String AROUND_METHOD_NAME = "around";
 
@@ -55,10 +58,13 @@ public class ReactiveAroundInterceptorAdapter extends ReactiveInterceptorAdapter
                                       ProcessorInterceptor interceptor, Map<String, String> dslParameters) {
     if (implementsAround(interceptor)) {
       LOGGER.debug("Configuring interceptor '{}' around processor '{}'...", interceptor, componentLocation.getLocation());
-      return publisher -> from(publisher)
-          .cast(InternalEvent.class)
-          .flatMap(event -> fromFuture(doAround(event, interceptor, component, dslParameters, next))
-              .onErrorMap(CompletionException.class, completionException -> completionException.getCause()));
+
+      return publisher -> subscriberContext()
+          .flatMapMany(ctx -> from(publisher)
+              .cast(InternalEvent.class)
+              .flatMap(event -> fromFuture(doAround(event, interceptor, component, dslParameters, next, ctx))
+                  .onErrorMap(CompletionException.class,
+                              completionException -> completionException.getCause())));
     } else {
       return next;
     }
@@ -76,13 +82,12 @@ public class ReactiveAroundInterceptorAdapter extends ReactiveInterceptorAdapter
 
   private CompletableFuture<InternalEvent> doAround(InternalEvent event, ProcessorInterceptor interceptor,
                                                     Processor component, Map<String, String> dslParameters,
-                                                    ReactiveProcessor next) {
+                                                    ReactiveProcessor next, Context ctx) {
     final InternalEvent eventWithResolvedParams = addResolvedParameters(event, (Component) component, dslParameters);
 
     DefaultInterceptionEvent interceptionEvent = new DefaultInterceptionEvent(eventWithResolvedParams);
     final ReactiveInterceptionAction reactiveInterceptionAction =
-        new ReactiveInterceptionAction(interceptionEvent, next, component,
-                                       ((PrivilegedMuleContext) getMuleContext()).getErrorTypeLocator());
+        new ReactiveInterceptionAction(interceptionEvent, next, ctx, component, errorTypeLocator);
 
     if (LOGGER.isDebugEnabled()) {
       LOGGER.debug("Calling around() for '{}' in processor '{}'...", interceptor,
@@ -90,26 +95,33 @@ public class ReactiveAroundInterceptorAdapter extends ReactiveInterceptorAdapter
     }
 
     try {
-      return withContextClassLoader(interceptor.getClass().getClassLoader(), () -> interceptor
-          .around(((Component) component).getLocation(),
-                  getResolvedParams(eventWithResolvedParams), interceptionEvent,
-                  reactiveInterceptionAction))
-                      .exceptionally(t -> {
-                        if (t instanceof MessagingException) {
-                          throw new CompletionException(t);
-                        } else {
-                          throw new CompletionException(createMessagingException(eventWithResolvedParams,
-                                                                                 t instanceof CompletionException ? t.getCause()
-                                                                                     : t,
-                                                                                 (Component) component, empty()));
-                        }
-                      })
-                      .thenApply(interceptedEvent -> interceptedEvent != null
-                          ? ((DefaultInterceptionEvent) interceptedEvent).resolve()
-                          : null);
+      Thread currentThread = currentThread();
+      ClassLoader currentClassLoader = currentThread.getContextClassLoader();
+      ClassLoader contextClassLoader = interceptor.getClass().getClassLoader();
+      setContextClassLoader(currentThread, currentClassLoader, contextClassLoader);
+      CompletableFuture<InterceptionEvent> interception;
+      try {
+        interception = interceptor.around(((Component) component).getLocation(),
+                                          getResolvedParams(eventWithResolvedParams), interceptionEvent,
+                                          reactiveInterceptionAction);
+      } finally {
+        setContextClassLoader(currentThread, contextClassLoader, currentClassLoader);
+      }
+
+      return interception.exceptionally(t -> {
+        if (t instanceof MessagingException) {
+          throw new CompletionException(t);
+        } else {
+          throw new CompletionException(createMessagingException(eventWithResolvedParams,
+                                                                 t instanceof CompletionException ? t.getCause()
+                                                                     : t,
+                                                                 (Component) component, empty()));
+        }
+      }).thenApply(interceptedEvent -> interceptedEvent != null
+          ? ((DefaultInterceptionEvent) interceptedEvent).resolve()
+          : null);
     } catch (Exception e) {
       throw propagate(createMessagingException(interceptionEvent.resolve(), e, (Component) component, empty()));
     }
   }
-
 }

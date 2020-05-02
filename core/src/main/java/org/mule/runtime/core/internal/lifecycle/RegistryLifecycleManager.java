@@ -8,11 +8,13 @@ package org.mule.runtime.core.internal.lifecycle;
 
 import static java.util.Optional.empty;
 import static java.util.Optional.of;
+
 import org.mule.runtime.api.lifecycle.Disposable;
 import org.mule.runtime.api.lifecycle.Initialisable;
 import org.mule.runtime.api.lifecycle.LifecycleException;
 import org.mule.runtime.api.lifecycle.Startable;
 import org.mule.runtime.api.lifecycle.Stoppable;
+import org.mule.runtime.api.util.collection.SmallMap;
 import org.mule.runtime.core.api.MuleContext;
 import org.mule.runtime.core.api.connector.ConnectException;
 import org.mule.runtime.core.api.lifecycle.LifecycleCallback;
@@ -26,7 +28,6 @@ import org.mule.runtime.core.internal.lifecycle.phases.NotInLifecyclePhase;
 import org.mule.runtime.core.internal.registry.Registry;
 import org.mule.runtime.core.privileged.lifecycle.AbstractLifecycleManager;
 
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.SortedMap;
@@ -36,7 +37,7 @@ import java.util.TreeMap;
 public class RegistryLifecycleManager extends AbstractLifecycleManager<Registry> {
 
 
-  protected Map<String, LifecyclePhase> phases = new HashMap<>();
+  protected Map<String, LifecyclePhase> phases = new SmallMap<>();
   protected SortedMap<String, LifecycleCallback> callbacks = new TreeMap<>();
 
   protected MuleContext muleContext;
@@ -96,7 +97,7 @@ public class RegistryLifecycleManager extends AbstractLifecycleManager<Registry>
   }
 
   @Override
-  public void fireLifecycle(String destinationPhase) throws LifecycleException {
+  public synchronized void fireLifecycle(String destinationPhase) throws LifecycleException {
     checkPhase(destinationPhase);
     if (isDirectTransition(destinationPhase) || isLastPhaseExecutionFailed()) {
       // transition to phase without going through other phases first

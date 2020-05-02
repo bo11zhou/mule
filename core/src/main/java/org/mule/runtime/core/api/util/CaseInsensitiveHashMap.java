@@ -8,11 +8,9 @@ package org.mule.runtime.core.api.util;
 
 import static java.util.Collections.unmodifiableMap;
 
-import org.apache.commons.collections.map.AbstractHashedMap;
+import org.mule.api.annotation.NoExtend;
+import org.mule.runtime.api.util.CaseInsensitiveMapWrapper;
 
-import java.io.IOException;
-import java.io.ObjectInputStream;
-import java.io.ObjectOutputStream;
 import java.io.Serializable;
 import java.util.Collection;
 import java.util.Map;
@@ -33,6 +31,7 @@ import java.util.Set;
  *
  * @since 3.0.0
  */
+@NoExtend
 public class CaseInsensitiveHashMap<K, V> implements Map<K, V>, Serializable {
 
   /**
@@ -64,13 +63,27 @@ public class CaseInsensitiveHashMap<K, V> implements Map<K, V>, Serializable {
     return EMPTY_MAP;
   }
 
-  private final Map<K, V> delegate;
+  /**
+   * Creates a new instance which is backed by the given {@code map}. Said map is required to be empty
+   *
+   * @param map the backing map
+   * @param <K> the generic type of the key
+   * @param <V> the generic type of the value
+   * @return a new instance
+   * @throws IllegalArgumentException if {@code map} is not empty
+   * @since 4.3.0
+   */
+  public static <K, V> CaseInsensitiveHashMap<K, V> basedOn(Map<K, V> map) {
+    return new CaseInsensitiveHashMap<>(new CaseInsensitiveMapWrapper(map));
+  }
+
+  protected Map<K, V> delegate;
 
   /**
    * Constructs a new empty map with default size and load factor.
    */
   public CaseInsensitiveHashMap() {
-    delegate = wrap(new InternalCaseInsensitiveHashMap());
+    delegate = new CaseInsensitiveMapWrapper();
   }
 
   /**
@@ -83,11 +96,12 @@ public class CaseInsensitiveHashMap<K, V> implements Map<K, V>, Serializable {
    * @throws NullPointerException if the map is null
    */
   public CaseInsensitiveHashMap(Map map) {
-    delegate = wrap(new InternalCaseInsensitiveHashMap(map));
+    delegate = new CaseInsensitiveMapWrapper();
+    delegate.putAll(map);
   }
 
-  protected Map wrap(InternalCaseInsensitiveHashMap map) {
-    return map;
+  private CaseInsensitiveHashMap(CaseInsensitiveMapWrapper delegate) {
+    this.delegate = delegate;
   }
 
   // -----------------------------------------------------------------------
@@ -100,6 +114,17 @@ public class CaseInsensitiveHashMap<K, V> implements Map<K, V>, Serializable {
   @Override
   public Object clone() {
     return new CaseInsensitiveHashMap<K, V>(delegate);
+  }
+
+  /**
+   * Creates a shallow copy of this instance. This is the recommended way of creating copy instances as this is optimized
+   * and usually much faster than using the {@link CaseInsensitiveHashMap#CaseInsensitiveHashMap(Map)} constructor.
+   *
+   * @return a shallow copy of {@code this} instance
+   * @since 4.3.0
+   */
+  public CaseInsensitiveHashMap<K, V> copy() {
+    return new CaseInsensitiveHashMap<>(((CaseInsensitiveMapWrapper) delegate).copy());
   }
 
   @Override
@@ -162,83 +187,6 @@ public class CaseInsensitiveHashMap<K, V> implements Map<K, V>, Serializable {
     return delegate.entrySet();
   }
 
-  private static class InternalCaseInsensitiveHashMap extends AbstractHashedMap implements Serializable {
-
-    /**
-     * Constructs a new empty map with default size and load factor.
-     */
-    public InternalCaseInsensitiveHashMap() {
-      super(DEFAULT_CAPACITY, DEFAULT_LOAD_FACTOR, DEFAULT_THRESHOLD);
-    }
-
-    /**
-     * Constructor copying elements from another map.
-     * <p/>
-     * Keys will be converted to lower case strings, which may cause some entries to be removed (if string representation of keys
-     * differ only by character case).
-     *
-     * @param map the map to copy
-     * @throws NullPointerException if the map is null
-     */
-    public InternalCaseInsensitiveHashMap(Map map) {
-      super(map);
-    }
-
-    /**
-     * Creates a hash value from the lower case value of the key. The same function will be used when querying a value in the map
-     * also
-     *
-     * @param key the key value to hash
-     * @return a hash value for the lower case key
-     */
-    @Override
-    protected int hash(Object key) {
-      return super.hash(key.toString().toLowerCase());
-    }
-
-    /**
-     * Overloads the default behaviour to compare the keys without case sensitivity
-     *
-     * @param key1 the first key
-     * @param key2 the key to compare against
-     * @return true is the keys match
-     */
-    @Override
-    protected boolean isEqualKey(Object key1, Object key2) {
-      if (key1 instanceof String && key2 instanceof String) {
-        return (((String) key1).equalsIgnoreCase((String) key2));
-      } else {
-        return super.isEqualKey(key1, key2);
-      }
-    }
-
-    /**
-     * Clones the map without cloning the keys or values.
-     *
-     * @return a shallow clone
-     */
-    @Override
-    public Object clone() {
-      return super.clone();
-    }
-
-    /**
-     * Write the map out using a custom routine.
-     */
-    private void writeObject(ObjectOutputStream out) throws IOException {
-      out.defaultWriteObject();
-      doWriteObject(out);
-    }
-
-    /**
-     * Read the map in using a custom routine.
-     */
-    private void readObject(ObjectInputStream in) throws IOException, ClassNotFoundException {
-      in.defaultReadObject();
-      doReadObject(in);
-    }
-  }
-
   @Override
   public String toString() {
     return delegate.toString();
@@ -246,26 +194,32 @@ public class CaseInsensitiveHashMap<K, V> implements Map<K, V>, Serializable {
 
   /**
    * @return an immutable version of this map.
-   *
    * @since 4.1.5
    */
   public CaseInsensitiveHashMap<K, V> toImmutableCaseInsensitiveMap() {
-    if (this instanceof ImmutableCaseInsensitiveHashMap) {
-      return this;
+    if (isEmpty() && EMPTY_MAP != null) {
+      return EMPTY_MAP;
     }
     return new ImmutableCaseInsensitiveHashMap<>(this);
   }
 
   private static class ImmutableCaseInsensitiveHashMap<K, V> extends CaseInsensitiveHashMap<K, V> {
 
+    private transient final CaseInsensitiveHashMap<K, V> originalMap;
+
     private ImmutableCaseInsensitiveHashMap(CaseInsensitiveHashMap<K, V> caseInsensitiveHashMap) {
-      super(caseInsensitiveHashMap);
+      this.delegate = unmodifiableMap(caseInsensitiveHashMap);
+      originalMap = caseInsensitiveHashMap;
     }
 
     @Override
-    protected Map<K, V> wrap(InternalCaseInsensitiveHashMap map) {
-      return unmodifiableMap(map);
+    public CaseInsensitiveHashMap<K, V> toImmutableCaseInsensitiveMap() {
+      return this;
     }
 
+    @Override
+    public CaseInsensitiveHashMap<K, V> copy() {
+      return originalMap.copy();
+    }
   }
 }

@@ -16,6 +16,7 @@ import static org.mule.metadata.api.utils.MetadataTypeUtils.getLocalPart;
 import static org.mule.metadata.java.api.utils.JavaTypeUtils.getType;
 import static org.mule.runtime.api.i18n.I18nMessageFactory.createStaticMessage;
 import static org.mule.runtime.api.util.collection.Collectors.toImmutableList;
+import static org.mule.runtime.api.util.collection.SmallMap.forSize;
 import static org.mule.runtime.core.api.lifecycle.LifecycleUtils.initialiseIfNeeded;
 import static org.mule.runtime.extension.api.util.ExtensionMetadataTypeUtils.isFlattenedParameterGroup;
 import static org.mule.runtime.extension.api.util.NameUtils.getComponentModelTypeName;
@@ -44,6 +45,7 @@ import org.mule.runtime.api.meta.model.parameter.ParameterizedModel;
 import org.mule.runtime.api.store.ObjectStore;
 import org.mule.runtime.core.api.MuleContext;
 import org.mule.runtime.core.api.config.ConfigurationException;
+import org.mule.runtime.core.api.el.ExpressionManager;
 import org.mule.runtime.extension.api.declaration.type.ExtensionsTypeLoaderFactory;
 import org.mule.runtime.extension.api.declaration.type.annotation.ConfigOverrideTypeAnnotation;
 import org.mule.runtime.extension.api.declaration.type.annotation.ExclusiveOptionalsTypeAnnotation;
@@ -54,12 +56,12 @@ import org.mule.runtime.extension.api.util.ExtensionMetadataTypeUtils;
 import org.mule.runtime.module.extension.internal.loader.ParameterGroupDescriptor;
 import org.mule.runtime.module.extension.internal.loader.java.property.NullSafeModelProperty;
 import org.mule.runtime.module.extension.internal.loader.java.property.ParameterGroupModelProperty;
+import org.mule.runtime.module.extension.internal.loader.java.type.property.ExtensionParameterDescriptorModelProperty;
+import org.mule.runtime.module.extension.internal.runtime.ValueResolvingException;
 import org.mule.runtime.module.extension.internal.runtime.exception.RequiredParameterNotSetException;
 import org.mule.runtime.module.extension.internal.runtime.objectbuilder.DefaultObjectBuilder;
 import org.mule.runtime.module.extension.internal.runtime.objectbuilder.ExclusiveParameterGroupObjectBuilder;
 import org.mule.runtime.module.extension.internal.util.ReflectionCache;
-
-import com.google.common.base.Joiner;
 
 import java.lang.reflect.Field;
 import java.util.Collection;
@@ -71,6 +73,9 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
+
+import com.google.common.base.Joiner;
 
 /**
  * Contains behavior to obtain a ResolverSet for a set of parameters values and a {@link ParameterizedModel}.
@@ -83,28 +88,31 @@ public final class ParametersResolver implements ObjectTypeParametersResolver {
   private final MuleContext muleContext;
   private final Map<String, ?> parameters;
   private final ReflectionCache reflectionCache;
+  private final ExpressionManager expressionManager;
 
   private ParametersResolver(MuleContext muleContext, Map<String, ?> parameters, boolean lazyInitEnabled,
-                             ReflectionCache reflectionCache) {
+                             ReflectionCache reflectionCache, ExpressionManager expressionManager) {
     this.muleContext = muleContext;
     this.parameters = parameters;
     this.lazyInitEnabled = lazyInitEnabled;
     this.reflectionCache = reflectionCache;
+    this.expressionManager = expressionManager;
   }
 
   public static ParametersResolver fromValues(Map<String, ?> parameters, MuleContext muleContext, boolean lazyInitEnabled,
-                                              ReflectionCache reflectionCache) {
-    return new ParametersResolver(muleContext, parameters, lazyInitEnabled, reflectionCache);
+                                              ReflectionCache reflectionCache, ExpressionManager expressionManager) {
+    return new ParametersResolver(muleContext, parameters, lazyInitEnabled, reflectionCache, expressionManager);
   }
 
   public static ParametersResolver fromDefaultValues(ParameterizedModel parameterizedModel, MuleContext muleContext,
-                                                     ReflectionCache reflectionCache) {
-    Map<String, Object> parameterValues = new HashMap<>();
-    for (ParameterModel model : parameterizedModel.getAllParameterModels()) {
+                                                     ReflectionCache reflectionCache, ExpressionManager expressionManager) {
+    List<ParameterModel> allParameterModels = parameterizedModel.getAllParameterModels();
+    Map<String, Object> parameterValues = forSize(allParameterModels.size());
+    for (ParameterModel model : allParameterModels) {
       parameterValues.put(model.getName(), model.getDefaultValue());
     }
 
-    return new ParametersResolver(muleContext, parameterValues, false, reflectionCache);
+    return new ParametersResolver(muleContext, parameterValues, false, reflectionCache, expressionManager);
   }
 
   /**
@@ -134,32 +142,13 @@ public final class ParametersResolver implements ObjectTypeParametersResolver {
    *
    * @return a {@link ResolverSet}
    */
-  public ResolverSet getParametersAsResolverSet(MuleContext muleContext, ParameterizedModel model,
-                                                List<ParameterGroupModel> groups)
+  public ResolverSet getParametersAsResolverSet(MuleContext context, ParameterizedModel model, List<ParameterGroupModel> groups)
       throws ConfigurationException {
-
     List<ParameterGroupModel> inlineGroups = getInlineGroups(groups);
     List<ParameterModel> allParameters = groups.stream().flatMap(g -> g.getParameterModels().stream()).collect(toList());
-    ResolverSet resolverSet = getParametersAsResolverSet(model, getFlatParameters(inlineGroups, allParameters), muleContext);
+    ResolverSet resolverSet = getParametersAsResolverSet(model, getFlatParameters(inlineGroups, allParameters), context);
     for (ParameterGroupModel group : inlineGroups) {
-      getInlineGroupResolver(group, resolverSet, muleContext);
-    }
-    return resolverSet;
-  }
-
-  /**
-   * Constructs a {@link ResolverSet} from the parameters, using {@link #toValueResolver(Object, Set)} to process the values.
-   *
-   * @return a {@link ResolverSet}
-   */
-  public ResolverSet getParametersAsHashedResolverSet(ParameterizedModel model, MuleContext muleContext)
-      throws ConfigurationException {
-
-    List<ParameterGroupModel> inlineGroups = getInlineGroups(model.getParameterGroupModels());
-    ResolverSet resolverSet =
-        getParametersAsHashedResolverSet(model, getFlatParameters(inlineGroups, model.getAllParameterModels()), muleContext);
-    for (ParameterGroupModel group : inlineGroups) {
-      getInlineGroupResolver(group, resolverSet, muleContext);
+      getInlineGroupResolver(group, resolverSet, context);
     }
     return resolverSet;
   }
@@ -177,13 +166,13 @@ public final class ParametersResolver implements ObjectTypeParametersResolver {
     } else if (descriptor.isPresent()) {
       resolverSet.add(groupKey,
                       NullSafeValueResolverWrapper.of(new StaticValueResolver<>(null), descriptor.get().getMetadataType(),
-                                                      reflectionCache, muleContext, this));
+                                                      reflectionCache, expressionManager, muleContext, this));
     } else {
       List<ValueResolver<Object>> keyResolvers = new LinkedList<>();
       List<ValueResolver<Object>> valueResolvers = new LinkedList<>();
 
       group.getParameterModels().forEach(param -> {
-        ValueResolver<Object> parameterValueResolver = getParameterValueResolver(param, param.getName(), muleContext);
+        ValueResolver<Object> parameterValueResolver = getParameterValueResolver(param);
         if (parameterValueResolver != null) {
           keyResolvers.add(new StaticValueResolver<>(param.getName()));
           valueResolvers.add(parameterValueResolver);
@@ -194,69 +183,77 @@ public final class ParametersResolver implements ObjectTypeParametersResolver {
     }
   }
 
-  public ResolverSet getParametersAsResolverSet(ParameterizedModel model, List<ParameterModel> parameterModels,
-                                                MuleContext muleContext)
+  public ResolverSet getParametersAsResolverSet(ParameterizedModel model, List<ParameterModel> parameters, MuleContext context)
       throws ConfigurationException {
-    ResolverSet resolverSet = new ResolverSet(muleContext);
-    return getResolverSet(Optional.of(model), model.getParameterGroupModels(), parameterModels, muleContext, resolverSet);
-  }
-
-  public ResolverSet getParametersAsHashedResolverSet(ParameterizedModel model, List<ParameterModel> parameterModels,
-                                                      MuleContext muleContext)
-      throws ConfigurationException {
-    ResolverSet resolverSet = new HashedResolverSet(muleContext);
-    return getResolverSet(Optional.of(model), model.getParameterGroupModels(), parameterModels, muleContext, resolverSet);
+    ResolverSet resolverSet = new ResolverSet(context);
+    return getResolverSet(Optional.of(model), model.getParameterGroupModels(), parameters, resolverSet);
   }
 
   public ResolverSet getParametersAsResolverSet(List<ParameterGroupModel> groups, List<ParameterModel> parameterModels,
                                                 MuleContext muleContext)
       throws ConfigurationException {
     ResolverSet resolverSet = new ResolverSet(muleContext);
-    return getResolverSet(Optional.empty(), groups, parameterModels, muleContext, resolverSet);
+    return getResolverSet(Optional.empty(), groups, parameterModels, resolverSet);
   }
 
   private ResolverSet getResolverSet(Optional<ParameterizedModel> model, List<ParameterGroupModel> groups,
-                                     List<ParameterModel> parameterModels, MuleContext muleContext,
-                                     ResolverSet resolverSet)
+                                     List<ParameterModel> parameterModels, ResolverSet resolverSet)
       throws ConfigurationException {
-    Map<String, String> aliasedParameterNames = new HashMap<>();
+    Map<String, String> aliasedParameterNames = forSize(parameterModels.size());
     parameterModels.forEach(p -> {
-      final String parameterName = getMemberName(p, p.getName());
-      if (!parameterName.equals(p.getName())) {
-        aliasedParameterNames.put(parameterName, p.getName());
-      }
-      ValueResolver<?> resolver = getParameterValueResolver(p, parameterName, muleContext);
-
-      if (resolver != null) {
-        resolverSet.add(parameterName, resolver);
-      } else if (p.isRequired() && !lazyInitEnabled) {
-        throw new RequiredParameterNotSetException(p);
+      if (!p.isComponentId()
+          // This model property exists only for non synthetic parameters, in which case the value resolver has to be created,
+          // regardless of the parameter being the componentId
+          || p.getModelProperty(ExtensionParameterDescriptorModelProperty.class).isPresent()) {
+        final String parameterName = getMemberName(p, p.getName());
+        if (!parameterName.equals(p.getName())) {
+          aliasedParameterNames.put(parameterName, p.getName());
+        }
+        ValueResolver<?> resolver = getParameterValueResolver(p);
+        if (resolver != null) {
+          resolverSet.add(parameterName, resolver);
+        } else if (p.isRequired() && !lazyInitEnabled) {
+          throw new RequiredParameterNotSetException(p);
+        }
       }
     });
 
     checkParameterGroupExclusiveness(model, groups,
-                                     parameters.keySet().stream().map(k -> aliasedParameterNames.getOrDefault(k, k))
+                                     parameters.entrySet().stream().flatMap(entry -> {
+                                       if (entry.getValue() instanceof ParameterValueResolver) {
+                                         try {
+                                           return ((ParameterValueResolver) entry.getValue()).getParameters().keySet()
+                                               .stream().map(k -> aliasedParameterNames.getOrDefault(k, k));
+                                         } catch (ValueResolvingException e) {
+                                           throw new MuleRuntimeException(e);
+                                         }
+                                       } else {
+                                         String key = entry.getKey();
+                                         aliasedParameterNames.getOrDefault(key, key);
+                                         return Stream.of(key);
+                                       }
+                                     })
                                          .collect(Collectors.toSet()));
     return resolverSet;
   }
 
-  private ValueResolver<Object> getParameterValueResolver(ParameterModel parameterModel, String parameterName,
-                                                          MuleContext muleContext) {
+  private ValueResolver<Object> getParameterValueResolver(ParameterModel parameter) {
     ValueResolver<?> resolver;
+    String parameterName = parameter.getName();
     if (parameters.containsKey(parameterName)) {
-      resolver = toValueResolver(parameters.get(parameterName), parameterModel.getModelProperties());
+      resolver = toValueResolver(parameters.get(parameterName), parameter.getModelProperties());
     } else {
       // TODO MULE-13066 Extract ParameterResolver logic into a centralized resolver
-      resolver = getDefaultValueResolver(parameterModel, this.muleContext);
+      resolver = getDefaultValueResolver(parameter, muleContext);
     }
 
-    if (isNullSafe(parameterModel)) {
+    if (isNullSafe(parameter)) {
       ValueResolver<?> delegate = resolver != null ? resolver : new StaticValueResolver<>(null);
-      MetadataType type = parameterModel.getModelProperty(NullSafeModelProperty.class).get().defaultType();
-      resolver = NullSafeValueResolverWrapper.of(delegate, type, reflectionCache, this.muleContext, this);
+      MetadataType type = parameter.getModelProperty(NullSafeModelProperty.class).get().defaultType();
+      resolver = NullSafeValueResolverWrapper.of(delegate, type, reflectionCache, expressionManager, this.muleContext, this);
     }
 
-    if (parameterModel.isOverrideFromConfig()) {
+    if (parameter.isOverrideFromConfig()) {
       resolver = ConfigOverrideValueResolverWrapper.of(resolver != null ? resolver : new StaticValueResolver<>(null),
                                                        parameterName, reflectionCache, this.muleContext);
     }
@@ -333,7 +330,7 @@ public final class ParametersResolver implements ObjectTypeParametersResolver {
         ValueResolver<?> delegate = valueResolver != null ? valueResolver : new StaticValueResolver<>(null);
         MetadataType type =
             getMetadataType(nullSafe.get().getType(), ExtensionsTypeLoaderFactory.getDefault().createTypeLoader());
-        valueResolver = NullSafeValueResolverWrapper.of(delegate, type, reflectionCache, muleContext, this);
+        valueResolver = NullSafeValueResolverWrapper.of(delegate, type, reflectionCache, expressionManager, muleContext, this);
       }
 
       if (field.getAnnotation(ConfigOverrideTypeAnnotation.class).isPresent()) {
@@ -362,7 +359,8 @@ public final class ParametersResolver implements ObjectTypeParametersResolver {
                                                                       key)));
   }
 
-  public void checkParameterGroupExclusiveness(Optional<ParameterizedModel> model, List<ParameterGroupModel> groups,
+  public void checkParameterGroupExclusiveness(Optional<ParameterizedModel> model,
+                                               List<ParameterGroupModel> groups,
                                                Set<String> resolverKeys)
       throws ConfigurationException {
     if (!lazyInitEnabled) {
@@ -418,7 +416,7 @@ public final class ParametersResolver implements ObjectTypeParametersResolver {
    * <p>
    * Other values (including {@code null}) are wrapped in a {@link StaticValueResolver}.
    *
-   * @param value the value to expose
+   * @param value           the value to expose
    * @param modelProperties of the value's parameter
    * @return a {@link ValueResolver}
    */

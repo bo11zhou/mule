@@ -12,6 +12,7 @@ import org.mule.runtime.api.event.EventContext;
 import org.mule.runtime.api.exception.MuleException;
 import org.mule.runtime.api.message.Message;
 import org.mule.runtime.api.metadata.DataType;
+import org.mule.runtime.api.metadata.TypedValue;
 import org.mule.runtime.api.security.SecurityContext;
 import org.mule.runtime.core.api.MuleContext;
 import org.mule.runtime.core.api.event.CoreEvent;
@@ -261,6 +262,15 @@ public interface PrivilegedEvent extends CoreEvent {
     @Override
     Builder variables(Map<String, ?> variables);
 
+    /**
+     * Similar to {@link #variables(Map)}, but with optimizations when the variables map is obtained directly from another event
+     * to overwrite the variables of the target event.
+     *
+     * @param variables variables to be set.
+     * @return the builder instance
+     */
+    Builder variablesTyped(Map<String, TypedValue<?>> variables);
+
     @Override
     Builder addVariable(String key, Object value);
 
@@ -269,6 +279,9 @@ public interface PrivilegedEvent extends CoreEvent {
 
     @Override
     Builder removeVariable(String key);
+
+    @Override
+    Builder clearVariables();
 
     @Override
     @Deprecated

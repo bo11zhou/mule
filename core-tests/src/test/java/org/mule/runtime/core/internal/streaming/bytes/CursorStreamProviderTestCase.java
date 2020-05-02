@@ -8,7 +8,6 @@ package org.mule.runtime.core.internal.streaming.bytes;
 
 import static java.lang.Math.toIntExact;
 import static java.util.concurrent.Executors.newScheduledThreadPool;
-import static java.util.concurrent.Executors.newSingleThreadExecutor;
 import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.apache.commons.lang3.RandomStringUtils.randomAlphabetic;
 import static org.hamcrest.CoreMatchers.equalTo;
@@ -17,7 +16,9 @@ import static org.hamcrest.CoreMatchers.nullValue;
 import static org.junit.Assert.assertThat;
 import static org.mule.runtime.api.util.DataUnit.BYTE;
 import static org.mule.runtime.core.api.rx.Exceptions.unwrap;
+import static org.mule.runtime.dsl.api.component.config.DefaultComponentLocation.fromSingleComponent;
 import static org.mule.test.allure.AllureConstants.StreamingFeature.STREAMING;
+
 import org.mule.runtime.api.streaming.bytes.CursorStream;
 import org.mule.runtime.api.streaming.bytes.CursorStreamProvider;
 import org.mule.runtime.api.util.DataSize;
@@ -33,7 +34,6 @@ import java.io.InputStream;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
 import java.util.concurrent.ScheduledExecutorService;
 
@@ -58,7 +58,7 @@ public class CursorStreamProviderTestCase extends AbstractByteStreamingTestCase 
     });
   }
 
-  private final int halfDataLength;
+  private int halfDataLength;
   private final int bufferSize;
   private final int maxBufferSize;
   protected final ScheduledExecutorService executorService;
@@ -66,7 +66,6 @@ public class CursorStreamProviderTestCase extends AbstractByteStreamingTestCase 
   private CursorStreamProvider streamProvider;
   private CountDownLatch controlLatch;
   private CountDownLatch mainThreadLatch;
-  private ExecutorService allocationScheduler;
   protected PoolingByteBufferManager bufferManager;
 
   public CursorStreamProviderTestCase(String name, int dataSize, int bufferSize, int maxBufferSize) {
@@ -81,19 +80,22 @@ public class CursorStreamProviderTestCase extends AbstractByteStreamingTestCase 
 
   @Before
   public void before() {
-    allocationScheduler = newSingleThreadExecutor();
-    bufferManager = new PoolingByteBufferManager(allocationScheduler);
-    final ByteArrayInputStream dataStream = new ByteArrayInputStream(data.getBytes());
+    bufferManager = new PoolingByteBufferManager();
+    final InputStream dataStream = createDataStream();
     streamProvider = createStreamProvider(bufferSize, maxBufferSize, dataStream);
   }
 
-  protected CursorStreamProvider createStreamProvider(int bufferSize, int maxBufferSize, ByteArrayInputStream dataStream) {
+  protected InputStream createDataStream() {
+    return new ByteArrayInputStream(data.getBytes());
+  }
+
+  protected CursorStreamProvider createStreamProvider(int bufferSize, int maxBufferSize, InputStream dataStream) {
     InMemoryCursorStreamConfig config =
         new InMemoryCursorStreamConfig(new DataSize(bufferSize, BYTE),
                                        new DataSize(bufferSize / 2, BYTE),
                                        new DataSize(maxBufferSize, BYTE));
 
-    return new InMemoryCursorStreamProvider(dataStream, config, bufferManager);
+    return new InMemoryCursorStreamProvider(dataStream, config, bufferManager, fromSingleComponent("log"), false);
   }
 
   @After
@@ -101,7 +103,6 @@ public class CursorStreamProviderTestCase extends AbstractByteStreamingTestCase 
     streamProvider.close();
     executorService.shutdownNow();
     bufferManager.dispose();
-    allocationScheduler.shutdownNow();
   }
 
   @Test
@@ -218,6 +219,21 @@ public class CursorStreamProviderTestCase extends AbstractByteStreamingTestCase 
   }
 
   @Test
+  public void readsMostOfTheStreamInFirstAccessAndRemainderInSecond() throws Exception {
+    byte[] dest = new byte[data.length()];
+    halfDataLength = new Double(Math.floor(halfDataLength * .8)).intValue();
+    withCursor(cursor -> {
+      int read = cursor.read(dest, 0, halfDataLength);
+      assertThat(read, is(halfDataLength));
+      assertEquals(toString(dest, 0, halfDataLength), data.substring(0, halfDataLength));
+
+      int secondRead = cursor.read(dest, read, data.length() - read);
+      assertThat(secondRead, is(data.length() - read));
+      assertEquals(toString(dest, halfDataLength, data.length() - read), data.substring(halfDataLength));
+    });
+  }
+
+  @Test
   public void consumeByChunksWhichOverlapWithBuffer() throws Exception {
     StringBuilder accumulator = new StringBuilder();
     withCursor(cursor -> {
@@ -278,7 +294,7 @@ public class CursorStreamProviderTestCase extends AbstractByteStreamingTestCase 
   @Test
   public void dataLengthMatchesMaxBufferSizeExactly() throws Exception {
     data = randomAlphabetic(maxBufferSize);
-    final ByteArrayInputStream dataStream = new ByteArrayInputStream(data.getBytes());
+    final InputStream dataStream = createDataStream();
 
     InMemoryCursorStreamConfig config =
         new InMemoryCursorStreamConfig(new DataSize(maxBufferSize, BYTE),

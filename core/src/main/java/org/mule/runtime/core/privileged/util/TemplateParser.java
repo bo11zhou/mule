@@ -6,11 +6,15 @@
  */
 package org.mule.runtime.core.privileged.util;
 
+import static java.lang.String.format;
+import static org.mule.runtime.api.util.collection.SmallMap.forSize;
+import static org.mule.runtime.api.util.collection.SmallMap.of;
+
 import org.mule.runtime.api.util.Pair;
+import org.mule.runtime.api.util.collection.SmallMap;
 import org.mule.runtime.core.api.util.CaseInsensitiveHashMap;
 
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Stack;
@@ -19,8 +23,6 @@ import java.util.regex.Pattern;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-import static java.lang.String.format;
 
 /**
  * <code>TemplateParser</code> is a simple string parser that will substitute tokens in a string with values supplied in a Map.
@@ -35,29 +37,31 @@ public final class TemplateParser {
   private static final char START_EXPRESSION = '#';
   private static final char OPEN_EXPRESSION = '[';
   private static final char CLOSE_EXPRESSION = ']';
+  private static final Pattern ESCAPE_PATTERN = Pattern.compile("(^|[^\\\\])" + START_EXPRESSION);
   private static final String EXPRESSION_NOT_CLOSED_ERROR_MSG = "\tOpened expression (%c) at line %d, column %d is not closed\n";
   private static final String QUOTATION_NOT_CLOSED_ERROR_MSG =
       "\tQuotation (%c) at line %d, column %d is not closed. Remember to use backslash (\\) if you are trying to use that character as a literal";
   private static final String PARSING_TEMPLATE_ERROR = "Error while parsing template:\n";
 
-  private static final Map<String, PatternInfo> patterns = new HashMap<>();
+  private static final Map<String, PatternInfo> patterns = of(
+                                                              ANT_TEMPLATE_STYLE,
+                                                              new PatternInfo(ANT_TEMPLATE_STYLE, "\\$\\{[^\\{\\}]+\\}", "${",
+                                                                              "}"),
+                                                              SQUARE_TEMPLATE_STYLE,
+                                                              new PatternInfo(SQUARE_TEMPLATE_STYLE, "\\[[^\\[\\]]+\\]", "[",
+                                                                              "]"),
+                                                              CURLY_TEMPLATE_STYLE,
+                                                              new PatternInfo(CURLY_TEMPLATE_STYLE, "\\{[^\\{\\}}]+\\}", "{",
+                                                                              "}"),
 
-  static {
-    patterns.put(ANT_TEMPLATE_STYLE, new PatternInfo(ANT_TEMPLATE_STYLE, "\\$\\{[^\\{\\}]+\\}", "${", "}"));
-    patterns.put(SQUARE_TEMPLATE_STYLE, new PatternInfo(SQUARE_TEMPLATE_STYLE, "\\[[^\\[\\]]+\\]", "[", "]"));
-    patterns.put(CURLY_TEMPLATE_STYLE, new PatternInfo(CURLY_TEMPLATE_STYLE, "\\{[^\\{\\}}]+\\}", "{", "}"));
-
-    // Such a complex regex is needed to support nested expressions, otherwise we
-    // have to do this manually or using an ANTLR grammar etc.
-
-    //TODO MULE-14603 - Expression Regex fails on detect expression when this have an unbalanced opening bracket
-    // Support for 6 levels (5 nested)
-    patterns.put(WIGGLY_MULE_TEMPLATE_STYLE,
-                 new PatternInfo(WIGGLY_MULE_TEMPLATE_STYLE,
-                                 "#\\[((?:#?\\[(?:#?\\[(?:#?\\[(?:#?\\[(?:#?\\[.*?\\]|[^\\[\\]])*?\\]|[^\\[\\]])*?\\]|[^\\[\\]])*?\\]|[^\\[\\]])*?\\]|[^\\[\\]])*?)\\]",
-                                 "#[", "]"));
-  }
-
+                                                              // Such a complex regex is needed to support nested expressions, otherwise we
+                                                              // have to do this manually or using an ANTLR grammar etc.
+                                                              // TODO MULE-14603 - Expression Regex fails on detect expression when this have an unbalanced opening bracket
+                                                              // Support for 6 levels (5 nested)
+                                                              WIGGLY_MULE_TEMPLATE_STYLE,
+                                                              new PatternInfo(WIGGLY_MULE_TEMPLATE_STYLE,
+                                                                              "#\\[((?:#?\\[(?:#?\\[(?:#?\\[(?:#?\\[(?:#?\\[.*?\\]|[^\\[\\]])*?\\]|[^\\[\\]])*?\\]|[^\\[\\]])*?\\]|[^\\[\\]])*?\\]|[^\\[\\]])*?)\\]",
+                                                                              "#[", "]"));
   /**
    * logger used by this class
    */
@@ -121,6 +125,7 @@ public final class TemplateParser {
 
     boolean lastIsBackSlash = false;
     boolean lastStartedExpression = false;
+    boolean inExpression = insideExpression;
     boolean openSingleQuotes = false;
 
     StringBuilder result = new StringBuilder();
@@ -131,14 +136,23 @@ public final class TemplateParser {
       if (lastStartedExpression && c != OPEN_EXPRESSION) {
         result.append(START_EXPRESSION);
       }
-
-      if (lastIsBackSlash && c != '\'' && c != '"' && c != START_EXPRESSION) {
-        result.append("\\");
+      if (lastStartedExpression && c == OPEN_EXPRESSION) {
+        inExpression = true;
+      }
+      if (inExpression && c == CLOSE_EXPRESSION) {
+        inExpression = false;
       }
 
-      if (!lastIsBackSlash && c == '\'') {
-        openSingleQuotes = !openSingleQuotes;
+      if (lastIsBackSlash) {
+        if ((inExpression ? c != '\'' && c != '"' : true) && c != START_EXPRESSION) {
+          result.append("\\");
+        }
+      } else {
+        if (c == '\'') {
+          openSingleQuotes = !openSingleQuotes;
+        }
       }
+
       if (c == OPEN_EXPRESSION && lastStartedExpression && (!insideExpression || !openSingleQuotes)) {
         int closing = closingBracesPosition(template, currentPosition);
         String enclosingTemplate = template.substring(currentPosition + 1, closing);
@@ -149,7 +163,7 @@ public final class TemplateParser {
           if (value == null) {
             value = NULL_AS_STRING;
           } else {
-            value = parseMule(props, escapeValue(enclosingTemplate, value.toString()), callback, true);
+            value = parseMule(props, escapeValue(enclosingTemplate, value.toString()), callback, value.equals(enclosingTemplate));
           }
         }
         result.append(value);
@@ -195,7 +209,8 @@ public final class TemplateParser {
     if (original.contains("#")) {
       return processed;
     }
-    return processed.replaceAll("(^|[^\\\\])" + START_EXPRESSION, "\\\\" + START_EXPRESSION);
+
+    return ESCAPE_PATTERN.matcher(processed).replaceAll("$1\\\\" + START_EXPRESSION);
   }
 
   protected String parse(Map<?, ?> props, String template, TemplateCallback callback) {
@@ -373,10 +388,10 @@ public final class TemplateParser {
 
   public Map<?, ?> parse(TemplateCallback callback, Map<?, ?> templates) {
     if (templates == null) {
-      return new HashMap<>();
+      return new SmallMap<>();
     }
 
-    Map<Object, String> map = new HashMap<>(templates.size());
+    Map<Object, String> map = forSize(templates.size());
     for (Map.Entry<?, ?> entry : templates.entrySet()) {
       map.put(entry.getKey(), parse(callback, entry.getValue().toString()));
     }

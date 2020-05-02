@@ -40,6 +40,7 @@ import org.mule.runtime.api.scheduler.Scheduler;
 import org.mule.runtime.api.scheduler.SchedulerService;
 import org.mule.runtime.extension.api.annotation.Alias;
 import org.mule.runtime.extension.api.annotation.Streaming;
+import org.mule.runtime.extension.api.annotation.deprecated.Deprecated;
 import org.mule.runtime.extension.api.annotation.execution.OnError;
 import org.mule.runtime.extension.api.annotation.execution.OnSuccess;
 import org.mule.runtime.extension.api.annotation.execution.OnTerminate;
@@ -78,29 +79,30 @@ import javax.inject.Inject;
 @Streaming
 @MediaType(TEXT_PLAIN)
 @BackPressure(defaultMode = FAIL, supportedModes = {FAIL, DROP})
+@Deprecated(message = "This source is being tapped by the DEA, it's usage is discouraged.", since = "1.6.0", toRemoveIn = "3.0.0")
 public class HeisenbergSource extends Source<String, Object> {
 
   public static final String CORE_POOL_SIZE_ERROR_MESSAGE = "corePoolSize cannot be a negative value";
   public static final String INITIAL_BATCH_NUMBER_ERROR_MESSAGE = "initialBatchNumber cannot be a negative value";
   private static final String BATCH_NUMBER = "batchNumber";
 
-  public static boolean receivedGroupOnSource;
-  public static boolean receivedInlineOnSuccess;
-  public static boolean receivedInlineOnError;
+  public static volatile boolean receivedGroupOnSource;
+  public static volatile boolean receivedInlineOnSuccess;
+  public static volatile boolean receivedInlineOnError;
 
-  public static TerminateStatus terminateStatus;
+  public static volatile TerminateStatus terminateStatus;
   public static java.util.Optional<Error> error;
 
-  public static boolean executedOnSuccess;
-  public static boolean executedOnError;
-  public static boolean executedOnTerminate;
+  public static volatile boolean executedOnSuccess;
+  public static volatile boolean executedOnError;
+  public static volatile boolean executedOnTerminate;
   public static long gatheredMoney;
 
   public static String configName;
   public static String location;
 
-  public static Map<String, Object> receivedDebtProperties;
-  public static Map<String, Weapon> receivedUsableWeapons;
+  public static volatile Map<String, Object> receivedDebtProperties;
+  public static volatile Map<String, Weapon> receivedUsableWeapons;
 
   @Inject
   private SchedulerService schedulerService;
@@ -122,7 +124,7 @@ public class HeisenbergSource extends Source<String, Object> {
   private int corePoolSize;
 
   @Parameter
-  @Optional(defaultValue = "300")
+  @Optional(defaultValue = "500")
   private long frequency;
 
   @RefName
@@ -147,7 +149,7 @@ public class HeisenbergSource extends Source<String, Object> {
   }
 
   @Override
-  public void onStart(SourceCallback<String, Object> sourceCallback) throws MuleException {
+  public synchronized void onStart(SourceCallback<String, Object> sourceCallback) throws MuleException {
     checkArgument(heisenberg != null, "config not injected");
     HeisenbergExtension.sourceTimesStarted++;
     configName = refName;
@@ -175,11 +177,11 @@ public class HeisenbergSource extends Source<String, Object> {
   }
 
   @OnSuccess
-  public void onSuccess(@Optional(defaultValue = PAYLOAD) Long payment, @Optional String sameNameParameter,
-                        @ParameterGroup(name = RICIN_GROUP_NAME) @DisplayName("Dangerous Ricin") RicinGroup ricin,
-                        @ParameterGroup(name = "Success Info", showInDsl = true) PersonalInfo successInfo,
-                        @Optional boolean fail,
-                        NotificationEmitter notificationEmitter) {
+  public synchronized void onSuccess(@Optional(defaultValue = PAYLOAD) Long payment, @Optional String sameNameParameter,
+                                     @ParameterGroup(name = RICIN_GROUP_NAME) @DisplayName("Dangerous Ricin") RicinGroup ricin,
+                                     @ParameterGroup(name = "Success Info", showInDsl = true) PersonalInfo successInfo,
+                                     @Optional boolean fail,
+                                     NotificationEmitter notificationEmitter) {
 
     gatheredMoney += payment;
     receivedGroupOnSource = ricin != null && ricin.getNextDoor().getAddress() != null;
@@ -194,11 +196,11 @@ public class HeisenbergSource extends Source<String, Object> {
   }
 
   @OnError
-  public void onError(Error error, @Optional String sameNameParameter, @Optional Methylamine methylamine,
-                      @ParameterGroup(name = RICIN_GROUP_NAME) RicinGroup ricin,
-                      @ParameterGroup(name = "Error Info", showInDsl = true) PersonalInfo infoError,
-                      @Optional boolean propagateError,
-                      NotificationEmitter notificationEmitter) {
+  public synchronized void onError(Error error, @Optional String sameNameParameter, @Optional Methylamine methylamine,
+                                   @ParameterGroup(name = RICIN_GROUP_NAME) RicinGroup ricin,
+                                   @ParameterGroup(name = "Error Info", showInDsl = true) PersonalInfo infoError,
+                                   @Optional boolean propagateError,
+                                   NotificationEmitter notificationEmitter) {
     gatheredMoney = -1;
     receivedGroupOnSource = ricin != null && ricin.getNextDoor() != null && ricin.getNextDoor().getAddress() != null;
     receivedInlineOnError = infoError != null && infoError.getName() != null && !infoError.getName().equals(HEISENBERG);
@@ -210,7 +212,7 @@ public class HeisenbergSource extends Source<String, Object> {
   }
 
   @OnTerminate
-  public void onTerminate(SourceResult sourceResult, NotificationEmitter notificationEmitter) {
+  public synchronized void onTerminate(SourceResult sourceResult, NotificationEmitter notificationEmitter) {
     if (sourceResult.isSuccess()) {
       terminateStatus = SUCCESS;
       error = empty();
@@ -238,13 +240,13 @@ public class HeisenbergSource extends Source<String, Object> {
   }
 
   @Override
-  public void onStop() {
-    if (executor != null) {
+  public synchronized void onStop() {
+    if (executor != null && scheduledFuture != null) {
       scheduledFuture.cancel(true);
       executor.stop();
     }
 
-    if (connection != null) {
+    if (connection != null && connectionProvider != null) {
       connectionProvider.disconnect(connection);
     }
 
@@ -267,7 +269,7 @@ public class HeisenbergSource extends Source<String, Object> {
     SUCCESS, ERROR_INVOKE, ERROR_BODY, NONE
   }
 
-  public static void resetHeisenbergSource() {
+  public static synchronized void resetHeisenbergSource() {
     receivedGroupOnSource = false;
     receivedInlineOnSuccess = false;
     receivedInlineOnError = false;

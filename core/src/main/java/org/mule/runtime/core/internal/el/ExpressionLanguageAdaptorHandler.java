@@ -8,32 +8,32 @@ package org.mule.runtime.core.internal.el;
 
 import static com.github.benmanes.caffeine.cache.Caffeine.newBuilder;
 import static java.lang.String.format;
-import static java.util.regex.Pattern.compile;
 import static org.apache.commons.lang3.StringUtils.isEmpty;
 import static org.apache.commons.lang3.StringUtils.join;
 import static org.mule.runtime.api.i18n.I18nMessageFactory.createStaticMessage;
+import static org.mule.runtime.api.util.collection.SmallMap.of;
 import static org.mule.runtime.core.internal.el.DefaultExpressionManager.DW_PREFIX;
 import static org.mule.runtime.core.internal.el.DefaultExpressionManager.MEL_PREFIX;
 
 import org.mule.runtime.api.component.location.ComponentLocation;
 import org.mule.runtime.api.el.BindingContext;
+import org.mule.runtime.api.el.CompiledExpression;
 import org.mule.runtime.api.el.ExpressionExecutionException;
-import org.mule.runtime.api.el.ExpressionLanguageSession;
 import org.mule.runtime.api.el.ValidationResult;
 import org.mule.runtime.api.metadata.DataType;
 import org.mule.runtime.api.metadata.TypedValue;
+import org.mule.runtime.api.util.collection.SmallMap;
 import org.mule.runtime.core.api.config.MuleProperties;
 import org.mule.runtime.core.api.event.CoreEvent;
 import org.mule.runtime.core.api.expression.ExpressionRuntimeException;
 
-import com.github.benmanes.caffeine.cache.LoadingCache;
-
-import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+
+import com.github.benmanes.caffeine.cache.LoadingCache;
 
 /**
  * Implementation of an {@link ExtendedExpressionLanguageAdaptor} which adapts MVEL and DW together, deciding via a prefix whether
@@ -64,13 +64,13 @@ public class ExpressionLanguageAdaptorHandler implements ExtendedExpressionLangu
 
   public ExpressionLanguageAdaptorHandler(ExtendedExpressionLanguageAdaptor defaultExtendedExpressionLanguage,
                                           ExtendedExpressionLanguageAdaptor mvelExpressionLanguage) {
-    expressionLanguages = new HashMap<>();
-    expressionLanguages.put(DW_PREFIX, defaultExtendedExpressionLanguage);
+    expressionLanguages = of(DW_PREFIX, defaultExtendedExpressionLanguage);
     if (mvelExpressionLanguage != null) {
       expressionLanguages.put(MEL_PREFIX, mvelExpressionLanguage);
     }
 
-    exprPrefixPattern = compile(EXPR_PREFIX_PATTERN_TEMPLATE.replaceAll("LANGS", join(expressionLanguages.keySet(), '|')));
+    exprPrefixPattern =
+        Pattern.compile(EXPR_PREFIX_PATTERN_TEMPLATE.replaceAll("LANGS", join(expressionLanguages.keySet(), '|')));
 
     melDefault = MuleProperties.isMelDefault();
     if (isMelDefault() && mvelExpressionLanguage == null) {
@@ -148,6 +148,11 @@ public class ExpressionLanguageAdaptorHandler implements ExtendedExpressionLangu
     return selectExpressionLanguage(expression).split(expression, event, bindingContext);
   }
 
+  @Override
+  public CompiledExpression compile(String expression, BindingContext bindingContext) {
+    return selectExpressionLanguage(expression).compile(expression, bindingContext);
+  }
+
   private ExtendedExpressionLanguageAdaptor selectExpressionLanguage(String expression) {
     return expressionLanguagesByExpressionCache.get(expression);
   }
@@ -169,7 +174,7 @@ public class ExpressionLanguageAdaptorHandler implements ExtendedExpressionLangu
   @Override
   public ExpressionLanguageSessionAdaptor openSession(ComponentLocation componentLocation, CoreEvent event,
                                                       BindingContext bindingContext) {
-    Map<String, ExpressionLanguageSessionAdaptor> sessions = new HashMap<>();
+    Map<String, ExpressionLanguageSessionAdaptor> sessions = new SmallMap<>();
     for (Entry<String, ExtendedExpressionLanguageAdaptor> exprLangEntry : expressionLanguages.entrySet()) {
       if (!MEL_PREFIX.equals(exprLangEntry.getKey()) || event != null) {
         sessions.put(exprLangEntry.getKey(), exprLangEntry.getValue().openSession(componentLocation, event, bindingContext));
@@ -203,6 +208,32 @@ public class ExpressionLanguageAdaptorHandler implements ExtendedExpressionLangu
         return resolveSessionForLanguage(sessions, expression).split(expression);
       }
 
+      @Override
+      public TypedValue<?> evaluate(CompiledExpression expression) throws ExpressionExecutionException {
+        return resolveSessionForLanguage(sessions, expression.expression()).evaluate(expression);
+      }
+
+      @Override
+      public TypedValue<?> evaluate(CompiledExpression expression, DataType expectedOutputType)
+          throws ExpressionExecutionException {
+        return resolveSessionForLanguage(sessions, expression.expression()).evaluate(expression, expectedOutputType);
+      }
+
+      @Override
+      public TypedValue<?> evaluate(CompiledExpression expression, long timeout) throws ExpressionExecutionException {
+        return resolveSessionForLanguage(sessions, expression.expression()).evaluate(expression, timeout);
+      }
+
+      @Override
+      public TypedValue<?> evaluateLogExpression(CompiledExpression expression) throws ExpressionExecutionException {
+        return resolveSessionForLanguage(sessions, expression.expression()).evaluateLogExpression(expression);
+      }
+
+      @Override
+      public Iterator<TypedValue<?>> split(CompiledExpression expression) {
+        return resolveSessionForLanguage(sessions, expression.expression()).split(expression);
+      }
+
       protected ExpressionLanguageSessionAdaptor resolveSessionForLanguage(Map<String, ExpressionLanguageSessionAdaptor> sessions,
                                                                            String expression) {
         ExpressionLanguageSessionAdaptor elSession = sessions.get(resolveLanguagePrefix(expression));
@@ -217,6 +248,7 @@ public class ExpressionLanguageAdaptorHandler implements ExtendedExpressionLangu
       public void close() {
         sessions.values().forEach(es -> es.close());
       }
+
     };
   }
 

@@ -12,38 +12,33 @@ import static java.util.Optional.of;
 import static java.util.stream.Collectors.toMap;
 import static org.apache.commons.beanutils.BeanUtils.copyProperty;
 import static org.mule.runtime.api.component.Component.ANNOTATIONS_PROPERTY_NAME;
-import static org.mule.runtime.config.internal.dsl.model.extension.xml.MacroExpansionModuleModel.ROOT_MACRO_EXPANDED_FLOW_CONTAINER_NAME;
+import static org.mule.runtime.api.component.Component.Annotations.SOURCE_ELEMENT_ANNOTATION_KEY;
 import static org.mule.runtime.config.internal.dsl.spring.BeanDefinitionFactory.SPRING_PROTOTYPE_OBJECT;
 import static org.mule.runtime.config.internal.dsl.spring.PropertyComponentUtils.getPropertyValueFromPropertyComponent;
 import static org.mule.runtime.config.internal.model.ApplicationModel.ANNOTATIONS_ELEMENT_IDENTIFIER;
 import static org.mule.runtime.config.internal.model.ApplicationModel.CUSTOM_TRANSFORMER_IDENTIFIER;
 import static org.mule.runtime.config.internal.model.ApplicationModel.MULE_PROPERTIES_IDENTIFIER;
 import static org.mule.runtime.config.internal.model.ApplicationModel.MULE_PROPERTY_IDENTIFIER;
-import static org.mule.runtime.config.internal.model.ComponentCustomAttributeRetrieve.from;
-import static org.mule.runtime.core.privileged.execution.LocationExecutionContextProvider.addMetadataAnnotationsFromXml;
+import static org.mule.runtime.core.privileged.execution.LocationExecutionContextProvider.maskPasswords;
 import static org.mule.runtime.deployment.model.internal.application.MuleApplicationClassLoader.resolveContextArtifactPluginClassLoaders;
 import static org.springframework.beans.factory.support.BeanDefinitionBuilder.genericBeanDefinition;
 import static org.springframework.beans.factory.support.BeanDefinitionBuilder.rootBeanDefinition;
-import org.mule.runtime.api.component.AbstractComponent;
+
 import org.mule.runtime.api.component.Component;
 import org.mule.runtime.api.component.ComponentIdentifier;
 import org.mule.runtime.api.exception.MuleRuntimeException;
-import org.mule.runtime.api.streaming.bytes.CursorStreamProvider;
 import org.mule.runtime.api.util.LazyValue;
 import org.mule.runtime.api.util.Pair;
+import org.mule.runtime.ast.api.ComponentMetadataAst;
 import org.mule.runtime.config.internal.dsl.model.SpringComponentModel;
 import org.mule.runtime.config.internal.dsl.processor.ObjectTypeVisitor;
-import org.mule.runtime.config.internal.factories.ModuleOperationMessageProcessorChainFactoryBean;
 import org.mule.runtime.config.internal.model.ComponentModel;
 import org.mule.runtime.config.privileged.dsl.BeanDefinitionPostProcessor;
-import org.mule.runtime.core.api.processor.strategy.ProcessingStrategy;
 import org.mule.runtime.core.api.registry.SpiServiceRegistry;
 import org.mule.runtime.core.api.security.SecurityFilter;
 import org.mule.runtime.core.privileged.processor.SecurityFilterMessageProcessor;
-import org.mule.runtime.core.privileged.processor.chain.DefaultMessageProcessorChainBuilder;
 import org.mule.runtime.dsl.api.component.ComponentBuildingDefinition;
-
-import com.google.common.collect.ImmutableSet;
+import org.mule.runtime.module.extension.internal.runtime.resolver.ValueResolver;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -61,6 +56,8 @@ import org.springframework.beans.factory.support.AbstractBeanDefinition;
 import org.springframework.beans.factory.support.BeanDefinitionBuilder;
 import org.springframework.beans.factory.support.RootBeanDefinition;
 
+import com.google.common.collect.ImmutableSet;
+
 /**
  * Processor in the chain of responsibility that knows how to handle a generic {@code ComponentBuildingDefinition}.
  *
@@ -76,7 +73,7 @@ public class CommonBeanDefinitionCreator extends BeanDefinitionCreator {
           .build();
 
   private final ObjectFactoryClassRepository objectFactoryClassRepository;
-  private BeanDefinitionPostProcessor beanDefinitionPostProcessor;
+  private final BeanDefinitionPostProcessor beanDefinitionPostProcessor;
 
   public CommonBeanDefinitionCreator(ObjectFactoryClassRepository objectFactoryClassRepository) {
     this.objectFactoryClassRepository = objectFactoryClassRepository;
@@ -107,7 +104,7 @@ public class CommonBeanDefinitionCreator extends BeanDefinitionCreator {
     componentModel.setType(retrieveComponentType(componentModel, buildingDefinition));
     BeanDefinitionBuilder beanDefinitionBuilder = createBeanDefinitionBuilder(componentModel, buildingDefinition);
     processAnnotations(componentModel, beanDefinitionBuilder);
-    processComponentDefinitionModel(request.getParentComponentModel(), componentModel, buildingDefinition, beanDefinitionBuilder);
+    processComponentDefinitionModel(componentModel, buildingDefinition, beanDefinitionBuilder);
     return true;
   }
 
@@ -128,7 +125,7 @@ public class CommonBeanDefinitionCreator extends BeanDefinitionCreator {
         .findFirst()
         .ifPresent(annotationsCdm -> annotationsCdm.getInnerComponents().forEach(
                                                                                  annotationCdm -> previousAnnotations
-                                                                                     .put(new QName(from(annotationCdm)
+                                                                                     .put(new QName(annotationCdm.getIdentifier()
                                                                                          .getNamespaceUri(),
                                                                                                     annotationCdm
                                                                                                         .getIdentifier()
@@ -137,35 +134,15 @@ public class CommonBeanDefinitionCreator extends BeanDefinitionCreator {
   }
 
   private void processAnnotations(ComponentModel componentModel, BeanDefinitionBuilder beanDefinitionBuilder) {
-    if (Component.class.isAssignableFrom(componentModel.getType())) {
+    if (Component.class.isAssignableFrom(componentModel.getType())
+        // ValueResolver end up generating pojos from the extension whose class is enhanced to have annotations
+        || ValueResolver.class.isAssignableFrom(componentModel.getType())) {
       Map<QName, Object> annotations =
           processMetadataAnnotationsHelper(beanDefinitionBuilder, componentModel);
       processNestedAnnotations(componentModel, annotations);
-      processMacroExpandedAnnotations(componentModel, annotations);
       if (!annotations.isEmpty()) {
         beanDefinitionBuilder.addPropertyValue(ANNOTATIONS_PROPERTY_NAME, annotations);
       }
-    }
-  }
-
-  /**
-   * Strictly needed when doing the macro expansion, if the current component model was not in the original <flow/> we need to
-   * look for the rootest element that contains it (which happens to be the flow's name) so that later on from that name the
-   * correct {@link ProcessingStrategy} will be picked up. Without that, all the streams managed by the runtime
-   * ({@link CursorStreamProvider} won't be properly handled, ending up in closed streams or even deadlocks.
-   * <p/>
-   * Any alteration on this method should be tightly coupled with
-   * {@link ModuleOperationMessageProcessorChainFactoryBean#doGetObject()}, which internally relies on
-   * {@link DefaultMessageProcessorChainBuilder#newLazyProcessorChainBuilder(org.mule.runtime.core.privileged.processor.chain.AbstractMessageProcessorChainBuilder, org.mule.runtime.core.api.MuleContext, java.util.function.Supplier)}
-   *
-   * @param componentModel that might contain the <flow/>'s name attribute as a custom attribute
-   * @param annotations to alter by adding the {@link AbstractComponent#ROOT_CONTAINER_NAME_KEY} if the component model has the
-   *        name of the flow.
-   */
-  private void processMacroExpandedAnnotations(ComponentModel componentModel, Map<QName, Object> annotations) {
-    if (componentModel.getCustomAttributes().containsKey(ROOT_MACRO_EXPANDED_FLOW_CONTAINER_NAME)) {
-      final Object flowName = componentModel.getCustomAttributes().get(ROOT_MACRO_EXPANDED_FLOW_CONTAINER_NAME);
-      annotations.put(AbstractComponent.ROOT_CONTAINER_NAME_KEY, flowName);
     }
   }
 
@@ -175,12 +152,30 @@ public class CommonBeanDefinitionCreator extends BeanDefinitionCreator {
       return annotations;
     } else {
       if (Component.class.isAssignableFrom(builder.getBeanDefinition().getBeanClass())) {
-        addMetadataAnnotationsFromXml(annotations, componentModel.getSourceCode(), componentModel.getCustomAttributes());
-        builder.getBeanDefinition().getPropertyValues().addPropertyValue("annotations", annotations);
+        addMetadataAnnotationsFromDocAttributes(annotations, componentModel.getMetadata());
+        builder.getBeanDefinition().getPropertyValues().addPropertyValue(ANNOTATIONS_PROPERTY_NAME, annotations);
       }
 
       return annotations;
     }
+  }
+
+  /**
+   * Populates the passed beanAnnotations with the other passed parameters.
+   *
+   * @param beanAnnotations the map with annotations to populate
+   * @param metadata the parser metadata for the object being created
+   */
+  public static void addMetadataAnnotationsFromDocAttributes(Map<QName, Object> beanAnnotations,
+                                                             ComponentMetadataAst metadata) {
+    String sourceCode = metadata.getSourceCode().orElse(null);
+
+    if (sourceCode != null) {
+      beanAnnotations.put(SOURCE_ELEMENT_ANNOTATION_KEY, maskPasswords(sourceCode));
+    }
+
+    beanAnnotations.putAll(metadata.getDocAttributes().entrySet().stream()
+        .collect(toMap(e -> QName.valueOf(e.getKey()), e -> e.getValue())));
   }
 
   private Class<?> retrieveComponentType(final ComponentModel componentModel,
@@ -232,8 +227,7 @@ public class CommonBeanDefinitionCreator extends BeanDefinitionCreator {
         .collect(toMap(propValue -> propValue.getFirst(), propValue -> propValue.getSecond()));
   }
 
-  private void processComponentDefinitionModel(final ComponentModel parentComponentModel,
-                                               final SpringComponentModel componentModel,
+  private void processComponentDefinitionModel(final SpringComponentModel componentModel,
                                                ComponentBuildingDefinition componentBuildingDefinition,
                                                final BeanDefinitionBuilder beanDefinitionBuilder) {
     processObjectConstructionParameters(componentModel, componentBuildingDefinition,
@@ -243,13 +237,12 @@ public class CommonBeanDefinitionCreator extends BeanDefinitionCreator {
       beanDefinitionBuilder.setScope(SPRING_PROTOTYPE_OBJECT);
     }
     AbstractBeanDefinition originalBeanDefinition = beanDefinitionBuilder.getBeanDefinition();
-    AbstractBeanDefinition wrappedBeanDefinition = adaptBeanDefinition(parentComponentModel, originalBeanDefinition);
+    AbstractBeanDefinition wrappedBeanDefinition = adaptBeanDefinition(originalBeanDefinition);
     if (originalBeanDefinition != wrappedBeanDefinition) {
       componentModel.setType(wrappedBeanDefinition.getBeanClass());
     }
     final SpringPostProcessorIocHelper iocHelper =
         new SpringPostProcessorIocHelper(objectFactoryClassRepository, wrappedBeanDefinition);
-    beanDefinitionPostProcessor.postProcess(componentModel.getConfiguration(), iocHelper);
     componentModel.setBeanDefinition(iocHelper.getBeanDefinition());
   }
 
@@ -277,8 +270,8 @@ public class CommonBeanDefinitionCreator extends BeanDefinitionCreator {
   public static List<Pair<String, Object>> getPropertyValueFromPropertiesComponent(ComponentModel propertyComponentModel) {
     List<Pair<String, Object>> propertyValues = new ArrayList<>();
     propertyComponentModel.getInnerComponents().stream().forEach(entryComponentModel -> {
-      propertyValues.add(new Pair<>(entryComponentModel.getParameters().get("key"),
-                                    entryComponentModel.getParameters().get("value")));
+      propertyValues.add(new Pair<>(entryComponentModel.getRawParameters().get("key"),
+                                    entryComponentModel.getRawParameters().get("value")));
     });
     return propertyValues;
   }
@@ -291,8 +284,7 @@ public class CommonBeanDefinitionCreator extends BeanDefinitionCreator {
 
   }
 
-  private AbstractBeanDefinition adaptBeanDefinition(ComponentModel parentComponentModel,
-                                                     AbstractBeanDefinition originalBeanDefinition) {
+  private AbstractBeanDefinition adaptBeanDefinition(AbstractBeanDefinition originalBeanDefinition) {
     Class beanClass;
     if (originalBeanDefinition instanceof RootBeanDefinition) {
       beanClass = ((RootBeanDefinition) originalBeanDefinition).getBeanClass();
@@ -317,7 +309,6 @@ public class CommonBeanDefinitionCreator extends BeanDefinitionCreator {
     } else {
       final SpringPostProcessorIocHelper iocHelper =
           new SpringPostProcessorIocHelper(objectFactoryClassRepository, originalBeanDefinition);
-      beanDefinitionPostProcessor.adaptBeanDefinition(parentComponentModel.getConfiguration(), beanClass, iocHelper);
       return iocHelper.getBeanDefinition();
     }
   }

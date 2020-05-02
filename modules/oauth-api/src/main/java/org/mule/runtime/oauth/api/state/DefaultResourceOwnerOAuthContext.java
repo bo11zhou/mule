@@ -6,6 +6,12 @@
  */
 package org.mule.runtime.oauth.api.state;
 
+import static org.mule.runtime.oauth.api.state.DancerState.HAS_TOKEN;
+import static org.mule.runtime.oauth.api.state.DancerState.NO_TOKEN;
+import static org.mule.runtime.oauth.api.state.ResourceOwnerOAuthContextWithRefreshState.createRefreshOAuthContextLock;
+
+import org.mule.runtime.api.lock.LockFactory;
+
 import java.io.Serializable;
 import java.util.HashMap;
 import java.util.Map;
@@ -13,20 +19,25 @@ import java.util.concurrent.locks.Lock;
 
 /**
  * OAuth state for a particular resource owner which typically represents an user.
- * 
+ *
  * @since 4.0, was ResourceOwnerOAuthContext in previous versions
+ *
+ * @deprecated Use {@link ResourceOwnerOAuthContextWithRefreshState} instead.
  */
+@Deprecated
 public final class DefaultResourceOwnerOAuthContext implements ResourceOwnerOAuthContext, Serializable {
 
   private static final long serialVersionUID = -4260965520423792113L;
 
   private final String resourceOwnerId;
   private transient Lock refreshUserOAuthContextLock;
+  private transient DancerState dancerState;
   private String accessToken;
   private String refreshToken;
   private String state;
   private String expiresIn;
-  private Map<String, Object> tokenResponseParameters = new HashMap<String, Object>();
+  private Map<String, Object> tokenResponseParameters = new HashMap<>();
+
 
   public DefaultResourceOwnerOAuthContext(final Lock refreshUserOAuthContextLock, final String resourceOwnerId) {
     this.refreshUserOAuthContextLock = refreshUserOAuthContextLock;
@@ -92,5 +103,22 @@ public final class DefaultResourceOwnerOAuthContext implements ResourceOwnerOAut
 
   public void setRefreshUserOAuthContextLock(Lock refreshUserOAuthContextLock) {
     this.refreshUserOAuthContextLock = refreshUserOAuthContextLock;
+  }
+
+  @Override
+  public DancerState getDancerState() {
+    return this.dancerState != null
+        ? dancerState
+        : accessToken == null ? NO_TOKEN : HAS_TOKEN;
+  }
+
+  @Override
+  public void setDancerState(DancerState dancerState) {
+    this.dancerState = dancerState;
+  }
+
+  @Override
+  public Lock getRefreshOAuthContextLock(String lockNamePrefix, LockFactory lockFactory) {
+    return createRefreshOAuthContextLock(lockNamePrefix, lockFactory, resourceOwnerId);
   }
 }

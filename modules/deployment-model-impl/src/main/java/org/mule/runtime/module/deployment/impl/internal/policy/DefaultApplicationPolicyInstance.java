@@ -7,23 +7,17 @@
 
 package org.mule.runtime.module.deployment.impl.internal.policy;
 
-import static java.util.Optional.empty;
-import static java.util.Optional.of;
 import static org.mule.runtime.api.i18n.I18nMessageFactory.createStaticMessage;
 import static org.mule.runtime.api.store.ObjectStoreManager.BASE_IN_MEMORY_OBJECT_STORE_KEY;
 import static org.mule.runtime.api.store.ObjectStoreManager.BASE_PERSISTENT_OBJECT_STORE_KEY;
+import static org.mule.runtime.api.util.collection.SmallMap.copy;
 import static org.mule.runtime.core.api.config.MuleProperties.OBJECT_LOCK_PROVIDER;
-import static org.mule.runtime.core.api.config.MuleProperties.OBJECT_POLICY_MANAGER_STATE_HANDLER;
 import static org.mule.runtime.core.api.config.MuleProperties.OBJECT_TIME_SUPPLIER;
 import static org.mule.runtime.core.api.config.bootstrap.ArtifactType.POLICY;
 import static org.mule.runtime.module.deployment.impl.internal.artifact.ArtifactContextBuilder.newBuilder;
-import static org.mule.runtime.module.deployment.impl.internal.policy.proxy.LifecycleFilterProxy.createLifecycleFilterProxy;
-
-import java.util.HashMap;
-import java.util.List;
-import java.util.Optional;
 
 import org.mule.runtime.api.artifact.Registry;
+import org.mule.runtime.api.config.custom.CustomizationService;
 import org.mule.runtime.api.exception.MuleException;
 import org.mule.runtime.api.lifecycle.InitialisationException;
 import org.mule.runtime.api.notification.NotificationListener;
@@ -31,13 +25,12 @@ import org.mule.runtime.api.notification.NotificationListenerRegistry;
 import org.mule.runtime.api.notification.PolicyNotification;
 import org.mule.runtime.api.notification.PolicyNotificationListener;
 import org.mule.runtime.api.service.ServiceRepository;
+import org.mule.runtime.api.util.LazyValue;
 import org.mule.runtime.core.api.MuleContext;
 import org.mule.runtime.core.api.context.notification.MuleContextListener;
-import org.mule.runtime.core.api.policy.DefaultPolicyInstance;
 import org.mule.runtime.core.api.policy.Policy;
 import org.mule.runtime.core.api.policy.PolicyInstance;
 import org.mule.runtime.core.api.policy.PolicyParametrization;
-import org.mule.runtime.core.api.policy.PolicyPointcut;
 import org.mule.runtime.deployment.model.api.application.Application;
 import org.mule.runtime.deployment.model.api.artifact.ArtifactContext;
 import org.mule.runtime.deployment.model.api.plugin.ArtifactPlugin;
@@ -46,8 +39,13 @@ import org.mule.runtime.dsl.api.component.ComponentBuildingDefinitionProvider;
 import org.mule.runtime.module.artifact.api.classloader.ClassLoaderRepository;
 import org.mule.runtime.module.deployment.impl.internal.artifact.ArtifactContextBuilder;
 import org.mule.runtime.module.deployment.impl.internal.artifact.CompositeArtifactExtensionManagerFactory;
+import org.mule.runtime.module.deployment.impl.internal.policy.proxy.LifecycleFilterProxy;
 import org.mule.runtime.module.extension.api.manager.DefaultExtensionManagerFactory;
 import org.mule.runtime.module.extension.internal.loader.ExtensionModelLoaderRepository;
+import org.mule.runtime.policy.api.PolicyPointcut;
+
+import java.util.List;
+import java.util.Optional;
 
 /**
  * Default implementation of {@link ApplicationPolicyInstance} that depends on a {@link PolicyTemplate} artifact.
@@ -65,8 +63,8 @@ public class DefaultApplicationPolicyInstance implements ApplicationPolicyInstan
   private final ExtensionModelLoaderRepository extensionModelLoaderRepository;
   private final MuleContextListener muleContextListener;
   private ArtifactContext policyContext;
-  private PolicyInstance policyInstance;
-  private ComponentBuildingDefinitionProvider runtimeComponentBuildingDefinitionProvider;
+  private LazyValue<PolicyInstance> policyInstance;
+  private final ComponentBuildingDefinitionProvider runtimeComponentBuildingDefinitionProvider;
 
   /**
    * Creates a new policy instance
@@ -104,7 +102,7 @@ public class DefaultApplicationPolicyInstance implements ApplicationPolicyInstan
   private void initPolicyContext() throws InitialisationException {
     ArtifactContextBuilder artifactBuilder =
         newBuilder().setArtifactType(POLICY)
-            .setArtifactProperties(new HashMap<>(parametrization.getParameters()))
+            .setArtifactProperties(copy(parametrization.getParameters()))
             .setArtifactName(parametrization.getId())
             .setConfigurationFiles(parametrization.getConfig().getAbsolutePath())
             .setExecutionClassloader(template.getArtifactClassLoader().getClassLoader())
@@ -120,28 +118,12 @@ public class DefaultApplicationPolicyInstance implements ApplicationPolicyInstan
 
     artifactBuilder.withServiceConfigurator(customizationService -> {
       Registry applicationRegistry = application.getRegistry();
-      /*
-       * OBJECT_POLICY_MANAGER_STATE_HANDLER is not proxied as it doesn't implement any lifecycle interfaces (Startable, Stoppable
-       * or Disposable)
-       */
-      customizationService.overrideDefaultServiceImpl(OBJECT_POLICY_MANAGER_STATE_HANDLER,
-                                                      applicationRegistry.lookupByName(OBJECT_POLICY_MANAGER_STATE_HANDLER)
-                                                          .get());
-      customizationService.overrideDefaultServiceImpl(OBJECT_LOCK_PROVIDER,
-                                                      createLifecycleFilterProxy(applicationRegistry
-                                                          .lookupByName(OBJECT_LOCK_PROVIDER).get()));
-      customizationService.overrideDefaultServiceImpl(BASE_PERSISTENT_OBJECT_STORE_KEY,
-                                                      createLifecycleFilterProxy(applicationRegistry
-                                                          .lookupByName(BASE_PERSISTENT_OBJECT_STORE_KEY).get()));
-      customizationService.overrideDefaultServiceImpl(BASE_IN_MEMORY_OBJECT_STORE_KEY,
-                                                      createLifecycleFilterProxy(applicationRegistry
-                                                          .lookupByName(BASE_IN_MEMORY_OBJECT_STORE_KEY).get()));
-      customizationService.overrideDefaultServiceImpl(OBJECT_TIME_SUPPLIER,
-                                                      createLifecycleFilterProxy(applicationRegistry
-                                                          .lookupByName(OBJECT_TIME_SUPPLIER).get()));
 
-      applicationRegistry.lookupByName(CLUSTER_MANAGER_ID).ifPresent(muleClusterManager -> customizationService
-          .registerCustomServiceImpl(CLUSTER_MANAGER_ID, createLifecycleFilterProxy(muleClusterManager)));
+      addPolicyCustomizationOverride(OBJECT_LOCK_PROVIDER, customizationService, applicationRegistry);
+      addPolicyCustomizationOverride(BASE_PERSISTENT_OBJECT_STORE_KEY, customizationService, applicationRegistry);
+      addPolicyCustomizationOverride(BASE_IN_MEMORY_OBJECT_STORE_KEY, customizationService, applicationRegistry);
+      addPolicyCustomizationOverride(OBJECT_TIME_SUPPLIER, customizationService, applicationRegistry);
+      addPolicyCustomizationOverride(CLUSTER_MANAGER_ID, customizationService, applicationRegistry);
     });
     try {
       policyContext = artifactBuilder.build();
@@ -152,23 +134,30 @@ public class DefaultApplicationPolicyInstance implements ApplicationPolicyInstan
     }
   }
 
+  private void addPolicyCustomizationOverride(String objectKey, CustomizationService customizationService,
+                                              Registry applicationRegistry) {
+    applicationRegistry
+        .lookupByName(objectKey)
+        .map(LifecycleFilterProxy::createLifecycleFilterProxy)
+        .ifPresent(s -> customizationService.overrideDefaultServiceImpl(objectKey, s));
+  }
+
   private void enableNotificationListeners(List<NotificationListener> notificationListeners) {
     NotificationListenerRegistry listenerRegistry =
         policyContext.getRegistry().lookupByType(NotificationListenerRegistry.class).get();
 
     policyContext.getMuleContext().getNotificationManager().addInterfaceToType(PolicyNotificationListener.class,
                                                                                PolicyNotification.class);
-
     notificationListeners.forEach(listenerRegistry::registerListener);
   }
 
-  private void initPolicyInstance() throws InitialisationException {
-    policyInstance = policyContext.getRegistry().lookupByType(DefaultPolicyInstance.class).get();
+  private PolicyInstance initPolicyInstance() {
+    return policyContext.getRegistry().lookupByType(PolicyInstance.class).get();
   }
 
   @Override
   public PolicyPointcut getPointcut() {
-    return parametrization.getPointcut();
+    return parametrization.getPolicyPointcut();
   }
 
   @Override
@@ -183,14 +172,10 @@ public class DefaultApplicationPolicyInstance implements ApplicationPolicyInstan
 
   @Override
   public void initialise() throws InitialisationException {
-    if (policyInstance == null) {
-      synchronized (this) {
-        if (policyContext == null) {
-          initPolicyContext();
-        }
-        initPolicyInstance();
-      }
+    if (policyInstance == null && policyContext == null) {
+      initPolicyContext();
     }
+    policyInstance = new LazyValue<>(this::initPolicyInstance);
   }
 
   @Override
@@ -202,20 +187,14 @@ public class DefaultApplicationPolicyInstance implements ApplicationPolicyInstan
 
   @Override
   public Optional<Policy> getSourcePolicy() {
-    if (policyInstance.getSourcePolicyChain().isPresent()) {
-      return of(new Policy(policyInstance.getSourcePolicyChain().get(), parametrization.getId()));
-    } else {
-      return empty();
-    }
+    return policyInstance.get().getSourcePolicyChain()
+        .map(chain -> new Policy(chain, parametrization.getId()));
   }
 
   @Override
   public Optional<Policy> getOperationPolicy() {
-    if (policyInstance.getOperationPolicyChain().isPresent()) {
-      return of(new Policy(policyInstance.getOperationPolicyChain().get(), parametrization.getId()));
-    } else {
-      return empty();
-    }
+    return policyInstance.get().getOperationPolicyChain()
+        .map(chain -> new Policy(chain, parametrization.getId()));
   }
 
 }

@@ -20,6 +20,8 @@ import org.mule.runtime.api.meta.MuleVersion;
 import org.mule.runtime.core.api.config.bootstrap.ArtifactType;
 import org.mule.runtime.core.api.util.IOUtils;
 
+import com.google.common.collect.ImmutableMap;
+
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
@@ -104,14 +106,14 @@ public abstract class AbstractArtifactDescriptorFactory<M extends AbstractMuleAr
       descriptor.setRootFolder(artifactLocation);
     }
 
-    BundleDescriptor bundleDescriptor = getBundleDescriptor(artifactLocation, artifactModel);
+    BundleDescriptor bundleDescriptor = getBundleDescriptor(artifactLocation, artifactModel, deploymentProperties);
     descriptor.setBundleDescriptor(bundleDescriptor);
     descriptor.setMinMuleVersion(new MuleVersion(artifactModel.getMinMuleVersion()));
     descriptor.setRequiredProduct(artifactModel.getRequiredProduct());
 
     ClassLoaderModel classLoaderModel =
         getClassLoaderModel(artifactLocation, deploymentProperties, artifactModel.getClassLoaderModelLoaderDescriptor(),
-                            descriptor);
+                            bundleDescriptor);
     descriptor.setClassLoaderModel(classLoaderModel);
 
     doDescriptorConfig(artifactModel, descriptor, artifactLocation);
@@ -173,7 +175,7 @@ public abstract class AbstractArtifactDescriptorFactory<M extends AbstractMuleAr
 
   private ClassLoaderModel getClassLoaderModel(File artifactFolder, Optional<Properties> deploymentProperties,
                                                MuleArtifactLoaderDescriptor classLoaderModelLoaderDescriptor,
-                                               T bundleDescriptor) {
+                                               BundleDescriptor bundleDescriptor) {
     ClassLoaderModelLoader classLoaderModelLoader;
     try {
       classLoaderModelLoader =
@@ -187,7 +189,8 @@ public abstract class AbstractArtifactDescriptorFactory<M extends AbstractMuleAr
     final ClassLoaderModel classLoaderModel;
     try {
       classLoaderModel = classLoaderModelLoader.load(artifactFolder, getClassLoaderModelAttributes(deploymentProperties,
-                                                                                                   classLoaderModelLoaderDescriptor),
+                                                                                                   classLoaderModelLoaderDescriptor,
+                                                                                                   bundleDescriptor),
                                                      getArtifactType());
     } catch (InvalidDescriptorLoaderException e) {
       throw new ArtifactDescriptorCreateException(e);
@@ -196,11 +199,14 @@ public abstract class AbstractArtifactDescriptorFactory<M extends AbstractMuleAr
   }
 
   protected Map<String, Object> getClassLoaderModelAttributes(Optional<Properties> deploymentProperties,
-                                                              MuleArtifactLoaderDescriptor classLoaderModelLoaderDescriptor) {
-    return classLoaderModelLoaderDescriptor.getAttributes();
+                                                              MuleArtifactLoaderDescriptor classLoaderModelLoaderDescriptor,
+                                                              BundleDescriptor bundleDescriptor) {
+    // Adding BundleDescriptor to avoid resolving it again while loading the class loader model
+    return ImmutableMap.<String, Object>builder().putAll(classLoaderModelLoaderDescriptor.getAttributes())
+        .put(BundleDescriptor.class.getName(), bundleDescriptor).build();
   }
 
-  private BundleDescriptor getBundleDescriptor(File appFolder, M artifactModel) {
+  protected BundleDescriptor getBundleDescriptor(File appFolder, M artifactModel, Optional<Properties> deploymentProperties) {
     BundleDescriptorLoader bundleDescriptorLoader;
     try {
       bundleDescriptorLoader =
@@ -212,10 +218,17 @@ public abstract class AbstractArtifactDescriptorFactory<M extends AbstractMuleAr
     }
 
     try {
-      return bundleDescriptorLoader.load(appFolder, artifactModel.getBundleDescriptorLoader().getAttributes(), getArtifactType());
+      return bundleDescriptorLoader
+          .load(appFolder, getBundleDescriptorAttributes(artifactModel.getBundleDescriptorLoader(), deploymentProperties),
+                getArtifactType());
     } catch (InvalidDescriptorLoaderException e) {
       throw new ArtifactDescriptorCreateException(e);
     }
+  }
+
+  protected Map<String, Object> getBundleDescriptorAttributes(MuleArtifactLoaderDescriptor bundleDescriptorLoader,
+                                                              Optional<Properties> deploymentPropertiesOptional) {
+    return bundleDescriptorLoader.getAttributes();
   }
 
   private M deserializeArtifactModel(String jsonString) throws IOException {

@@ -13,6 +13,7 @@ import static org.mule.runtime.core.api.processor.ReactiveProcessor.ProcessingTy
 import static org.mule.runtime.core.api.processor.ReactiveProcessor.ProcessingType.CPU_LITE_ASYNC;
 import static org.mule.runtime.core.api.util.ClassUtils.withContextClassLoader;
 import static org.mule.runtime.module.extension.internal.runtime.ExecutionTypeMapper.asProcessingType;
+
 import org.mule.runtime.api.connection.ConnectionException;
 import org.mule.runtime.api.meta.model.ExtensionModel;
 import org.mule.runtime.api.meta.model.config.ConfigurationModel;
@@ -29,6 +30,7 @@ import org.mule.runtime.core.api.streaming.CursorProviderFactory;
 import org.mule.runtime.core.internal.policy.PolicyManager;
 import org.mule.runtime.extension.api.runtime.config.ConfigurationProvider;
 import org.mule.runtime.module.extension.internal.metadata.EntityMetadataMediator;
+import org.mule.runtime.module.extension.internal.runtime.operation.DefaultExecutionMediator.ResultTransformer;
 import org.mule.runtime.module.extension.internal.runtime.resolver.ResolverSet;
 import org.mule.runtime.module.extension.internal.util.ReflectionCache;
 
@@ -56,9 +58,26 @@ public class OperationMessageProcessor extends ComponentMessageProcessor<Operati
                                    ExtensionManager extensionManager,
                                    PolicyManager policyManager,
                                    ReflectionCache reflectionCache) {
-    super(extensionModel, operationModel, configurationProvider, target, targetValue, resolverSet,
-          cursorProviderFactory, retryPolicyTemplate, extensionManager, policyManager, reflectionCache);
+    this(extensionModel, operationModel, configurationProvider, target, targetValue, resolverSet, cursorProviderFactory,
+         retryPolicyTemplate, extensionManager, policyManager, reflectionCache, null, -1);
+  }
 
+  public OperationMessageProcessor(ExtensionModel extensionModel,
+                                   OperationModel operationModel,
+                                   ConfigurationProvider configurationProvider,
+                                   String target,
+                                   String targetValue,
+                                   ResolverSet resolverSet,
+                                   CursorProviderFactory cursorProviderFactory,
+                                   RetryPolicyTemplate retryPolicyTemplate,
+                                   ExtensionManager extensionManager,
+                                   PolicyManager policyManager,
+                                   ReflectionCache reflectionCache,
+                                   ResultTransformer resultTransformer,
+                                   long terminationTimeout) {
+    super(extensionModel, operationModel, configurationProvider, target, targetValue, resolverSet,
+          cursorProviderFactory, retryPolicyTemplate, extensionManager, policyManager, reflectionCache,
+          resultTransformer, terminationTimeout);
     this.entityMetadataMediator = new EntityMetadataMediator(operationModel);
   }
 
@@ -103,7 +122,7 @@ public class OperationMessageProcessor extends ComponentMessageProcessor<Operati
   }
 
   @Override
-  public ProcessingType getProcessingType() {
+  public ProcessingType getInnerProcessingType() {
     ProcessingType processingType = asProcessingType(componentModel.getExecutionType());
     if (processingType == CPU_LITE && !componentModel.isBlocking()) {
       // If processing type is CPU_LITE and operation is non-blocking then use CPU_LITE_ASYNC processing type so that the Flow can
@@ -114,4 +133,12 @@ public class OperationMessageProcessor extends ComponentMessageProcessor<Operati
     }
   }
 
+  @Override
+  protected boolean isAsync() {
+    if (!componentModel.isBlocking()) {
+      return true;
+    }
+
+    return super.isAsync();
+  }
 }

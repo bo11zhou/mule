@@ -11,18 +11,24 @@ import static java.util.stream.Collectors.toList;
 import static org.mule.runtime.api.i18n.I18nMessageFactory.createStaticMessage;
 import static org.mule.runtime.core.api.lifecycle.LifecycleUtils.initialiseIfNeeded;
 import static org.mule.runtime.core.api.source.MessageSource.BackPressureStrategy.WAIT;
+import static org.mule.runtime.core.api.util.ClassUtils.memoize;
 import static org.mule.runtime.core.api.util.ClassUtils.withContextClassLoader;
+import static org.mule.runtime.internal.dsl.DslConstants.CONFIG_ATTRIBUTE_NAME;
 import static org.mule.runtime.module.extension.internal.util.MuleExtensionUtils.getClassLoader;
 import static org.mule.runtime.module.extension.internal.util.MuleExtensionUtils.toBackPressureStrategy;
+
+import org.mule.runtime.api.i18n.I18nMessage;
 import org.mule.runtime.api.lifecycle.InitialisationException;
 import org.mule.runtime.api.meta.model.ExtensionModel;
 import org.mule.runtime.api.meta.model.source.SourceCallbackModel;
 import org.mule.runtime.api.meta.model.source.SourceModel;
+import org.mule.runtime.api.notification.NotificationDispatcher;
 import org.mule.runtime.core.api.MuleContext;
 import org.mule.runtime.core.api.config.ConfigurationException;
 import org.mule.runtime.core.api.retry.policy.RetryPolicyTemplate;
 import org.mule.runtime.core.api.source.MessageSource.BackPressureStrategy;
 import org.mule.runtime.core.api.streaming.CursorProviderFactory;
+import org.mule.runtime.core.internal.context.MuleContextWithRegistry;
 import org.mule.runtime.extension.api.runtime.config.ConfigurationProvider;
 import org.mule.runtime.module.extension.internal.config.dsl.AbstractExtensionObjectFactory;
 import org.mule.runtime.module.extension.internal.loader.java.property.BackPressureStrategyModelProperty;
@@ -32,6 +38,7 @@ import org.mule.runtime.module.extension.internal.runtime.source.SourceAdapterFa
 import org.mule.runtime.module.extension.internal.util.ReflectionCache;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import javax.inject.Inject;
@@ -52,7 +59,6 @@ public class ExtensionSourceObjectFactory extends AbstractExtensionObjectFactory
   private final ExtensionModel extensionModel;
   private final SourceModel sourceModel;
 
-  private ConfigurationProvider configurationProvider;
   private RetryPolicyTemplate retryPolicyTemplate;
   private CursorProviderFactory cursorProviderFactory;
   private Boolean primaryNodeOnly = null;
@@ -65,14 +71,14 @@ public class ExtensionSourceObjectFactory extends AbstractExtensionObjectFactory
   }
 
   @Override
-  public ExtensionMessageSource doGetObject() throws ConfigurationException, InitialisationException {
+  public ExtensionMessageSource doGetObject() {
     return withContextClassLoader(getClassLoader(extensionModel), () -> {
       getParametersResolver().checkParameterGroupExclusiveness(Optional.of(sourceModel),
                                                                sourceModel.getParameterGroupModels(),
                                                                parameters.keySet());
       ResolverSet nonCallbackParameters = getNonCallbackParameters();
 
-      if (nonCallbackParameters.isDynamic()) {
+      if (hasDynamicNonCallbackParameters(nonCallbackParameters)) {
         throw dynamicParameterException(nonCallbackParameters, sourceModel);
       }
 
@@ -91,13 +97,24 @@ public class ExtensionSourceObjectFactory extends AbstractExtensionObjectFactory
                                                                 responseCallbackParameters,
                                                                 errorCallbackParameters,
                                                                 backPressureStrategy),
-                                        configurationProvider,
+                                        getConfigurationProvider(),
                                         primaryNodeOnly != null ? primaryNodeOnly : sourceModel.runsOnPrimaryNodeOnly(),
                                         getRetryPolicyTemplate(),
                                         cursorProviderFactory,
                                         backPressureStrategy,
-                                        muleContext.getExtensionManager());
+                                        muleContext.getExtensionManager(),
+                                        ((MuleContextWithRegistry) muleContext).getRegistry()
+                                            .lookupObject(NotificationDispatcher.class),
+                                        muleContext.getTransactionFactoryManager(), muleContext.getConfiguration().getId());
     });
+  }
+
+  // TODO(MULE-15641): REMOVE THIS METHOD. REPLACE WITH `nonCallbackParameters.isDynamic()`
+  private boolean hasDynamicNonCallbackParameters(ResolverSet nonCallbackParameters) {
+    return nonCallbackParameters.getResolvers()
+        .entrySet().stream()
+        .filter(e -> !CONFIG_ATTRIBUTE_NAME.equals(e.getKey()))
+        .anyMatch(e -> e.getValue().isDynamic());
   }
 
   private BackPressureStrategy getBackPressureStrategy() {
@@ -134,12 +151,20 @@ public class ExtensionSourceObjectFactory extends AbstractExtensionObjectFactory
                                     cursorProviderFactory,
                                     backPressureStrategy,
                                     reflectionCache,
+                                    expressionManager,
                                     properties,
                                     muleContext);
   }
 
-  private RetryPolicyTemplate getRetryPolicyTemplate() throws ConfigurationException {
+  private RetryPolicyTemplate getRetryPolicyTemplate() {
     return retryPolicyTemplate;
+  }
+
+  private ConfigurationProvider getConfigurationProvider() {
+    return parameters.values().stream()
+        .filter(v -> v instanceof ConfigurationProvider)
+        .map(v -> ((ConfigurationProvider) v)).findAny()
+        .orElse(null);
   }
 
   public void setRetryPolicyTemplate(RetryPolicyTemplate retryPolicyTemplate) {
@@ -147,17 +172,15 @@ public class ExtensionSourceObjectFactory extends AbstractExtensionObjectFactory
   }
 
   private ConfigurationException dynamicParameterException(ResolverSet resolverSet, SourceModel model) {
-    List<String> dynamicParams = resolverSet.getResolvers().entrySet().stream().filter(entry -> entry.getValue().isDynamic())
-        .map(entry -> entry.getKey()).collect(toList());
+    List<String> dynamicParams = resolverSet.getResolvers().entrySet()
+        .stream()
+        .filter(entry -> entry.getValue().isDynamic())
+        .map(Map.Entry::getKey).collect(toList());
 
-    return new ConfigurationException(
-                                      createStaticMessage(format("The '%s' message source is using expressions, which are not allowed on message sources. "
-                                          + "Offending parameters are: [%s]", model.getName(),
-                                                                 Joiner.on(',').join(dynamicParams))));
-  }
+    String message = "The source: '" + model.getName() + "' is using expressions, which are not allowed on message sources."
+        + " Offending parameters are: [" + Joiner.on(',').join(dynamicParams) + "]";
 
-  public void setConfigurationProvider(ConfigurationProvider configurationProvider) {
-    this.configurationProvider = configurationProvider;
+    return new ConfigurationException(createStaticMessage(message));
   }
 
   public void setCursorProviderFactory(CursorProviderFactory cursorProviderFactory) {

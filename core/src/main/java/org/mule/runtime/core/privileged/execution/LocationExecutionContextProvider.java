@@ -8,8 +8,11 @@ package org.mule.runtime.core.privileged.execution;
 
 import static java.lang.String.format;
 import static java.util.regex.Pattern.compile;
+import static java.util.regex.Pattern.quote;
+import static java.util.stream.Collectors.toMap;
 import static org.mule.runtime.api.component.Component.Annotations.NAME_ANNOTATION_KEY;
 import static org.mule.runtime.api.component.Component.Annotations.SOURCE_ELEMENT_ANNOTATION_KEY;
+
 import org.mule.api.annotation.NoExtend;
 import org.mule.runtime.api.component.Component;
 import org.mule.runtime.api.util.ComponentLocationProvider;
@@ -29,11 +32,9 @@ import javax.xml.namespace.QName;
 @NoExtend
 public abstract class LocationExecutionContextProvider extends ComponentLocationProvider implements ExceptionContextProvider {
 
-
-
   private static final Pattern URL_PATTERN = compile("url=\"[a-z]*://([^@]*)@");
   private static final Pattern ADDRESS_PATTERN = compile("address=\"[a-z]*://([^@]*)@");
-  private static final Pattern PASSWORD_PATTERN = compile("password=\"([^\"]*)\"");
+  private static final Pattern PASSWORD_PATTERN = compile("password=\"([^\"|\n]*)\"");
   private static final String PASSWORD_MASK = "<<credentials>>";
   public static final String PASSWORD_ATTRIBUTE_MASK = "password=\"%s\"";
 
@@ -43,11 +44,14 @@ public abstract class LocationExecutionContextProvider extends ComponentLocation
    * @param beanAnnotations the map with annotations to populate
    * @param sourceCode the source code representation of the element definition.
    * @param customAttributes the custom attributes of the element definition.
+   *
+   * @deprecated Use {@link #addMetadataAnnotationsFromDocAttributes(String, Map, String, Map)} instead
    */
+  @Deprecated
   public static void addMetadataAnnotationsFromXml(Map<QName, Object> beanAnnotations, String sourceCode,
                                                    Map<String, Object> customAttributes) {
     if (sourceCode != null) {
-      beanAnnotations.put(SOURCE_ELEMENT_ANNOTATION_KEY, sourceCode);
+      beanAnnotations.put(SOURCE_ELEMENT_ANNOTATION_KEY, maskPasswords(sourceCode));
     }
 
     String documentationName = (String) customAttributes
@@ -62,9 +66,23 @@ public abstract class LocationExecutionContextProvider extends ComponentLocation
     });
   }
 
-  protected static String getSourceXML(Component element) {
-    Object sourceXml = element.getAnnotation(SOURCE_ELEMENT_ANNOTATION_KEY);
-    return sourceXml != null ? maskPasswords(sourceXml.toString()) : null;
+  /**
+   * Populates the passed beanAnnotations with the other passed parameters.
+   *
+   * @param beanAnnotations the map with annotations to populate
+   * @param sourceCode the source code representation of the element definition.
+   * @param docAttributes the doc attributes of the element definition.
+   * @deprecated Use {@link #addMetadataAnnotationsFromDocAttributes(String, Map, String, Map)} instead
+   */
+  @Deprecated
+  public static void addMetadataAnnotationsFromDocAttributes(Map<QName, Object> beanAnnotations, String sourceCode,
+                                                             Map<String, String> docAttributes) {
+    if (sourceCode != null) {
+      beanAnnotations.put(SOURCE_ELEMENT_ANNOTATION_KEY, maskPasswords(sourceCode));
+    }
+
+    beanAnnotations.putAll(docAttributes.entrySet().stream()
+        .collect(toMap(e -> QName.valueOf(e.getKey()), e -> e.getValue())));
   }
 
   public static String maskPasswords(String xml, String passwordMask) {
@@ -73,21 +91,21 @@ public abstract class LocationExecutionContextProvider extends ComponentLocation
 
     Matcher matcher = PASSWORD_PATTERN.matcher(xml);
     if (matcher.find() && matcher.groupCount() > 0) {
-      xml = xml.replaceAll(maskPasswordAttribute(matcher.group(1)), maskPasswordAttribute(passwordMask));
+      xml = xml.replaceAll(quote(maskPasswordAttribute(matcher.group(1))), maskPasswordAttribute(passwordMask));
     }
     xml = maskUrlPassword(xml, PASSWORD_PATTERN, passwordMask);
 
     return xml;
   }
 
-  protected static String maskPasswords(String xml) {
+  public static String maskPasswords(String xml) {
     return maskPasswords(xml, PASSWORD_MASK);
   }
 
   private static String maskUrlPassword(String xml, Pattern pattern, String passwordMask) {
     Matcher matcher = pattern.matcher(xml);
     if (matcher.find() && matcher.groupCount() > 0) {
-      xml = xml.replaceAll(matcher.group(1), passwordMask);
+      xml = xml.replaceAll(quote(matcher.group(1)), passwordMask);
     }
     return xml;
   }

@@ -4,7 +4,7 @@
     <parent>
         <groupId>org.mule.tests</groupId>
         <artifactId>mule-tests</artifactId>
-        <version>4.2.0-SNAPSHOT</version>
+        <version>4.4.0-SNAPSHOT</version>
     </parent>
     <artifactId>mule-tests-performance</artifactId>
     <packaging>jar</packaging>
@@ -43,6 +43,7 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
                 <configuration>
+                    <argLine>-Djmh.ignoreLock=true</argLine>
                     <systemPropertyVariables>
                         <contiperf.active>false</contiperf.active>
                         <enablePerformanceTests>false</enablePerformanceTests>
@@ -53,11 +54,21 @@
     </build>
 
     <dependencies>
+        <dependency>
+            <groupId>net.bytebuddy</groupId>
+            <artifactId>byte-buddy</artifactId>
+        </dependency>
         <!-- Mule Container dependencies -->
         <dependency>
             <groupId>org.mule.runtime</groupId>
             <artifactId>mule-core</artifactId>
             <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.mule.runtime</groupId>
+            <artifactId>mule-core-tests</artifactId>
+            <version>${project.version}</version>
+            <type>test-jar</type>
         </dependency>
         <dependency>
             <groupId>org.mule.runtime</groupId>
@@ -96,7 +107,10 @@
             <artifactId>mule-service-weave</artifactId>
             <classifier>mule-service</classifier>
         </dependency>
-
+        <dependency>
+            <groupId>org.mule.runtime</groupId>
+            <artifactId>mule-dwb-api</artifactId>                
+        </dependency>
         <!-- Test dependencies -->
         <dependency>
             <groupId>org.mule.tests</groupId>
@@ -137,6 +151,7 @@
                         <groupId>org.apache.maven.plugins</groupId>
                         <artifactId>maven-surefire-plugin</artifactId>
                         <configuration>
+                            <argLine>-Djmh.ignoreLock=false</argLine>
                             <systemPropertyVariables>
                                 <enablePerformanceTests>true</enablePerformanceTests>
                                 <contiperf.active>true</contiperf.active>
@@ -155,6 +170,7 @@
                         <groupId>org.apache.maven.plugins</groupId>
                         <artifactId>maven-surefire-plugin</artifactId>
                         <configuration>
+                            <argLine>-Djmh.ignoreLock=false</argLine>
                             <systemPropertyVariables>
                                 <enablePerformanceTests>false</enablePerformanceTests>
                                 <contiperf.active>false</contiperf.active>
@@ -228,6 +244,13 @@
             <id>benchmark-jar</id>
             <build>
                 <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-surefire-plugin</artifactId>
+                        <configuration>
+                            <argLine>-Djmh.ignoreLock=false</argLine>
+                        </configuration>
+                    </plugin>
                     <plugin>
                         <groupId>org.apache.maven.plugins</groupId>
                         <artifactId>maven-shade-plugin</artifactId>

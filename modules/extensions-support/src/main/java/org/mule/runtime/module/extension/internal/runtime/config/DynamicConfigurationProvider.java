@@ -16,7 +16,6 @@ import static org.mule.runtime.core.api.lifecycle.LifecycleUtils.startIfNeeded;
 import static org.mule.runtime.core.api.lifecycle.LifecycleUtils.stopIfNeeded;
 import static org.mule.runtime.core.api.util.ClassUtils.withContextClassLoader;
 import static org.mule.runtime.extension.api.values.ValueResolvingException.UNKNOWN;
-import static org.mule.runtime.module.extension.internal.runtime.resolver.ValueResolvingContext.from;
 import static org.mule.runtime.module.extension.internal.value.ValueProviderUtils.valuesWithClassLoader;
 import static org.slf4j.LoggerFactory.getLogger;
 
@@ -33,7 +32,9 @@ import org.mule.runtime.api.meta.model.connection.ConnectionProviderModel;
 import org.mule.runtime.api.util.Pair;
 import org.mule.runtime.api.value.Value;
 import org.mule.runtime.core.api.MuleContext;
+import org.mule.runtime.core.api.el.ExpressionManager;
 import org.mule.runtime.core.api.event.CoreEvent;
+import org.mule.runtime.core.api.extension.ExtensionManager;
 import org.mule.runtime.extension.api.runtime.ExpirationPolicy;
 import org.mule.runtime.extension.api.runtime.config.ConfigurationInstance;
 import org.mule.runtime.extension.api.runtime.config.ConfigurationProvider;
@@ -45,18 +46,16 @@ import org.mule.runtime.module.extension.internal.runtime.resolver.ConnectionPro
 import org.mule.runtime.module.extension.internal.runtime.resolver.ResolverSet;
 import org.mule.runtime.module.extension.internal.runtime.resolver.ResolverSetResult;
 import org.mule.runtime.module.extension.internal.runtime.resolver.ValueResolver;
+import org.mule.runtime.module.extension.internal.runtime.resolver.ValueResolvingContext;
 import org.mule.runtime.module.extension.internal.util.ReflectionCache;
 import org.mule.runtime.module.extension.internal.value.ValueProviderMediator;
 
 import java.util.List;
-import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.locks.Lock;
-import java.util.concurrent.locks.ReadWriteLock;
-import java.util.concurrent.locks.ReentrantReadWriteLock;
 
+import com.github.benmanes.caffeine.cache.Caffeine;
 import org.slf4j.Logger;
 
 /**
@@ -80,37 +79,48 @@ public final class DynamicConfigurationProvider extends LifecycleAwareConfigurat
   private final ConnectionProviderValueResolver connectionProviderResolver;
   private final ExpirationPolicy expirationPolicy;
 
-  private final Map<Pair<ResolverSetResult, ResolverSetResult>, ConfigurationInstance> cache = new ConcurrentHashMap<>();
-  private final ReadWriteLock cacheLock = new ReentrantReadWriteLock();
-  private final Lock cacheReadLock = cacheLock.readLock();
-  private final Lock cacheWriteLock = cacheLock.writeLock();
+  private final com.github.benmanes.caffeine.cache.LoadingCache<ResolverResultAndEvent, ConfigurationInstance> cache;
   private final ReflectionCache reflectionCache;
+  private final ExpressionManager expressionManager;
+  private final ExtensionManager extensionManager;
 
   /**
    * Creates a new instance
    *
    * @param name                       this provider's name
-   * @param extensionModel             the model that owns the {@code configurationModel}
-   * @param configurationModel         the model for the returned configurations
+   * @param extension                  the model that owns the {@code configurationModel}
+   * @param config                     the model for the returned configurations
    * @param resolverSet                the {@link ResolverSet} that provides the configuration's parameter values
    * @param connectionProviderResolver a {@link ValueResolver} used to obtain a {@link ConnectionProvider}
    * @param expirationPolicy           the {@link ExpirationPolicy} for the unused instances
+   * @param reflectionCache            the {@link ReflectionCache} used to improve reflection lookups performance
+   * @param expressionManager          the {@link ExpressionManager} used to create a session used to evaluate the attributes.
+   * @param muleContext                the {@link MuleContext} that will own the configuration instances
    */
   public DynamicConfigurationProvider(String name,
-                                      ExtensionModel extensionModel,
-                                      ConfigurationModel configurationModel,
+                                      ExtensionModel extension,
+                                      ConfigurationModel config,
                                       ResolverSet resolverSet,
                                       ConnectionProviderValueResolver connectionProviderResolver,
                                       ExpirationPolicy expirationPolicy,
                                       ReflectionCache reflectionCache,
+                                      ExpressionManager expressionManager,
                                       MuleContext muleContext) {
-    super(name, extensionModel, configurationModel, muleContext);
-    configurationInstanceFactory =
-        new ConfigurationInstanceFactory<>(extensionModel, configurationModel, resolverSet, reflectionCache, muleContext);
+    super(name, extension, config, muleContext);
+    this.configurationInstanceFactory =
+        new ConfigurationInstanceFactory<>(extension, config, resolverSet, expressionManager, muleContext);
     this.reflectionCache = reflectionCache;
+    this.expressionManager = expressionManager;
     this.resolverSet = resolverSet;
     this.connectionProviderResolver = connectionProviderResolver;
     this.expirationPolicy = expirationPolicy;
+    this.extensionManager = muleContext.getExtensionManager();
+
+    cache = Caffeine.newBuilder().expireAfterAccess(expirationPolicy.getMaxIdleTime(), expirationPolicy.getTimeUnit())
+        .removalListener((key, value, cause) -> extensionManager
+            .disposeConfiguration(((ResolverResultAndEvent) key).getResolverSetResult().toString(),
+                                  (ConfigurationInstance) value))
+        .build(key -> createConfiguration(key.getResolverSetResult(), key.getEvent()));
   }
 
   /**
@@ -123,51 +133,20 @@ public final class DynamicConfigurationProvider extends LifecycleAwareConfigurat
   @Override
   public ConfigurationInstance get(Event event) {
     return withContextClassLoader(getExtensionClassLoader(), () -> {
-      ResolverSetResult result = resolverSet.resolve(from((CoreEvent) event));
-      ResolverSetResult providerResult = null;
-      if (connectionProviderResolver.getResolverSet().isPresent()) {
-        providerResult = ((ResolverSet) connectionProviderResolver.getResolverSet().get()).resolve(from((CoreEvent) event));
+      try (ValueResolvingContext resolvingContext = ValueResolvingContext.builder(((CoreEvent) event))
+          .withExpressionManager(expressionManager).build()) {
+        ResolverSetResult result = resolverSet.resolve(resolvingContext);
+        ResolverSetResult providerResult = null;
+        if (connectionProviderResolver.getResolverSet().isPresent()) {
+          providerResult = ((ResolverSet) connectionProviderResolver.getResolverSet().get()).resolve(resolvingContext);
+        }
+        return getConfiguration(new Pair<>(result, providerResult), (CoreEvent) event);
       }
-      return getConfiguration(new Pair<>(result, providerResult), (CoreEvent) event);
     });
   }
 
-  private ConfigurationInstance getConfiguration(Pair<ResolverSetResult, ResolverSetResult> resolverSetResult,
-                                                 CoreEvent event)
-      throws Exception {
-    ConfigurationInstance configuration;
-    cacheReadLock.lock();
-    try {
-      configuration = cache.get(resolverSetResult);
-      if (configuration != null) {
-        // important to account between the boundaries of the lock to prevent race condition
-        updateUsageStatistic(configuration);
-        return configuration;
-      }
-    } finally {
-      cacheReadLock.unlock();
-    }
-
-    cacheWriteLock.lock();
-    try {
-      // re-check in case some other thread beat us to it...
-      configuration = cache.get(resolverSetResult);
-      if (configuration == null) {
-        configuration = createConfiguration(resolverSetResult, event);
-        cache.put(resolverSetResult, configuration);
-      }
-
-      // accounting here for the same reasons as above
-      updateUsageStatistic(configuration);
-      return configuration;
-    } finally {
-      cacheWriteLock.unlock();
-    }
-  }
-
-  private void updateUsageStatistic(ConfigurationInstance configuration) {
-    MutableConfigurationStats stats = (MutableConfigurationStats) configuration.getStatistics();
-    stats.updateLastUsed();
+  private ConfigurationInstance getConfiguration(Pair<ResolverSetResult, ResolverSetResult> resolverSetResult, CoreEvent event) {
+    return cache.get(new ResolverResultAndEvent(resolverSetResult, event));
   }
 
   private ConfigurationInstance createConfiguration(Pair<ResolverSetResult, ResolverSetResult> values, CoreEvent event)
@@ -176,15 +155,16 @@ public final class DynamicConfigurationProvider extends LifecycleAwareConfigurat
     ConfigurationInstance configuration;
     ResolverSetResult connectionProviderValues = values.getSecond();
     if (connectionProviderValues != null) {
-      configuration =
-          configurationInstanceFactory.createConfiguration(getName(),
-                                                           values.getFirst(),
-                                                           event,
-                                                           connectionProviderResolver,
-                                                           connectionProviderValues);
+      configuration = configurationInstanceFactory.createConfiguration(getName(),
+                                                                       values.getFirst(),
+                                                                       event,
+                                                                       connectionProviderResolver,
+                                                                       connectionProviderValues);
     } else {
-      configuration = configurationInstanceFactory
-          .createConfiguration(getName(), values.getFirst(), event, ofNullable(connectionProviderResolver));
+      configuration = configurationInstanceFactory.createConfiguration(getName(),
+                                                                       values.getFirst(),
+                                                                       event,
+                                                                       ofNullable(connectionProviderResolver));
     }
 
     registerConfiguration(configuration);
@@ -231,20 +211,17 @@ public final class DynamicConfigurationProvider extends LifecycleAwareConfigurat
 
   @Override
   public List<ConfigurationInstance> getExpired() {
-    cacheWriteLock.lock();
-    try {
-      return cache.entrySet().stream().filter(entry -> isExpired(entry.getValue())).map(entry -> {
-        cache.remove(entry.getKey());
-        return entry.getValue();
-      }).collect(toImmutableList());
-    } finally {
-      cacheWriteLock.unlock();
-    }
+    return cache.asMap().entrySet().stream().filter(entry -> isExpired(entry.getValue())).map(entry -> {
+      cache.invalidate(entry.getKey());
+      unRegisterConfiguration(entry.getValue());
+      return entry.getValue();
+    }).collect(toImmutableList());
   }
 
   private boolean isExpired(ConfigurationInstance configuration) {
     ConfigurationStats stats = configuration.getStatistics();
-    return stats.getInflightOperations() == 0 && expirationPolicy.isExpired(stats.getLastUsedMillis(), MILLISECONDS);
+    return stats.getRunningSources() == 0 && stats.getInflightOperations() == 0
+        && expirationPolicy.isExpired(stats.getLastUsedMillis(), MILLISECONDS);
   }
 
   @Override
@@ -283,7 +260,8 @@ public final class DynamicConfigurationProvider extends LifecycleAwareConfigurat
                                                                        .getValues(parameterName,
                                                                                   new ResolverSetBasedParameterResolver(resolverSet,
                                                                                                                         getConfigurationModel(),
-                                                                                                                        reflectionCache)),
+                                                                                                                        reflectionCache,
+                                                                                                                        expressionManager)),
                                  getExtensionModel());
   }
 
@@ -294,10 +272,12 @@ public final class DynamicConfigurationProvider extends LifecycleAwareConfigurat
   public Set<Value> getConnectionValues(String parameterName) throws ValueResolvingException {
     return valuesWithClassLoader(() -> {
       ConnectionProviderModel connectionProviderModel = getConnectionProviderModel()
-          .orElseThrow(() -> new ValueResolvingException("Internal Error. Unable to resolve values because the service is unable to get the connection model",
+          .orElseThrow(() -> new ValueResolvingException(
+                                                         "Internal Error. Unable to resolve values because the service is unable to get the connection model",
                                                          UNKNOWN));
       ResolverSet resolverSet = ((Optional<ResolverSet>) connectionProviderResolver.getResolverSet())
-          .orElseThrow(() -> new ValueResolvingException("Internal Error. Unable to resolve values because of the service is unable to retrieve connection parameters",
+          .orElseThrow(() -> new ValueResolvingException(
+                                                         "Internal Error. Unable to resolve values because of the service is unable to retrieve connection parameters",
                                                          UNKNOWN));
 
       return new ValueProviderMediator<>(connectionProviderModel,
@@ -306,7 +286,8 @@ public final class DynamicConfigurationProvider extends LifecycleAwareConfigurat
                                              .getValues(parameterName,
                                                         new ResolverSetBasedParameterResolver(resolverSet,
                                                                                               connectionProviderModel,
-                                                                                              reflectionCache));
+                                                                                              reflectionCache,
+                                                                                              expressionManager));
     }, getExtensionModel());
   }
 
@@ -314,6 +295,42 @@ public final class DynamicConfigurationProvider extends LifecycleAwareConfigurat
     return this.connectionProviderResolver.getObjectBuilder()
         .filter(ob -> ob instanceof ConnectionProviderObjectBuilder)
         .map(ob -> ((ConnectionProviderObjectBuilder) ob).providerModel);
+  }
+
+  private static class ResolverResultAndEvent {
+
+    private Pair<ResolverSetResult, ResolverSetResult> resolverSetResult;
+    private CoreEvent event;
+
+    ResolverResultAndEvent(Pair<ResolverSetResult, ResolverSetResult> resolverSetResult, CoreEvent event) {
+      this.resolverSetResult = resolverSetResult;
+      this.event = event;
+    }
+
+    Pair<ResolverSetResult, ResolverSetResult> getResolverSetResult() {
+      return resolverSetResult;
+    }
+
+    public CoreEvent getEvent() {
+      return event;
+    }
+
+    @Override
+    public boolean equals(Object o) {
+      if (this == o) {
+        return true;
+      }
+      if (!(o instanceof ResolverResultAndEvent)) {
+        return false;
+      }
+      ResolverResultAndEvent that = (ResolverResultAndEvent) o;
+      return resolverSetResult.equals(that.resolverSetResult);
+    }
+
+    @Override
+    public int hashCode() {
+      return Objects.hash(resolverSetResult);
+    }
   }
 
 }

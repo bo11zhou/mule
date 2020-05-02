@@ -17,9 +17,9 @@ import static org.hamcrest.CoreMatchers.instanceOf;
 import static org.hamcrest.CoreMatchers.is;
 import static org.junit.Assert.assertThat;
 import static org.mockito.Answers.RETURNS_DEEP_STUBS;
-import static org.mockito.Matchers.any;
-import static org.mockito.Matchers.anyString;
-import static org.mockito.Matchers.same;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.same;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.withSettings;
@@ -54,6 +54,7 @@ import org.mule.runtime.api.meta.model.operation.OperationModel;
 import org.mule.runtime.api.meta.model.parameter.ParameterGroupModel;
 import org.mule.runtime.api.meta.model.parameter.ParameterModel;
 import org.mule.runtime.api.meta.model.parameter.ParameterizedModel;
+import org.mule.runtime.api.util.collection.SmallMap;
 import org.mule.runtime.core.api.MuleContext;
 import org.mule.runtime.core.api.event.CoreEvent;
 import org.mule.runtime.core.api.extension.ExtensionManager;
@@ -62,6 +63,7 @@ import org.mule.runtime.core.api.streaming.bytes.CursorStreamProviderFactory;
 import org.mule.runtime.core.api.streaming.bytes.InMemoryCursorStreamConfig;
 import org.mule.runtime.core.api.streaming.bytes.factory.InMemoryCursorStreamProviderFactory;
 import org.mule.runtime.core.internal.context.MuleContextWithRegistry;
+import org.mule.runtime.core.internal.streaming.bytes.SimpleByteBufferManager;
 import org.mule.runtime.extension.api.declaration.type.ExtensionsTypeHandlerManagerFactory;
 import org.mule.runtime.extension.api.declaration.type.ExtensionsTypeLoaderFactory;
 import org.mule.runtime.extension.api.exception.IllegalModelDefinitionException;
@@ -69,23 +71,20 @@ import org.mule.runtime.extension.api.loader.ExtensionModelValidator;
 import org.mule.runtime.extension.api.loader.ProblemsReporter;
 import org.mule.runtime.extension.api.metadata.MetadataResolverFactory;
 import org.mule.runtime.extension.api.property.ClassLoaderModelProperty;
-import org.mule.runtime.extension.api.runtime.InterceptorFactory;
 import org.mule.runtime.extension.api.runtime.config.ConfigurationFactory;
 import org.mule.runtime.extension.api.runtime.config.ConfigurationInstance;
 import org.mule.runtime.extension.api.runtime.exception.ExceptionHandlerFactory;
-import org.mule.runtime.extension.api.runtime.operation.ComponentExecutorFactory;
-import org.mule.runtime.module.extension.api.loader.java.property.ComponentExecutorModelProperty;
+import org.mule.runtime.extension.api.runtime.operation.CompletableComponentExecutorFactory;
+import org.mule.runtime.module.extension.api.loader.java.property.CompletableComponentExecutorModelProperty;
 import org.mule.runtime.module.extension.internal.loader.java.property.ConfigTypeModelProperty;
 import org.mule.runtime.module.extension.internal.loader.java.property.ConfigurationFactoryModelProperty;
 import org.mule.runtime.module.extension.internal.loader.java.property.ConnectivityModelProperty;
 import org.mule.runtime.module.extension.internal.loader.java.property.ExceptionHandlerModelProperty;
 import org.mule.runtime.module.extension.internal.loader.java.property.ImplementingTypeModelProperty;
-import org.mule.runtime.module.extension.internal.loader.java.property.InterceptorsModelProperty;
 import org.mule.runtime.module.extension.internal.loader.java.property.MetadataResolverFactoryModelProperty;
 import org.mule.runtime.module.extension.internal.loader.java.property.ParameterGroupModelProperty;
 import org.mule.runtime.module.extension.internal.runtime.resolver.ValueResolver;
 import org.mule.runtime.module.extension.internal.runtime.resolver.ValueResolvingContext;
-import org.mule.tck.core.streaming.SimpleByteBufferManager;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -99,8 +98,6 @@ import org.custommonkey.xmlunit.Difference;
 import org.custommonkey.xmlunit.XMLUnit;
 import org.hamcrest.Matcher;
 import org.mockito.Mockito;
-
-import com.google.common.collect.ImmutableList;
 
 public final class ExtensionsTestUtils {
 
@@ -116,7 +113,11 @@ public final class ExtensionsTestUtils {
   }
 
   public static ProblemsReporter validate(Class<?> clazz, ExtensionModelValidator validator) {
-    return validate(loadExtension(clazz), validator);
+    return validate(loadExtension(clazz, new SmallMap<>()), validator);
+  }
+
+  public static ProblemsReporter validate(Class<?> clazz, ExtensionModelValidator validator, Map<String, Object> params) {
+    return validate(loadExtension(clazz, params), validator);
   }
 
   public static ProblemsReporter validate(ExtensionModel model, ExtensionModelValidator validator) {
@@ -206,7 +207,7 @@ public final class ExtensionsTestUtils {
   }
 
   private static ParameterModel getParameter() {
-    ParameterModel parameterModel = mock(ParameterModel.class);
+    ParameterModel parameterModel = mock(ParameterModel.class, withSettings().lenient());
     when(parameterModel.getModelProperty(any())).thenReturn(Optional.empty());
     when(parameterModel.getDslConfiguration()).thenReturn(ParameterDslConfiguration.getDefaultInstance());
     when(parameterModel.getRole()).thenReturn(BEHAVIOUR);
@@ -299,7 +300,7 @@ public final class ExtensionsTestUtils {
 
   public static ParameterGroupModel mockParameters(ParameterizedModel parameterizedModel, String groupName,
                                                    ParameterModel... parameterModels) {
-    ParameterGroupModel group = mock(ParameterGroupModel.class);
+    ParameterGroupModel group = mock(ParameterGroupModel.class, withSettings().lenient());
     when(group.getName()).thenReturn(groupName);
     when(group.getModelProperty(ParameterGroupModelProperty.class)).thenReturn(empty());
     when(parameterizedModel.getParameterGroupModels()).thenReturn(asList(group));
@@ -335,15 +336,6 @@ public final class ExtensionsTestUtils {
     when(enrichableModel.getModelProperty(ExceptionHandlerModelProperty.class)).thenReturn(property);
   }
 
-  public static void mockInterceptors(EnrichableModel enrichableModel, List<InterceptorFactory> interceptorFactories) {
-    if (interceptorFactories == null) {
-      interceptorFactories = ImmutableList.of();
-    }
-
-    when(enrichableModel.getModelProperty(InterceptorsModelProperty.class))
-        .thenReturn(of(new InterceptorsModelProperty(interceptorFactories)));
-  }
-
   public static void mockConfigurationInstance(ConfigurationModel configurationModel, Object config) {
     ConfigurationFactory configurationFactory = mock(ConfigurationFactory.class);
     when(configurationFactory.newInstance()).thenReturn(config);
@@ -367,9 +359,10 @@ public final class ExtensionsTestUtils {
     when(model.getModelProperty(MetadataResolverFactoryModelProperty.class)).thenReturn(property);
   }
 
-  public static void mockExecutorFactory(OperationModel operationModel, ComponentExecutorFactory operationExecutorFactory) {
-    when(operationModel.getModelProperty(ComponentExecutorModelProperty.class))
-        .thenReturn(of(new ComponentExecutorModelProperty(operationExecutorFactory)));
+  public static void mockExecutorFactory(OperationModel operationModel,
+                                         CompletableComponentExecutorFactory operationExecutorFactory) {
+    when(operationModel.getModelProperty(CompletableComponentExecutorModelProperty.class))
+        .thenReturn(of(new CompletableComponentExecutorModelProperty(operationExecutorFactory)));
   }
 
   public static CursorStreamProviderFactory getDefaultCursorStreamProviderFactory(StreamingManager streamingManager) {

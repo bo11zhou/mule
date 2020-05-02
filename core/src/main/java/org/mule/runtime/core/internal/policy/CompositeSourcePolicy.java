@@ -6,32 +6,40 @@
  */
 package org.mule.runtime.core.internal.policy;
 
-import static java.util.Optional.empty;
-import static org.mule.runtime.api.exception.MuleException.INFO_ALREADY_LOGGED_KEY;
-import static org.mule.runtime.core.api.functional.Either.left;
-import static org.mule.runtime.core.api.functional.Either.right;
-import static org.mule.runtime.core.privileged.processor.MessageProcessors.processWithChildContext;
+import static java.util.Optional.ofNullable;
+import static java.util.function.Function.identity;
+import static org.mule.runtime.api.functional.Either.left;
+import static org.mule.runtime.api.functional.Either.right;
+import static org.mule.runtime.api.util.collection.SmallMap.copy;
+import static org.mule.runtime.core.api.rx.Exceptions.propagateWrappingFatal;
+import static org.mule.runtime.core.internal.policy.SourcePolicyContext.from;
 import static org.slf4j.LoggerFactory.getLogger;
-import static reactor.core.publisher.Mono.from;
-import static reactor.core.publisher.Mono.just;
+import static reactor.core.publisher.Flux.from;
 
+import org.mule.runtime.api.component.execution.CompletableCallback;
+import org.mule.runtime.api.functional.Either;
+import org.mule.runtime.api.lifecycle.Disposable;
 import org.mule.runtime.api.message.Message;
 import org.mule.runtime.core.api.event.CoreEvent;
-import org.mule.runtime.core.api.functional.Either;
 import org.mule.runtime.core.api.policy.Policy;
 import org.mule.runtime.core.api.policy.SourcePolicyParametersTransformer;
 import org.mule.runtime.core.api.processor.Processor;
+import org.mule.runtime.core.api.processor.ReactiveProcessor;
 import org.mule.runtime.core.internal.exception.MessagingException;
-import org.mule.runtime.core.privileged.processor.MessageProcessors;
+import org.mule.runtime.core.internal.rx.FluxSinkRecorder;
 
-import org.reactivestreams.Publisher;
-import org.slf4j.Logger;
-
-import java.util.HashMap;
+import java.lang.ref.Reference;
+import java.lang.ref.WeakReference;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.Function;
 import java.util.function.Supplier;
+
+import org.reactivestreams.Publisher;
+import org.slf4j.Logger;
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.FluxSink;
 
 /**
  * {@link SourcePolicy} created from a list of {@link Policy}.
@@ -40,83 +48,142 @@ import java.util.function.Supplier;
  *
  * @since 4.0
  */
-public class CompositeSourcePolicy extends
-    AbstractCompositePolicy<SourcePolicyParametersTransformer, MessageSourceResponseParametersProcessor> implements SourcePolicy {
+public class CompositeSourcePolicy
+    extends AbstractCompositePolicy<SourcePolicyParametersTransformer> implements SourcePolicy, Disposable, DeferredDisposable {
 
   private static final Logger LOGGER = getLogger(CompositeSourcePolicy.class);
 
-  private final Processor flowExecutionProcessor;
+  private final CommonSourcePolicy commonPolicy;
   private final SourcePolicyProcessorFactory sourcePolicyProcessorFactory;
-  private Map<String, Object> originalResponseParameters;
-  private Map<String, Object> originalFailureResponseParameters;
+  private final ReactiveProcessor flowExecutionProcessor;
+  private final Optional<Function<MessagingException, MessagingException>> resolver;
+  private final PolicyTraceLogger policyTraceLogger = new PolicyTraceLogger();
 
   /**
-   * Creates a new source policies composed by several {@link Policy} that will be chain together.
+   * Creates a new source policy composed by several {@link Policy} that will be chain together.
    *
    * @param parameterizedPolicies the list of policies to use in this composite policy.
+   * @param flowExecutionProcessor the operation that executes the flow
    * @param sourcePolicyParametersTransformer a transformer from a source response parameters to a message and vice versa
    * @param sourcePolicyProcessorFactory factory to create a {@link Processor} from each {@link Policy}
-   * @param flowExecutionProcessor the operation that executes the flow
-   * @param messageSourceResponseParametersProcessor processor that gives access to the set of parameters to be sent originally by
-   *        the source
+   * @param resolver a mapper to update the eventual errors in source policy
    */
   public CompositeSourcePolicy(List<Policy> parameterizedPolicies,
+                               ReactiveProcessor flowExecutionProcessor,
                                Optional<SourcePolicyParametersTransformer> sourcePolicyParametersTransformer,
-                               SourcePolicyProcessorFactory sourcePolicyProcessorFactory, Processor flowExecutionProcessor,
-                               MessageSourceResponseParametersProcessor messageSourceResponseParametersProcessor) {
-    super(parameterizedPolicies, sourcePolicyParametersTransformer, messageSourceResponseParametersProcessor);
-    this.sourcePolicyProcessorFactory = sourcePolicyProcessorFactory;
+                               SourcePolicyProcessorFactory sourcePolicyProcessorFactory,
+                               Function<MessagingException, MessagingException> resolver) {
+    super(parameterizedPolicies, sourcePolicyParametersTransformer);
     this.flowExecutionProcessor = flowExecutionProcessor;
+    this.sourcePolicyProcessorFactory = sourcePolicyProcessorFactory;
+    this.resolver = ofNullable(resolver);
+    initProcessor();
+    this.commonPolicy = new CommonSourcePolicy(new SourceWithPoliciesFluxObjectFactory(this));
+  }
+
+  @Override
+  protected ReactiveProcessor getPolicyProcessor() {
+    return getLastPolicy().getPolicyChain().getProcessingStrategy().onPipeline(super.getPolicyProcessor());
+  }
+
+  private static final class SourceWithPoliciesFluxObjectFactory implements Supplier<FluxSink<CoreEvent>> {
+
+    private final Reference<CompositeSourcePolicy> compositeSourcePolicy;
+    private final PolicyTraceLogger policyTraceLogger = new PolicyTraceLogger();
+
+    public SourceWithPoliciesFluxObjectFactory(CompositeSourcePolicy compositeSourcePolicy) {
+      // Avoid instances of this class from preventing the policy from being gc'd
+      // Break the circular reference between policy-sinkFactory-flux that may cause memory leaks in the policies caches
+      this.compositeSourcePolicy = new WeakReference<>(compositeSourcePolicy);
+    }
+
+    @Override
+    public FluxSink<CoreEvent> get() {
+      final FluxSinkRecorder<CoreEvent> sinkRef = new FluxSinkRecorder<>();
+
+      Flux<Either<SourcePolicyFailureResult, SourcePolicySuccessResult>> policyFlux =
+          sinkRef.flux()
+              .transform(compositeSourcePolicy.get().getExecutionProcessor())
+              .map(policiesResultEvent -> {
+                SourcePolicyContext ctx = from(policiesResultEvent);
+                return right(SourcePolicyFailureResult.class,
+                             new SourcePolicySuccessResult(policiesResultEvent,
+                                                           resolveSuccessResponseParameters(policiesResultEvent, ctx),
+                                                           ctx.getResponseParametersProcessor()));
+              })
+              .doOnNext(result -> {
+                compositeSourcePolicy.get().commonPolicy.finishFlowProcessing(result.getRight().getResult(), result);
+              })
+              .doOnError(e -> !(e instanceof MessagingException), e -> LOGGER.error(e.getMessage(), e))
+              .onErrorContinue(MessagingException.class, (t, e) -> {
+                MessagingException me = (MessagingException) t;
+                SourcePolicyContext ctx = from(me.getEvent());
+
+                Either<SourcePolicyFailureResult, SourcePolicySuccessResult> result =
+                    left(new SourcePolicyFailureResult(me, resolveErrorResponseParameters(me, ctx)),
+                         SourcePolicySuccessResult.class);
+
+                policyTraceLogger.logSourcePolicyFailureResult(result.getLeft());
+
+                compositeSourcePolicy.get().commonPolicy.finishFlowProcessing(me.getEvent(), result, me, ctx);
+              });
+
+      policyFlux.subscribe(null, e -> LOGGER.error("Exception reached subscriber for " + toString(), e));
+
+      return sinkRef.getFluxSink();
+    }
+
+    private Supplier<Map<String, Object>> resolveSuccessResponseParameters(CoreEvent policiesResultEvent,
+                                                                           SourcePolicyContext ctx) {
+      final Map<String, Object> originalResponseParameters = ctx.getOriginalResponseParameters();
+
+      return () -> compositeSourcePolicy.get().getParametersTransformer()
+          .map(parametersTransformer -> concatMaps(originalResponseParameters,
+                                                   parametersTransformer
+                                                       .fromMessageToSuccessResponseParameters(policiesResultEvent
+                                                           .getMessage())))
+          .orElse(originalResponseParameters);
+    }
+
+    private Supplier<Map<String, Object>> resolveErrorResponseParameters(MessagingException e, SourcePolicyContext ctx) {
+      final Map<String, Object> originalFailureResponseParameters = ctx.getOriginalFailureResponseParameters();
+
+      return () -> compositeSourcePolicy.get().getParametersTransformer()
+          .map(parametersTransformer -> concatMaps(originalFailureResponseParameters,
+                                                   parametersTransformer
+                                                       .fromMessageToErrorResponseParameters(e.getEvent().getMessage())))
+          .orElse(originalFailureResponseParameters);
+    }
   }
 
   /**
    * Executes the flow.
-   *
+   * <p>
    * If there's a {@link SourcePolicyParametersTransformer} provided then it will use it to convert the source response or source
    * failure response from the parameters back to a {@link Message} that can be routed through the policy chain which later will
-   * be convert back to response or failure response parameters thus allowing the policy chain to modify the response.. That
+   * be convert back to response or failure response parameters thus allowing the policy chain to modify the response. That
    * message will be the result of the next-operation of the policy.
-   *
+   * <p>
    * If no {@link SourcePolicyParametersTransformer} is provided, then the same response from the flow is going to be routed as
    * response of the next-operation of the policy chain. In this case, the same response from the flow is going to be used to
    * generate the response or failure response for the source so the policy chain is not going to be able to modify the response
    * sent by the source.
-   *
-   * When the flow execution fails, it will create a {@link FlowExecutionException} instead of a regular
-   * {@link MessagingException} to signal that the failure was through the the flow exception and not the policy logic.
    */
   @Override
-  protected Publisher<CoreEvent> processNextOperation(CoreEvent event) {
-    return just(event)
-        .flatMap(request -> from(processWithChildContext(request, flowExecutionProcessor, empty())))
-        .map(flowExecutionResponse -> {
-          originalResponseParameters =
-              getParametersProcessor().getSuccessfulExecutionResponseParametersFunction().apply(flowExecutionResponse);
-          Message message = getParametersTransformer()
-              .map(parametersTransformer -> parametersTransformer
-                  .fromSuccessResponseParametersToMessage(originalResponseParameters))
-              .orElseGet(flowExecutionResponse::getMessage);
-          return CoreEvent.builder(event).message(message).build();
+  protected Publisher<CoreEvent> applyNextOperation(Publisher<CoreEvent> eventPub) {
+    final Optional<SourcePolicyParametersTransformer> parametersTransformer = getParametersTransformer();
+    final Function<MessagingException, MessagingException> errorResolver = resolver.orElse(identity());
 
-        })
-        .onErrorMap(MessagingException.class, messagingException -> {
-          originalFailureResponseParameters =
-              getParametersProcessor().getFailedExecutionResponseParametersFunction().apply(messagingException.getEvent());
-          Message message = getParametersTransformer()
-              .map(parametersTransformer -> parametersTransformer
-                  .fromFailureResponseParametersToMessage(originalFailureResponseParameters))
-              .orElse(messagingException.getEvent().getMessage());
-          MessagingException flowExecutionException =
-              new FlowExecutionException(CoreEvent.builder(messagingException.getEvent()).message(message).build(),
-                                         messagingException.getCause(),
-                                         messagingException.getFailingComponent());
-          if (messagingException.getInfo().containsKey(INFO_ALREADY_LOGGED_KEY)) {
-            flowExecutionException.addInfo(INFO_ALREADY_LOGGED_KEY,
-                                           messagingException.getInfo().get(INFO_ALREADY_LOGGED_KEY));
+    return from(eventPub)
+        .doOnNext(e -> SourcePolicyContext.from(e).setParametersTransformer(parametersTransformer))
+        .transform(flowExecutionProcessor)
+        .map(flowExecutionResponse -> {
+          try {
+            return new PolicyEventMapper().onFlowFinish(flowExecutionResponse, parametersTransformer);
+          } catch (MessagingException e) {
+            throw propagateWrappingFatal(errorResolver.apply(e));
           }
-          return flowExecutionException;
-        })
-        .doOnError(e -> !(e instanceof MessagingException), e -> LOGGER.error(e.getMessage(), e));
+        });
   }
 
   /**
@@ -124,13 +191,12 @@ public class CompositeSourcePolicy extends
    * wrapped policy / flow.
    */
   @Override
-  protected Publisher<CoreEvent> processPolicy(Policy policy, Processor nextProcessor, CoreEvent event) {
-    return just(event)
-        .doOnNext(s -> logEvent(getCoreEventId(event), getPolicyName(policy), () -> getCoreEventAttributesAsString(event),
-                                "Starting Policy "))
-        .transform(sourcePolicyProcessorFactory.createSourcePolicy(policy, nextProcessor))
-        .doOnNext(responseEvent -> logEvent(getCoreEventId(responseEvent), getPolicyName(policy),
-                                            () -> getCoreEventAttributesAsString(responseEvent), "At the end of the Policy "));
+  protected Publisher<CoreEvent> applyPolicy(Policy policy, ReactiveProcessor nextProcessor, Publisher<CoreEvent> eventPub) {
+    final ReactiveProcessor createSourcePolicy = sourcePolicyProcessorFactory.createSourcePolicy(policy, nextProcessor);
+    return from(eventPub)
+        .doOnNext(event -> policyTraceLogger.logSourcePolicyStart(policy, event))
+        .transform(createSourcePolicy)
+        .doOnNext(event -> policyTraceLogger.logSourcePolicyEnd(policy, event));
   }
 
   /**
@@ -141,90 +207,32 @@ public class CompositeSourcePolicy extends
    * {@link SourcePolicyParametersTransformer} then those parameters will be exactly the one defined by the message source.
    *
    * @param sourceEvent the event generated from the source.
-   * @return a {@link Publisher} that emits {@link SourcePolicySuccessResult} which contains the response parameters and the
-   *         result event of the execution or a {@link SourcePolicyFailureResult} which contains the failure response parameters
-   *         and the {@link MessagingException} thrown by the policy chain execution when processing completes.
-   * @throws Exception if there was an unexpected failure thrown by executing the chain.
    */
   @Override
-  public Publisher<Either<SourcePolicyFailureResult, SourcePolicySuccessResult>> process(CoreEvent sourceEvent) {
-    return from(MessageProcessors.process(sourceEvent, getPolicyProcessor()))
-        .<Either<SourcePolicyFailureResult, SourcePolicySuccessResult>>map(policiesResultEvent -> {
-          Supplier<Map<String, Object>> responseParameters = () -> getParametersTransformer()
-              .map(parametersTransformer -> concatMaps(originalResponseParameters, parametersTransformer
-                  .fromMessageToSuccessResponseParameters(policiesResultEvent.getMessage())))
-              .orElse(originalResponseParameters);
-          return right(new SourcePolicySuccessResult(policiesResultEvent, responseParameters, getParametersProcessor()));
-        }).doOnNext(result -> logSourcePolicySuccessfullResult(result.getRight()))
-
-        .doOnError(e -> !(e instanceof FlowExecutionException || e instanceof MessagingException),
-                   e -> LOGGER.error(e.getMessage(), e))
-        .onErrorResume(FlowExecutionException.class, e -> {
-          Supplier<Map<String, Object>> responseParameters = () -> getParametersTransformer()
-              .map(parametersTransformer -> concatMaps(originalFailureResponseParameters, parametersTransformer
-                  .fromMessageToErrorResponseParameters(e.getEvent().getMessage())))
-              .orElse(originalFailureResponseParameters);
-          return just(left(new SourcePolicyFailureResult(e, responseParameters)));
-        })
-        .onErrorResume(MessagingException.class, e -> {
-          Supplier<Map<String, Object>> responseParameters =
-              () -> getParametersTransformer().map(parametersTransformer -> concatMaps(originalFailureResponseParameters,
-                                                                                       parametersTransformer
-                                                                                           .fromMessageToErrorResponseParameters(e
-                                                                                               .getEvent().getMessage())))
-                  .orElse(originalFailureResponseParameters);
-          return just(Either
-              .<SourcePolicyFailureResult, SourcePolicySuccessResult>left(new SourcePolicyFailureResult(e, responseParameters)))
-                  .doOnNext(result -> logSourcePolicyFailureResult(result
-                      .getLeft()));
-        });
+  public void process(CoreEvent sourceEvent,
+                      MessageSourceResponseParametersProcessor respParamProcessor,
+                      CompletableCallback<Either<SourcePolicyFailureResult, SourcePolicySuccessResult>> callback) {
+    commonPolicy.process(sourceEvent, respParamProcessor, callback);
   }
 
-  private Map<String, Object> concatMaps(Map<String, Object> originalResponseParameters,
-                                         Map<String, Object> policyResponseParameters) {
-    Map<String, Object> concatMap = new HashMap<>();
-    if (originalResponseParameters != null) {
-      concatMap.putAll(originalResponseParameters);
-    }
-    concatMap.putAll(policyResponseParameters);
-    return concatMap;
-  }
-
-  private void logEvent(String eventId, String policyName, Supplier<String> message, String startingMessage) {
-    if (LOGGER.isTraceEnabled()) {
-      //TODO Remove event id when first policy generates it. MULE-14455
-      LOGGER.trace("Event Id: " + eventId + ".\n" + startingMessage + policyName + "\n" + message.get());
+  private static Map<String, Object> concatMaps(Map<String, Object> originalResponseParameters,
+                                                Map<String, Object> policyResponseParameters) {
+    if (originalResponseParameters == null) {
+      return policyResponseParameters;
+    } else {
+      Map<String, Object> concatMap = copy(originalResponseParameters);
+      policyResponseParameters.forEach((k, v) -> concatMap.merge(k, v, (v1, v2) -> v2));
+      return concatMap;
     }
   }
 
-  private String getCoreEventId(CoreEvent event) {
-    return event.getContext().getId();
+  @Override
+  public void dispose() {
+    commonPolicy.dispose();
   }
 
-  private String getCoreEventAttributesAsString(CoreEvent event) {
-    if (event.getMessage() == null || event.getMessage().getAttributes() == null
-        || event.getMessage().getAttributes().getValue() == null) {
-      return "";
-    }
-    return event.getMessage().getAttributes().getValue().toString();
-  }
-
-  private String getPolicyName(Policy policy) {
-    return policy.getPolicyId();
-  }
-
-  private void logSourcePolicySuccessfullResult(SourcePolicySuccessResult result) {
-    if (LOGGER.isTraceEnabled()) {
-      LOGGER.trace("Event id: " + result.getResult().getContext().getId() + "\nFinished processing. \n" +
-          getCoreEventAttributesAsString(result.getResult()));
-    }
-  }
-
-  private void logSourcePolicyFailureResult(SourcePolicyFailureResult result) {
-    if (LOGGER.isTraceEnabled()) {
-      LOGGER.trace("Event id: " + result.getMessagingException().getEvent().getContext().getId()
-          + "\nFinished processing with failure. \n" +
-          "Error message: " + result.getMessagingException().getMessage());
-    }
+  @Override
+  public Disposable deferredDispose() {
+    return commonPolicy.deferredDispose();
   }
 }

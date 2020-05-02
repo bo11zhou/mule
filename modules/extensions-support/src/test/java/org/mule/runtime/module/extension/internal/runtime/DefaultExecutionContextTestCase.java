@@ -6,7 +6,6 @@
  */
 package org.mule.runtime.module.extension.internal.runtime;
 
-import static java.util.Collections.emptyList;
 import static java.util.Optional.empty;
 import static java.util.Optional.of;
 import static org.apache.commons.lang3.StringUtils.EMPTY;
@@ -34,15 +33,15 @@ import org.mule.runtime.module.extension.internal.runtime.resolver.ResolverSetRe
 import org.mule.tck.junit4.AbstractMuleTestCase;
 import org.mule.tck.size.SmallTest;
 
+import java.util.HashMap;
+import java.util.Map;
+import java.util.NoSuchElementException;
+
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
-import org.mockito.runners.MockitoJUnitRunner;
-
-import java.util.HashMap;
-import java.util.Map;
-import java.util.NoSuchElementException;
+import org.mockito.junit.MockitoJUnitRunner;
 
 @SmallTest
 @RunWith(MockitoJUnitRunner.class)
@@ -88,7 +87,7 @@ public class DefaultExecutionContextTestCase extends AbstractMuleTestCase {
   @Mock
   private RetryPolicyTemplate retryPolicyTemplate;
 
-  private Object configurationInstance = new Object();
+  private final Object configurationInstance = new Object();
   private ConfigurationInstance configuration;
   private DefaultExecutionContext<OperationModel> operationContext;
 
@@ -100,8 +99,8 @@ public class DefaultExecutionContextTestCase extends AbstractMuleTestCase {
                                                 configurationModel,
                                                 configurationInstance,
                                                 configurationState,
-                                                emptyList(),
                                                 empty());
+
     Map<String, Object> parametersMap = new HashMap<>();
     parametersMap.put(PARAM_NAME, VALUE);
     when(resolverSetResult.asMap()).thenReturn(parametersMap);
@@ -109,7 +108,7 @@ public class DefaultExecutionContextTestCase extends AbstractMuleTestCase {
     operationContext =
         new DefaultExecutionContext<>(extensionModel, of(configuration), resolverSetResult.asMap(), operationModel,
                                       event, cursorProviderFactory, streamingManager, component, retryPolicyTemplate,
-                                      IMMEDIATE_SCHEDULER, muleContext);
+                                      IMMEDIATE_SCHEDULER, empty(), muleContext);
   }
 
   @Test
@@ -138,17 +137,17 @@ public class DefaultExecutionContextTestCase extends AbstractMuleTestCase {
     assertThat(operationContext.getVariable(key), is(nullValue()));
   }
 
-  @Test(expected = IllegalArgumentException.class)
+  @Test(expected = NullPointerException.class)
   public void setNullKeyVariable() {
     operationContext.setVariable(null, "");
   }
 
-  @Test(expected = IllegalArgumentException.class)
+  @Test(expected = NullPointerException.class)
   public void setNullValueVariable() {
     operationContext.setVariable("key", null);
   }
 
-  @Test(expected = IllegalArgumentException.class)
+  @Test(expected = NullPointerException.class)
   public void removeNullValueVariable() {
     operationContext.removeVariable(null);
   }

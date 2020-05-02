@@ -10,10 +10,11 @@ package org.foo;
 import static java.lang.Thread.currentThread;
 
 import org.mule.functional.api.component.EventCallback;
+import org.mule.runtime.api.component.AbstractComponent;
 import org.mule.runtime.core.api.MuleContext;
 import org.mule.runtime.core.api.event.CoreEvent;
 
-public class LoadsAppResourceCallback implements EventCallback {
+public class LoadsAppResourceCallback extends AbstractComponent implements EventCallback {
 
   @Override
   public void eventReceived(CoreEvent event, Object component, MuleContext muleContext) throws Exception {
@@ -27,12 +28,12 @@ public class LoadsAppResourceCallback implements EventCallback {
     }
 
     try {
-      tccl.loadClass("org.bar1.BarUtils");
+      tccl.loadClass("org.bar.BarUtils");
     } catch (ClassNotFoundException e) {
       throw new AssertionError("Couldn't load exported class", e);
     }
     try {
-      tccl.loadClass("org.bar2.BarUtils");
+      tccl.loadClass("org.foo.EchoTest");
       throw new AssertionError("Could load not exported class");
     } catch (ClassNotFoundException e) {
       // expected

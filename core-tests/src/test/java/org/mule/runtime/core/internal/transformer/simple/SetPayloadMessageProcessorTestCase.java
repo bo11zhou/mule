@@ -11,21 +11,12 @@ import static java.nio.charset.StandardCharsets.UTF_16;
 import static org.hamcrest.CoreMatchers.nullValue;
 import static org.hamcrest.core.Is.is;
 import static org.junit.Assert.assertThat;
-import static org.mockito.Matchers.any;
-import static org.mockito.Matchers.anyString;
-import static org.mockito.Matchers.eq;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
+import static org.mule.runtime.api.metadata.DataType.STRING;
 import static org.mule.tck.junit4.matcher.DataTypeMatcher.like;
 
-import org.mule.runtime.api.component.location.ComponentLocation;
 import org.mule.runtime.api.exception.MuleException;
 import org.mule.runtime.api.metadata.DataType;
 import org.mule.runtime.api.metadata.MediaType;
-import org.mule.runtime.api.metadata.TypedValue;
-import org.mule.runtime.core.api.MuleContext;
-import org.mule.runtime.core.api.config.MuleConfiguration;
-import org.mule.runtime.core.api.el.ExtendedExpressionManager;
 import org.mule.runtime.core.api.event.CoreEvent;
 import org.mule.runtime.core.internal.processor.simple.SetPayloadMessageProcessor;
 import org.mule.tck.junit4.AbstractMuleContextTestCase;
@@ -38,24 +29,15 @@ import org.junit.Test;
 public class SetPayloadMessageProcessorTestCase extends AbstractMuleContextTestCase {
 
   private static final String PLAIN_TEXT = "This is a plain text";
-  private static final String EXPRESSION = "#[testVariable]";
+  private static final String EXPRESSION = "#[vars.testVariable]";
   private static final Charset CUSTOM_ENCODING = UTF_16;
 
   private SetPayloadMessageProcessor setPayloadMessageProcessor;
-  private MuleContext muleContext;
-  private ExtendedExpressionManager expressionManager;
 
   @Before
   public void setUp() throws Exception {
     setPayloadMessageProcessor = new SetPayloadMessageProcessor();
-    muleContext = mock(MuleContext.class);
     setPayloadMessageProcessor.setMuleContext(muleContext);
-    expressionManager = mock(ExtendedExpressionManager.class);
-
-    when(muleContext.getExpressionManager()).thenReturn(expressionManager);
-    when(muleContext.getConfiguration()).thenReturn(mock(MuleConfiguration.class));
-    when(expressionManager.parse(anyString(), any(CoreEvent.class), any(ComponentLocation.class)))
-        .thenAnswer(invocation -> (String) invocation.getArguments()[0]);
   }
 
   @Test
@@ -73,24 +55,19 @@ public class SetPayloadMessageProcessorTestCase extends AbstractMuleContextTestC
     setPayloadMessageProcessor.setValue(PLAIN_TEXT);
     setPayloadMessageProcessor.initialise();
 
-    when(expressionManager.isExpression(PLAIN_TEXT)).thenReturn(false);
-
     CoreEvent response = setPayloadMessageProcessor.process(testEvent());
-
     assertThat(response.getMessage().getPayload().getValue(), is(PLAIN_TEXT));
   }
 
   @Test
   public void setsExpressionPayload() throws MuleException {
     setPayloadMessageProcessor.setValue(EXPRESSION);
-    when(expressionManager.isExpression(EXPRESSION)).thenReturn(true);
     setPayloadMessageProcessor.initialise();
-    TypedValue typedValue = new TypedValue(PLAIN_TEXT, DataType.STRING);
-    when(expressionManager.evaluate(EXPRESSION, testEvent())).thenReturn(typedValue);
-    when(expressionManager.evaluate(eq(EXPRESSION), eq(testEvent()), any(CoreEvent.Builder.class), eq(null)))
-        .thenReturn(typedValue);
 
-    CoreEvent response = setPayloadMessageProcessor.process(testEvent());
+
+    CoreEvent response = setPayloadMessageProcessor.process(CoreEvent.builder(testEvent())
+        .addVariable("testVariable", PLAIN_TEXT, STRING)
+        .build());
 
     assertThat(response.getMessage().getPayload().getValue(), is(PLAIN_TEXT));
   }

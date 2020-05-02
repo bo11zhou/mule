@@ -8,9 +8,10 @@ package org.mule.tck.util;
 
 import static java.lang.String.format;
 import static java.util.Collections.emptyList;
+import static java.util.Collections.emptySet;
 import static java.util.Optional.empty;
 import static java.util.Optional.of;
-import static org.mockito.Matchers.any;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.RETURNS_DEEP_STUBS;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
@@ -24,6 +25,7 @@ import static org.mule.tck.junit4.AbstractMuleTestCase.TEST_CONNECTOR_LOCATION;
 import static org.reflections.ReflectionUtils.getAllFields;
 import static org.reflections.ReflectionUtils.getAllMethods;
 import static org.reflections.ReflectionUtils.withAnnotation;
+
 import org.mule.runtime.api.component.ComponentIdentifier;
 import org.mule.runtime.api.component.ConfigurationProperties;
 import org.mule.runtime.api.component.location.ConfigurationComponentLocator;
@@ -53,6 +55,7 @@ import org.mule.runtime.core.internal.exception.OnErrorPropagateHandler;
 import org.mule.runtime.core.internal.message.InternalEvent;
 import org.mule.runtime.core.internal.registry.MuleRegistry;
 import org.mule.runtime.core.privileged.PrivilegedMuleContext;
+import org.mule.runtime.core.privileged.exception.ErrorTypeLocator;
 import org.mule.runtime.core.privileged.registry.RegistrationException;
 import org.mule.tck.SimpleUnitTestSupportSchedulerService;
 
@@ -60,6 +63,7 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
@@ -77,14 +81,14 @@ public class MuleContextUtils {
 
   private static final class MocksInjector implements Injector {
 
-    private Map<Class, Object> objects;
+    private final Map<Class, Object> objects;
 
     private MocksInjector(Map<Class, Object> objects) {
       this.objects = objects;
     }
 
     @Override
-    public <T> T inject(T object) throws MuleException {
+    public <T> T inject(T object) {
       for (Field field : getAllFields(object.getClass(), withAnnotation(Inject.class))) {
         Class<?> dependencyType = field.getType();
 
@@ -146,6 +150,8 @@ public class MuleContextUtils {
     private Object resolveObjectToInject(Class<?> dependencyType) {
       if (objects.containsKey(dependencyType)) {
         return objects.get(dependencyType);
+      } else if (Collection.class.isAssignableFrom(dependencyType)) {
+        return emptySet();
       } else {
         return mock(dependencyType);
       }
@@ -159,15 +165,16 @@ public class MuleContextUtils {
   public static MuleContextWithRegistry mockMuleContext() {
     final MuleContextWithRegistry muleContext =
         mock(DefaultMuleContext.class,
-             withSettings().defaultAnswer(RETURNS_DEEP_STUBS).extraInterfaces(PrivilegedMuleContext.class));
+             withSettings().defaultAnswer(RETURNS_DEEP_STUBS).extraInterfaces(PrivilegedMuleContext.class).lenient());
     when(muleContext.getUniqueIdString()).thenReturn(UUID.getUUID());
     when(muleContext.getDefaultErrorHandler(empty())).thenReturn(new OnErrorPropagateHandler());
 
     StreamingManager streamingManager = mock(StreamingManager.class, RETURNS_DEEP_STUBS);
     try {
-      MuleRegistry registry = mock(MuleRegistry.class);
+      MuleRegistry registry = mock(MuleRegistry.class, withSettings().lenient());
       when(muleContext.getRegistry()).thenReturn(registry);
-      ComponentInitialStateManager componentInitialStateManager = mock(ComponentInitialStateManager.class);
+      ComponentInitialStateManager componentInitialStateManager =
+          mock(ComponentInitialStateManager.class, withSettings().lenient());
       when(componentInitialStateManager.mustStartMessageSource(any())).thenReturn(true);
       when(registry.lookupObject(ComponentInitialStateManager.SERVICE_ID)).thenReturn(componentInitialStateManager);
       doReturn(streamingManager).when(registry).lookupObject(StreamingManager.class);
@@ -178,6 +185,10 @@ public class MuleContextUtils {
     }
 
     return muleContext;
+  }
+
+  public static NotificationDispatcher getNotificationDispatcher(MuleContext muleContext) throws RegistrationException {
+    return ((MuleContextWithRegistry) muleContext).getRegistry().lookupObject(NotificationDispatcher.class);
   }
 
   /**
@@ -192,16 +203,21 @@ public class MuleContextUtils {
 
     when(muleContext.getSchedulerService()).thenReturn(schedulerService);
 
-    ErrorTypeRepository errorTypeRepository = mock(ErrorTypeRepository.class);
+    ErrorTypeRepository errorTypeRepository = mock(ErrorTypeRepository.class, withSettings().lenient());
     when(muleContext.getErrorTypeRepository()).thenReturn(errorTypeRepository);
     when(errorTypeRepository.getErrorType(any(ComponentIdentifier.class))).thenReturn(of(mock(ErrorType.class)));
+
+    ErrorTypeLocator typeLocator = mock(ErrorTypeLocator.class);
+    when(((PrivilegedMuleContext) muleContext).getErrorTypeLocator()).thenReturn(typeLocator);
+
     final MuleRegistry registry = muleContext.getRegistry();
 
     NotificationListenerRegistry notificationListenerRegistry = mock(NotificationListenerRegistry.class);
-    ConfigurationProperties configProps = mock(ConfigurationProperties.class);
+    ConfigurationProperties configProps = mock(ConfigurationProperties.class, withSettings().lenient());
     when(configProps.resolveBooleanProperty(any())).thenReturn(empty());
 
-    ConfigurationComponentLocator configurationComponentLocator = mock(ConfigurationComponentLocator.class);
+    ConfigurationComponentLocator configurationComponentLocator =
+        mock(ConfigurationComponentLocator.class, withSettings().lenient());
     when(configurationComponentLocator.find(any(Location.class))).thenReturn(empty());
     when(configurationComponentLocator.find(any(ComponentIdentifier.class))).thenReturn(emptyList());
 
@@ -212,6 +228,7 @@ public class MuleContextUtils {
       injectableObjects.put(MuleContext.class, muleContext);
       injectableObjects.put(SchedulerService.class, schedulerService);
       injectableObjects.put(ErrorTypeRepository.class, errorTypeRepository);
+      injectableObjects.put(ErrorTypeLocator.class, typeLocator);
       injectableObjects.put(ExtendedExpressionManager.class, muleContext.getExpressionManager());
       injectableObjects.put(StreamingManager.class, muleContext.getRegistry().lookupObject(StreamingManager.class));
       injectableObjects.put(ObjectStoreManager.class, muleContext.getRegistry().lookupObject(OBJECT_STORE_MANAGER));

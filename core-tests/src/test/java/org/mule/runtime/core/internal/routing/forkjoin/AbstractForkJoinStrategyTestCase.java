@@ -19,7 +19,7 @@ import static org.hamcrest.CoreMatchers.nullValue;
 import static org.hamcrest.Matchers.hasItems;
 import static org.hamcrest.Matchers.hasSize;
 import static org.junit.Assert.assertThat;
-import static org.mockito.Matchers.any;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.atMost;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -30,6 +30,7 @@ import static org.mockito.Mockito.when;
 import static org.mule.runtime.api.message.Message.of;
 import static org.mule.runtime.core.api.event.CoreEvent.builder;
 import static org.mule.runtime.core.api.exception.Errors.ComponentIdentifiers.Handleable.TIMEOUT;
+import static org.mule.runtime.core.api.lifecycle.LifecycleUtils.initialiseIfNeeded;
 import static org.mule.runtime.core.api.rx.Exceptions.rxExceptionToMuleException;
 import static org.mule.runtime.core.internal.routing.ForkJoinStrategy.RoutingPair.of;
 import static org.mule.runtime.core.privileged.processor.MessageProcessors.newChain;
@@ -68,13 +69,14 @@ import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeoutException;
 import java.util.function.Function;
 
-import io.qameta.allure.Description;
-import io.qameta.allure.Feature;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.ExpectedException;
+
+import io.qameta.allure.Description;
+import io.qameta.allure.Feature;
 
 @Feature(FORK_JOIN_STRATEGIES)
 public abstract class AbstractForkJoinStrategyTestCase extends AbstractMuleContextTestCase {
@@ -91,7 +93,7 @@ public abstract class AbstractForkJoinStrategyTestCase extends AbstractMuleConte
   public void setup() {
     processingStrategy = mock(ProcessingStrategy.class);
     when(processingStrategy.onPipeline(any(ReactiveProcessor.class)))
-        .thenAnswer(invocation -> invocation.getArgumentAt(0, ReactiveProcessor.class));
+        .thenAnswer(invocation -> invocation.getArgument(0));
     scheduler = muleContext.getSchedulerService().ioScheduler();
     timeoutErrorType = muleContext.getErrorTypeRepository().getErrorType(TIMEOUT).get();
     setupConcurrentProcessingStrategy();
@@ -337,7 +339,7 @@ public abstract class AbstractForkJoinStrategyTestCase extends AbstractMuleConte
     Function<ReactiveProcessor, ReactiveProcessor> scheduleFunction =
         processor -> publisher -> from(publisher).publishOn(fromExecutorService(scheduler)).transform(processor);
     when(processingStrategy.onPipeline(any(ReactiveProcessor.class)))
-        .thenAnswer(invocation -> scheduleFunction.apply(invocation.getArgumentAt(0, ReactiveProcessor.class)));
+        .thenAnswer(invocation -> scheduleFunction.apply(invocation.getArgument(0)));
   }
 
   private CompositeRoutingException assertCompositeRoutingException(Throwable throwable, int errors) {
@@ -439,9 +441,9 @@ public abstract class AbstractForkJoinStrategyTestCase extends AbstractMuleConte
     }).collect(toList());
   }
 
-  private MessageProcessorChain createChain(Processor processor) throws MuleException {
+  protected MessageProcessorChain createChain(Processor processor) throws MuleException {
     MessageProcessorChain chain = newChain(Optional.empty(), processor);
-    chain.setMuleContext(muleContext);
+    initialiseIfNeeded(chain, muleContext);
     return chain;
   }
 

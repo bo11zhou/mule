@@ -25,7 +25,10 @@ import java.util.function.Function;
  *
  * @param <L> the type of the left value
  * @param <R> the type of the right value
+ *
+ * @deprecated Use {@link org.mule.runtime.api.functional.Either} instead.
  */
+@Deprecated
 final public class Either<L, R> {
 
   /**
@@ -41,6 +44,20 @@ final public class Either<L, R> {
   }
 
   /**
+   * Creates an {@code Either} with a left value and forcing a {@code class} for its empty right.
+   * <p>
+   * This is useful because it avoids the casting afterwards which can clutter the code and affect its readability.
+   *
+   * @param value the left value
+   * @param <L> the left value type
+   * @param <R> the right value type
+   * @return the created {@code Either instance}
+   */
+  public static <L, R> Either<L, R> left(L value, Class<R> rightClass) {
+    return new Either<>(ofNullable(value), empty());
+  }
+
+  /**
    * Creates an {@code Either} with a right value.
    *
    * @param value the right value
@@ -49,6 +66,20 @@ final public class Either<L, R> {
    * @return the created {@code Either instance}
    */
   public static <L, R> Either<L, R> right(R value) {
+    return new Either<>(empty(), ofNullable(value));
+  }
+
+  /**
+   * Creates an {@code Either} with a right value and forcing a {@code class} for its empty left.
+   * <p>
+   * This is useful because it avoids the casting afterwards which can clutter the code and affect its readability.
+   *
+   * @param value the right value
+   * @param <L> the left value type
+   * @param <R> the right value type
+   * @return the created {@code Either instance}
+   */
+  public static <L, R> Either<L, R> right(Class<L> leftClass, R value) {
     return new Either<>(empty(), ofNullable(value));
   }
 
@@ -74,7 +105,7 @@ final public class Either<L, R> {
 
   /**
    * Allows to execute a function over the left value if it is present
-   * 
+   *
    * @param func the function to apply to the left value
    * @param <T> the return type of the function.
    * @return a new {@code Either} created from the result of applying the function.
@@ -93,7 +124,7 @@ final public class Either<L, R> {
 
   /**
    * Allows to execute a function over the right value if it is present
-   * 
+   *
    * @param func the function to apply to the right value
    * @param <T> the return type of the function.
    * @return a new {@code Either} created from the result of applying the function.

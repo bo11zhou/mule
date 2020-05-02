@@ -6,10 +6,10 @@
  */
 package org.mule.runtime.core.internal.metadata;
 
-import static com.google.common.cache.CacheBuilder.newBuilder;
+import static com.github.benmanes.caffeine.cache.Caffeine.newBuilder;
 import static com.google.common.collect.Lists.newArrayList;
 import static java.util.Objects.requireNonNull;
-import static java.util.Optional.of;
+import static org.mule.runtime.api.metadata.DataType.OBJECT;
 import static org.mule.runtime.core.api.util.StringUtils.isEmpty;
 import static org.mule.runtime.core.internal.util.generics.GenericsUtils.getCollectionType;
 import static org.mule.runtime.core.internal.util.generics.GenericsUtils.getMapKeyType;
@@ -27,9 +27,6 @@ import org.mule.runtime.api.metadata.MapDataType;
 import org.mule.runtime.api.metadata.MediaType;
 import org.mule.runtime.core.api.message.OutputHandler;
 import org.mule.runtime.core.api.util.ClassUtils;
-
-import com.google.common.cache.CacheLoader;
-import com.google.common.cache.LoadingCache;
 
 import java.io.InputStream;
 import java.io.Reader;
@@ -49,6 +46,8 @@ import java.util.concurrent.ConcurrentHashMap;
 import javax.activation.DataHandler;
 import javax.activation.DataSource;
 
+import com.github.benmanes.caffeine.cache.LoadingCache;
+
 /**
  * Provides a way to build immutable {@link DataType} objects.
  *
@@ -62,13 +61,7 @@ public class DefaultDataTypeBuilder
   private static ConcurrentHashMap<String, ProxyIndicator> cglibClassCache = new ConcurrentHashMap<>();
 
   private static LoadingCache<DefaultDataTypeBuilder, DataType> dataTypeCache =
-      newBuilder().weakValues().build(new CacheLoader<DefaultDataTypeBuilder, DataType>() {
-
-        @Override
-        public DataType load(DefaultDataTypeBuilder key) throws Exception {
-          return key.doBuild();
-        }
-      });
+      newBuilder().weakValues().build(key -> key.doBuild());
 
   private Reference<Class<?>> typeRef = new WeakReference<>(Object.class);
   private DataTypeBuilder itemTypeBuilder;
@@ -78,6 +71,12 @@ public class DefaultDataTypeBuilder
   private DataTypeBuilder keyTypeBuilder;
   private DataTypeBuilder valueTypeBuilder;
 
+  private DataType keyType = OBJECT;
+  private DataType itemType = OBJECT;
+  private DataType valueType = OBJECT;
+
+  private DataType original = OBJECT;
+  private boolean mutated = false;
   private boolean built = false;
 
   public DefaultDataTypeBuilder() {
@@ -85,6 +84,7 @@ public class DefaultDataTypeBuilder
   }
 
   public DefaultDataTypeBuilder(DataType dataType) {
+    this.original = dataType;
     if (dataType instanceof CollectionDataType) {
       this.typeRef = new WeakReference<>(dataType.getType());
       this.itemTypeBuilder = DataType.builder(((CollectionDataType) dataType).getItemDataType());
@@ -118,6 +118,7 @@ public class DefaultDataTypeBuilder
     requireNonNull(type, "'type' cannot be null.");
     this.typeRef = new WeakReference<>(handleProxy(type));
 
+    mutated = true;
     return this;
   }
 
@@ -252,6 +253,7 @@ public class DefaultDataTypeBuilder
 
   @Override
   public DataTypeCollectionTypeBuilder asCollectionTypeBuilder() {
+    mutated = true;
     return this;
   }
 
@@ -271,6 +273,7 @@ public class DefaultDataTypeBuilder
 
   @Override
   public DataTypeFunctionTypeBuilder asFunctionTypeBuilder() {
+    mutated = true;
     return this;
   }
 
@@ -305,6 +308,7 @@ public class DefaultDataTypeBuilder
 
   @Override
   public DataTypeMapTypeBuilder asMapTypeBuilder() {
+    mutated = true;
     return this;
   }
 
@@ -326,18 +330,21 @@ public class DefaultDataTypeBuilder
       this.itemTypeBuilder = DataType.builder();
     }
     this.itemTypeBuilder.type(handleProxy(itemType));
+    mutated = true;
     return this;
   }
 
   @Override
   public DataTypeFunctionTypeBuilder returnType(DataType dataType) {
     this.returnType = dataType;
+    mutated = true;
     return this;
   }
 
   @Override
   public DataTypeFunctionTypeBuilder parametersType(List<FunctionParameter> list) {
     this.parametersType = list;
+    mutated = true;
     return this;
   }
 
@@ -351,6 +358,7 @@ public class DefaultDataTypeBuilder
       this.keyTypeBuilder = DataType.builder();
     }
     this.keyTypeBuilder.type(handleProxy(keyType));
+    mutated = true;
     return this;
   }
 
@@ -364,6 +372,7 @@ public class DefaultDataTypeBuilder
       this.valueTypeBuilder = DataType.builder();
     }
     this.valueTypeBuilder.type(handleProxy(valueType));
+    mutated = true;
     return this;
   }
 
@@ -383,6 +392,7 @@ public class DefaultDataTypeBuilder
     validateAlreadyBuilt();
 
     this.mediaType = MediaType.parse(mediaType);
+    mutated = true;
     return this;
   }
 
@@ -392,6 +402,7 @@ public class DefaultDataTypeBuilder
     validateAlreadyBuilt();
 
     this.mediaType = mediaType;
+    mutated = true;
     return this;
   }
 
@@ -400,6 +411,7 @@ public class DefaultDataTypeBuilder
     validateAlreadyBuilt();
 
     itemTypeBuilder.mediaType(itemMimeType);
+    mutated = true;
     return this;
   }
 
@@ -408,6 +420,7 @@ public class DefaultDataTypeBuilder
     validateAlreadyBuilt();
 
     itemTypeBuilder.mediaType(itemMediaType);
+    mutated = true;
     return this;
   }
 
@@ -416,6 +429,7 @@ public class DefaultDataTypeBuilder
     validateAlreadyBuilt();
 
     keyTypeBuilder.mediaType(keyMediaType);
+    mutated = true;
     return this;
   }
 
@@ -424,6 +438,7 @@ public class DefaultDataTypeBuilder
     validateAlreadyBuilt();
 
     keyTypeBuilder.mediaType(keyMediaType);
+    mutated = true;
     return this;
   }
 
@@ -432,6 +447,7 @@ public class DefaultDataTypeBuilder
     validateAlreadyBuilt();
 
     valueTypeBuilder.mediaType(valueMediaType);
+    mutated = true;
     return this;
   }
 
@@ -440,6 +456,7 @@ public class DefaultDataTypeBuilder
     validateAlreadyBuilt();
 
     valueTypeBuilder.mediaType(valueMediaType);
+    mutated = true;
     return this;
   }
 
@@ -458,6 +475,7 @@ public class DefaultDataTypeBuilder
     } else {
       mediaType = mediaType.withCharset(null);
     }
+    mutated = true;
     return this;
   }
 
@@ -466,6 +484,7 @@ public class DefaultDataTypeBuilder
     validateAlreadyBuilt();
 
     mediaType = mediaType.withCharset(charset);
+    mutated = true;
     return this;
   }
 
@@ -476,8 +495,14 @@ public class DefaultDataTypeBuilder
     if (value == null) {
       return type(Object.class);
     } else {
-      DataTypeBuilder builder = (DataTypeBuilder) type(value.getClass());
-      return getObjectMimeType(value).map(mediaType -> builder.mediaType(mediaType)).orElse(builder);
+      DataTypeParamsBuilder builder = type(value.getClass());
+
+      final String mimeType = getObjectMimeType(value);
+      if (mimeType != null) {
+        builder = builder.mediaType(mimeType);
+      }
+
+      return builder;
     }
   }
 
@@ -488,13 +513,13 @@ public class DefaultDataTypeBuilder
         .parametersType(expressionFunction.parameters());
   }
 
-  private Optional<String> getObjectMimeType(Object value) {
+  private String getObjectMimeType(Object value) {
     if (value instanceof DataHandler) {
-      return of(((DataHandler) value).getContentType());
+      return ((DataHandler) value).getContentType();
     } else if (value instanceof DataSource) {
-      return of(((DataSource) value).getContentType());
+      return ((DataSource) value).getContentType();
     } else {
-      return Optional.empty();
+      return null;
     }
   }
 
@@ -508,6 +533,9 @@ public class DefaultDataTypeBuilder
     if (built) {
       throwAlreadyBuilt();
     }
+    if (!mutated) {
+      return original;
+    }
 
     built = true;
     Class<?> type = this.typeRef.get();
@@ -515,18 +543,28 @@ public class DefaultDataTypeBuilder
       return new DefaultFunctionDataType(type, returnType, parametersType != null ? parametersType : newArrayList(), mediaType,
                                          isConsumable(type));
     }
-    return dataTypeCache.getUnchecked(this);
+
+    if (keyTypeBuilder != null) {
+      keyType = keyTypeBuilder.build();
+    }
+
+    if (itemTypeBuilder != null) {
+      itemType = itemTypeBuilder.build();
+    }
+
+    if (valueTypeBuilder != null) {
+      valueType = valueTypeBuilder.build();
+    }
+
+    return dataTypeCache.get(this);
   }
 
   protected DataType doBuild() {
     Class<?> type = this.typeRef.get();
     if (Collection.class.isAssignableFrom(type) || Iterator.class.isAssignableFrom(type)) {
-      return new DefaultCollectionDataType(type, itemTypeBuilder != null ? itemTypeBuilder.build() : DataType.OBJECT, mediaType,
-                                           isConsumable(type));
+      return new DefaultCollectionDataType(type, itemType, mediaType, isConsumable(type));
     } else if (Map.class.isAssignableFrom(type)) {
-      return new DefaultMapDataType(type, keyTypeBuilder != null ? keyTypeBuilder.build() : DataType.OBJECT,
-                                    valueTypeBuilder != null ? valueTypeBuilder.build() : DataType.OBJECT, mediaType,
-                                    isConsumable(type));
+      return new DefaultMapDataType(type, keyType, valueType, mediaType, isConsumable(type));
     } else {
       return new SimpleDataType(type, mediaType, isConsumable(type));
     }

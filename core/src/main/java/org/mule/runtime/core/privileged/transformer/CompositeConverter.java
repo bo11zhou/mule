@@ -6,9 +6,9 @@
  */
 package org.mule.runtime.core.privileged.transformer;
 
+import org.mule.runtime.api.component.AbstractComponent;
 import org.mule.runtime.api.exception.MuleException;
 import org.mule.runtime.api.lifecycle.InitialisationException;
-import org.mule.runtime.api.component.AbstractComponent;
 import org.mule.runtime.api.metadata.DataType;
 import org.mule.runtime.core.api.MuleContext;
 import org.mule.runtime.core.api.context.MuleContextAware;
@@ -20,6 +20,7 @@ import org.mule.runtime.core.api.transformer.TransformerException;
 import java.nio.charset.Charset;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Objects;
 
 /**
  * Composes many converters to behave as a single one.
@@ -29,9 +30,9 @@ import java.util.List;
  */
 public final class CompositeConverter extends AbstractComponent implements Converter, MuleContextAware {
 
-  private String name;
+  private final String name;
 
-  private LinkedList<Converter> chain;
+  private final LinkedList<Converter> chain;
 
   private MuleContext muleContext;
 
@@ -176,5 +177,31 @@ public final class CompositeConverter extends AbstractComponent implements Conve
 
   public LinkedList<Converter> getConverters() {
     return new LinkedList<>(chain);
+  }
+
+  @Override
+  public String toString() {
+    return this.getClass().getSimpleName() + "[name: " + getName() + "; chain: " + getConverters().toString() + "]";
+  }
+
+  @Override
+  public boolean equals(Object o) {
+    if (this == o) {
+      return true;
+    }
+    try {
+      CompositeConverter compositeConverter = (CompositeConverter) o;
+      if (!this.getName().equals(compositeConverter.getName())) {
+        return false;
+      }
+      return this.getConverters().equals(compositeConverter.getConverters());
+    } catch (Exception e) {
+      return false;
+    }
+  }
+
+  @Override
+  public int hashCode() {
+    return Objects.hash(this.getConverters(), this.getName());
   }
 }

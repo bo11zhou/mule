@@ -179,7 +179,8 @@ public class ExtensionNotificationsTestCase extends AbstractExtensionFunctionalT
 
       @Override
       public boolean isSatisfied() {
-        return listener.getCorrelationCount(correlationId) >= 4;
+        return listener.getNotifications().getAll(BATCH_FAILED).stream()
+            .anyMatch(n -> n.getEvent().getCorrelationId().equals(correlationId));
       }
 
       @Override
@@ -198,12 +199,7 @@ public class ExtensionNotificationsTestCase extends AbstractExtensionFunctionalT
 
     int batchNumber = (Integer) backPressureNotification.getData().getValue();
 
-    verifyNotificationAndValue(getNotificationMatch(notifications, correlationId, NEW_BATCH), batchNumber);
-
-    verifyNotificationAndValue(getNotificationMatch(notifications, correlationId, NEXT_BATCH), 1L);
-
     verifyNotificationAndValue(backPressureNotification, batchNumber);
-
     verifyNotificationAndValue(getNotificationMatch(notifications, correlationId, BATCH_TERMINATED), batchNumber);
   }
 
@@ -247,23 +243,30 @@ public class ExtensionNotificationsTestCase extends AbstractExtensionFunctionalT
     }
 
     @Override
-    public synchronized void onNotification(ExtensionNotification notification) {
-      notifications.put(notification.getAction().getIdentifier(), notification);
+    public void onNotification(ExtensionNotification notification) {
+      synchronized (notifications) {
+        notifications.put(notification.getAction().getIdentifier(), notification);
+      }
+
       if (correlationCount != null) {
-        String correlationId = notification.getEvent().getCorrelationId();
-        correlationCount.put(correlationId, correlationCount.computeIfAbsent(correlationId, correlation -> 0) + 1);
+        synchronized (correlationCount) {
+          String correlationId = notification.getEvent().getCorrelationId();
+          correlationCount.put(correlationId, correlationCount.computeIfAbsent(correlationId, correlation -> 0) + 1);
+        }
       }
       onNotification.accept(notification);
     }
 
     public MultiMap<String, ExtensionNotification> getNotifications() {
-      return notifications;
+      synchronized (notifications) {
+        return notifications.toImmutableMultiMap();
+      }
     }
 
     public synchronized Integer getCorrelationCount(String correlationId) {
-      return correlationCount.get(correlationId);
+      synchronized (correlationCount) {
+        return correlationCount.get(correlationId);
+      }
     }
-
   }
-
 }

@@ -13,6 +13,7 @@ import static org.hamcrest.core.Is.is;
 import static org.junit.Assert.fail;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.withSettings;
 import static org.mule.runtime.app.declaration.api.fluent.ElementDeclarer.newListValue;
 import static org.mule.runtime.app.declaration.api.fluent.ElementDeclarer.newObjectValue;
 import static org.mule.runtime.app.declaration.api.fluent.ElementDeclarer.newParameterGroup;
@@ -21,9 +22,11 @@ import static org.mule.runtime.internal.dsl.DslConstants.VALUE_ATTRIBUTE_NAME;
 import org.mule.metadata.api.model.MetadataType;
 import org.mule.runtime.api.meta.model.ExtensionModel;
 import org.mule.runtime.api.meta.model.config.ConfigurationModel;
+import org.mule.runtime.api.meta.model.connection.ConnectionProviderModel;
 import org.mule.runtime.api.meta.model.operation.OperationModel;
 import org.mule.runtime.api.meta.model.source.SourceModel;
 import org.mule.runtime.app.declaration.api.ConfigurationElementDeclaration;
+import org.mule.runtime.app.declaration.api.ConnectionElementDeclaration;
 import org.mule.runtime.app.declaration.api.ElementDeclaration;
 import org.mule.runtime.app.declaration.api.OperationElementDeclaration;
 import org.mule.runtime.app.declaration.api.SourceElementDeclaration;
@@ -37,7 +40,7 @@ import java.util.Optional;
 
 import org.junit.Test;
 import org.junit.runner.RunWith;
-import org.mockito.runners.MockitoJUnitRunner;
+import org.mockito.junit.MockitoJUnitRunner;
 
 @RunWith(MockitoJUnitRunner.class)
 public class DeclarationElementModelFactoryTestCase extends AbstractDslModelTestCase {
@@ -168,14 +171,14 @@ public class DeclarationElementModelFactoryTestCase extends AbstractDslModelTest
   @Test
   public void testConfigNoConnectionNoParams() {
 
-    ConfigurationModel emptyConfig = mock(ConfigurationModel.class);
+    ConfigurationModel emptyConfig = mock(ConfigurationModel.class, withSettings().lenient());
     when(emptyConfig.getName()).thenReturn(CONFIGURATION_NAME);
     when(emptyConfig.getParameterGroupModels()).thenReturn(emptyList());
     when(emptyConfig.getOperationModels()).thenReturn(emptyList());
     when(emptyConfig.getSourceModels()).thenReturn(emptyList());
     when(emptyConfig.getConnectionProviders()).thenReturn(emptyList());
 
-    ExtensionModel extensionModel = mock(ExtensionModel.class);
+    ExtensionModel extensionModel = mock(ExtensionModel.class, withSettings().lenient());
     initializeExtensionMock(extensionModel);
     when(extensionModel.getConfigurationModels()).thenReturn(asList(emptyConfig));
 
@@ -186,6 +189,25 @@ public class DeclarationElementModelFactoryTestCase extends AbstractDslModelTest
 
     DslElementModel<ConfigurationModel> element = create(declaration);
     assertThat(element.getModel(), is(configuration));
+    assertThat(element.getContainedElements().isEmpty(), is(true));
+  }
+
+  @Test
+  public void testConnectionNoParams() {
+    ConnectionProviderModel emptyConnection = mock(ConnectionProviderModel.class, withSettings().lenient());
+    when(connectionProvider.getName()).thenReturn(CONNECTION_PROVIDER_NAME);
+    when(connectionProvider.getParameterGroupModels()).thenReturn(emptyList());
+
+    ExtensionModel extensionModel = mock(ExtensionModel.class, withSettings().lenient());
+    initializeExtensionMock(extensionModel);
+    when(extensionModel.getConnectionProviders()).thenReturn(asList(emptyConnection));
+
+    ConnectionElementDeclaration declaration =
+        ElementDeclarer.forExtension(EXTENSION_NAME).newConnection(CONNECTION_PROVIDER_NAME)
+            .getDeclaration();
+
+    DslElementModel<ConnectionProviderModel> element = create(declaration);
+    assertThat(element.getModel(), is(connectionProvider));
     assertThat(element.getContainedElements().isEmpty(), is(true));
   }
 

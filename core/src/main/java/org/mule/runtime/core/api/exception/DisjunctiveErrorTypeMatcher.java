@@ -9,17 +9,24 @@ package org.mule.runtime.core.api.exception;
 import org.mule.runtime.api.message.ErrorType;
 
 import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 public final class DisjunctiveErrorTypeMatcher implements ErrorTypeMatcher {
 
   List<ErrorTypeMatcher> errorTypeMatchers;
 
   public DisjunctiveErrorTypeMatcher(List<ErrorTypeMatcher> errorTypeMatchers) {
-    this.errorTypeMatchers = errorTypeMatchers;
+    this.errorTypeMatchers = new CopyOnWriteArrayList<>(errorTypeMatchers);
   }
 
   @Override
   public boolean match(ErrorType errorType) {
-    return errorTypeMatchers.stream().anyMatch(errorTypeMatcher -> errorTypeMatcher.match(errorType));
+    for (ErrorTypeMatcher errorTypeMatcher : errorTypeMatchers) {
+      if (errorTypeMatcher.match(errorType)) {
+        return true;
+      }
+    }
+
+    return false;
   }
 }

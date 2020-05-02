@@ -6,6 +6,8 @@
  */
 package org.mule.runtime.core.internal.processor;
 
+import static java.lang.Thread.currentThread;
+import static java.lang.Thread.yield;
 import static java.util.Collections.emptyList;
 import static java.util.Collections.singletonList;
 import static java.util.Optional.ofNullable;
@@ -17,8 +19,10 @@ import static org.mule.runtime.core.api.lifecycle.LifecycleUtils.disposeIfNeeded
 import static org.mule.runtime.core.api.lifecycle.LifecycleUtils.initialiseIfNeeded;
 import static org.mule.runtime.core.api.lifecycle.LifecycleUtils.startIfNeeded;
 import static org.mule.runtime.core.api.lifecycle.LifecycleUtils.stopIfNeeded;
+import static org.mule.runtime.core.api.transaction.TransactionCoordination.isTransactionActive;
 import static org.mule.runtime.core.internal.component.ComponentUtils.getFromAnnotatedObject;
 import static org.mule.runtime.core.internal.event.DefaultEventContext.child;
+import static org.mule.runtime.core.internal.util.FunctionalUtils.safely;
 import static org.mule.runtime.core.internal.util.rx.Operators.requestUnbounded;
 import static org.mule.runtime.core.privileged.processor.MessageProcessors.processToApply;
 import static reactor.core.publisher.Flux.from;
@@ -34,7 +38,9 @@ import org.mule.runtime.api.lifecycle.Startable;
 import org.mule.runtime.api.lifecycle.Stoppable;
 import org.mule.runtime.api.notification.AsyncMessageNotification;
 import org.mule.runtime.api.scheduler.Scheduler;
+import org.mule.runtime.api.scheduler.SchedulerConfig;
 import org.mule.runtime.api.scheduler.SchedulerService;
+import org.mule.runtime.api.util.LazyValue;
 import org.mule.runtime.core.api.MuleContext;
 import org.mule.runtime.core.api.config.MuleConfiguration;
 import org.mule.runtime.core.api.construct.FlowConstruct;
@@ -48,6 +54,7 @@ import org.mule.runtime.core.api.processor.Sink;
 import org.mule.runtime.core.api.processor.strategy.AsyncProcessingStrategyFactory;
 import org.mule.runtime.core.api.processor.strategy.ProcessingStrategy;
 import org.mule.runtime.core.api.processor.strategy.ProcessingStrategyFactory;
+import org.mule.runtime.core.internal.construct.FromFlowRejectedExecutionException;
 import org.mule.runtime.core.internal.exception.MessagingException;
 import org.mule.runtime.core.internal.processor.strategy.DirectProcessingStrategyFactory;
 import org.mule.runtime.core.privileged.event.BaseEventContext;
@@ -57,15 +64,20 @@ import org.mule.runtime.core.privileged.processor.Scope;
 import org.mule.runtime.core.privileged.processor.chain.MessageProcessorChain;
 import org.mule.runtime.core.privileged.processor.chain.MessageProcessorChainBuilder;
 
+import java.util.List;
+import java.util.Objects;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.function.Consumer;
+import java.util.function.Supplier;
+
+import javax.inject.Inject;
+
 import org.reactivestreams.Publisher;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.List;
-import java.util.Objects;
-import java.util.function.Consumer;
-
-import javax.inject.Inject;
+import reactor.core.publisher.Flux;
 
 /**
  * Processes {@link CoreEvent}'s asynchronously using a {@link ProcessingStrategy} to schedule asynchronous processing of
@@ -85,14 +97,14 @@ public class AsyncDelegateMessageProcessor extends AbstractMessageProcessorOwner
 
   protected Logger logger = LoggerFactory.getLogger(getClass());
 
-  private boolean ownProcessingStrategy = false;
   private ProcessingStrategy processingStrategy;
 
   private Sink sink;
 
-  private MessageProcessorChainBuilder delegateBuilder;
+  private QueueBackpressureHandler backpressureHandler;
+
+  private final MessageProcessorChainBuilder delegateBuilder;
   protected MessageProcessorChain delegate;
-  private Scheduler scheduler;
   private reactor.core.scheduler.Scheduler reactorScheduler;
   protected String name;
   private Integer maxConcurrency;
@@ -108,14 +120,13 @@ public class AsyncDelegateMessageProcessor extends AbstractMessageProcessorOwner
 
   @Override
   public void initialise() throws InitialisationException {
-    Object rootContainer = getFromAnnotatedObject(componentLocator, this).orElse(null);
-    if (rootContainer != null && !Objects.equals(((Component) rootContainer).getLocation().getLocation(),
+    Component rootContainer = getFromAnnotatedObject(componentLocator, this).orElse(null);
+    if (rootContainer != null && !Objects.equals(rootContainer.getLocation().getLocation(),
                                                  this.getLocation().getRootContainerName())) {
       // This is for the case of the async inside a sub-flow
-      processingStrategy = defaultProcessingStrategy().create(muleContext, getLocation().getLocation());
-      ownProcessingStrategy = true;
-    } else if (rootContainer instanceof FlowConstruct) {
-      if (maxConcurrency != null && rootContainer instanceof Pipeline) {
+      processingStrategy = defaultProcessingStrategy().create(getMuleContext(), getLocation().getLocation());
+    } else if (rootContainer instanceof Pipeline) {
+      if (maxConcurrency != null) {
         ProcessingStrategyFactory flowPsFactory = ((Pipeline) rootContainer).getProcessingStrategyFactory();
 
         if (flowPsFactory instanceof AsyncProcessingStrategyFactory) {
@@ -123,22 +134,25 @@ public class AsyncDelegateMessageProcessor extends AbstractMessageProcessorOwner
         } else {
           logger.warn("{} does not support 'maxConcurrency'. Ignoring the value.", flowPsFactory.getClass().getSimpleName());
         }
-        processingStrategy = flowPsFactory.create(muleContext, getLocation().getLocation());
-        ownProcessingStrategy = true;
+        processingStrategy = flowPsFactory.create(getMuleContext(), getLocation().getLocation());
       } else {
-        processingStrategy = ((FlowConstruct) rootContainer).getProcessingStrategy();
+        ProcessingStrategyFactory flowPsFactory = ((Pipeline) rootContainer).getProcessingStrategyFactory();
+        processingStrategy = flowPsFactory.create(getMuleContext(), getLocation().getLocation());
       }
     } else {
       processingStrategy = createDefaultProcessingStrategyFactory().create(getMuleContext(), getLocation().getLocation());
-      ownProcessingStrategy = true;
     }
     if (delegateBuilder == null) {
       throw new InitialisationException(objectIsNull("delegate message processor"), this);
     }
 
+    // TODO MULE-17020 Interception API: Smart connectors inside async are not skipped properly
     delegateBuilder.setProcessingStrategy(processingStrategy);
     delegate = delegateBuilder.build();
-    initialiseIfNeeded(delegate, muleContext);
+    initialiseIfNeeded(delegate, getMuleContext());
+
+    backpressureHandler = new QueueBackpressureHandler(schedulerService, () -> muleContext.getSchedulerBaseConfig(),
+                                                       this::dispatchEvent, name != null ? name : getLocation().getLocation());
 
     super.initialise();
   }
@@ -166,43 +180,37 @@ public class AsyncDelegateMessageProcessor extends AbstractMessageProcessorOwner
 
   @Override
   public void start() throws MuleException {
-    if (ownProcessingStrategy) {
-      startIfNeeded(processingStrategy);
-    }
+    startIfNeeded(processingStrategy);
+    startIfNeeded(delegate);
 
     sink = processingStrategy
         .createSink(getFromAnnotatedObject(componentLocator, this).filter(c -> c instanceof FlowConstruct).orElse(null),
                     processAsyncChainFunction());
 
-    if (processingStrategy.isSynchronous()) {
-      scheduler = schedulerService
-          .ioScheduler(muleContext.getSchedulerBaseConfig().withName(name != null ? name : getLocation().getLocation()));
-      reactorScheduler = fromExecutorService(scheduler);
-    }
+    final SchedulerConfig schedulerConfig =
+        getMuleContext().getSchedulerBaseConfig().withName(name != null ? name : getLocation().getLocation());
+    reactorScheduler = fromExecutorService(processingStrategy.isSynchronous()
+        ? schedulerService.ioScheduler(schedulerConfig)
+        : schedulerService.cpuLightScheduler(schedulerConfig));
 
-    startIfNeeded(delegate);
+    startIfNeeded(backpressureHandler);
     super.start();
   }
 
   @Override
   public void stop() throws MuleException {
     super.stop();
+
+    safely(() -> stopIfNeeded(backpressureHandler));
+    disposeIfNeeded(sink, logger);
+    sink = null;
     stopIfNeeded(delegate);
-    if (scheduler != null) {
-      scheduler.stop();
-      scheduler = null;
-    }
-    if (processingStrategy.isSynchronous() && reactorScheduler != null) {
+
+    if (reactorScheduler != null) {
       reactorScheduler.dispose();
       reactorScheduler = null;
     }
-
-    disposeIfNeeded(sink, logger);
-    sink = null;
-
-    if (ownProcessingStrategy) {
-      stopIfNeeded(processingStrategy);
-    }
+    stopIfNeeded(processingStrategy);
   }
 
   @Override
@@ -220,28 +228,45 @@ public class AsyncDelegateMessageProcessor extends AbstractMessageProcessorOwner
   public Publisher<CoreEvent> apply(Publisher<CoreEvent> publisher) {
     return from(publisher)
         .cast(PrivilegedEvent.class)
-        .doOnNext(request -> just(request)
-            .map(event -> asyncEvent(event))
-            .map(event -> {
-              sink.accept(event);
-              return event;
-            })
-            .subscribe(requestUnbounded()))
+        .doOnNext(request -> {
+
+          Flux<CoreEvent> asyncPublisher = just(request)
+              .map(event -> asyncEvent(event));
+
+          if (isTransactionActive() && !processingStrategy.isSynchronous()) {
+            asyncPublisher = asyncPublisher.publishOn(reactorScheduler);
+          }
+
+          asyncPublisher
+              .map(event -> {
+                try {
+                  dispatchEvent(event);
+                } catch (FromFlowRejectedExecutionException free) {
+                  backpressureHandler.handleBackpressure(event);
+                }
+                return event;
+              })
+              .subscribe(requestUnbounded());
+        })
         .cast(CoreEvent.class);
+  }
+
+  private void dispatchEvent(CoreEvent event) {
+    processingStrategy.checkBackpressureAccepting(event);
+    sink.accept(event);
   }
 
   private CoreEvent asyncEvent(PrivilegedEvent event) {
     // Clone event, make it async and remove ReplyToHandler
     return PrivilegedEvent
         .builder(child((event.getContext()), ofNullable(getLocation()), LoggingExceptionHandler.getInstance()), event)
-        .replyToHandler(null)
         .session(new DefaultMuleSession(event.getSession())).build();
   }
 
   private ReactiveProcessor processAsyncChainFunction() {
     return innerPublisher -> from(innerPublisher)
         .doOnNext(fireAsyncScheduledNotification())
-        .transform(scheduleAsync(delegate))
+        .transform(processingStrategy.onPipeline(scheduleAsync(delegate)))
         .doOnNext(event -> {
           fireAsyncCompleteNotification(event, null);
           ((BaseEventContext) event.getContext()).success(event);
@@ -287,5 +312,62 @@ public class AsyncDelegateMessageProcessor extends AbstractMessageProcessorOwner
   protected List<Processor> getOwnedObjects() {
     // Lifecycle of inner objects is already handled by this class' lifecycle methods
     return emptyList();
+  }
+
+  private static class QueueBackpressureHandler implements Stoppable {
+
+    private final BlockingQueue<CoreEvent> asyncQueue;
+    private final Consumer<CoreEvent> eventDispatcher;
+
+    private final LazyValue<Scheduler> queueDispatcherScheduler;
+
+    public QueueBackpressureHandler(SchedulerService schedulerService, Supplier<SchedulerConfig> schedulerConfigSupplier,
+                                    Consumer<CoreEvent> eventDispatcher, String location) {
+      this.asyncQueue = new LinkedBlockingQueue<>();
+      this.eventDispatcher = eventDispatcher;
+
+      this.queueDispatcherScheduler = new LazyValue(() -> {
+        final SchedulerConfig schedulerConfig = schedulerConfigSupplier.get().withName(location + " - queue dispatcher")
+            .withMaxConcurrentTasks(1);
+        return schedulerService.customScheduler(schedulerConfig);
+      });
+    }
+
+    public void handleBackpressure(CoreEvent event) {
+      asyncQueue.offer(event);
+
+      synchronized (asyncQueue) {
+        asyncQueue.notify();
+      }
+
+      queueDispatcherScheduler.get().execute(() -> {
+        while (!currentThread().isInterrupted()) {
+          try {
+            final CoreEvent queuedEvent = asyncQueue.peek();
+            if (queuedEvent != null) {
+              eventDispatcher.accept(queuedEvent);
+              asyncQueue.remove(queuedEvent);
+            } else {
+              synchronized (asyncQueue) {
+                asyncQueue.wait();
+              }
+            }
+          } catch (FromFlowRejectedExecutionException free) {
+            // Nothing to do, let next iteration catch it.
+            yield();
+          } catch (InterruptedException e) {
+            currentThread().interrupt();
+            return;
+          }
+        }
+      });
+    }
+
+    @Override
+    public void stop() {
+      queueDispatcherScheduler.ifComputed(Scheduler::stop);
+
+      asyncQueue.clear();
+    }
   }
 }

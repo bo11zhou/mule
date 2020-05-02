@@ -6,15 +6,16 @@
  */
 package org.mule.runtime.module.extension.internal.resources;
 
+import static java.lang.Boolean.getBoolean;
 import static java.lang.String.format;
 import static java.util.Arrays.asList;
-import static java.util.Collections.emptySet;
 import static java.util.stream.Collectors.toList;
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 import static org.mule.runtime.api.dsl.DslResolvingContext.getDefault;
+import static org.mule.runtime.api.util.MuleSystemProperties.SYSTEM_PROPERTY_PREFIX;
 import static org.mule.runtime.core.api.util.FileUtils.stringToFile;
 import static org.mule.runtime.core.api.util.IOUtils.getResourceAsString;
 import static org.mule.runtime.core.api.util.IOUtils.getResourceAsUrl;
@@ -22,6 +23,7 @@ import static org.mule.runtime.module.extension.api.loader.AbstractJavaExtension
 import static org.mule.runtime.module.extension.api.loader.AbstractJavaExtensionModelLoader.VERSION;
 import static org.mule.runtime.module.extension.internal.resources.BaseExtensionResourcesGeneratorAnnotationProcessor.COMPILATION_MODE;
 import static org.mule.runtime.module.extension.internal.resources.ExtensionModelJsonGeneratorTestCase.ExtensionJsonGeneratorTestUnit.newTestUnit;
+
 import org.mule.extension.test.extension.reconnection.ReconnectionExtension;
 import org.mule.runtime.api.dsl.DslResolvingContext;
 import org.mule.runtime.api.meta.model.ExtensionModel;
@@ -36,8 +38,10 @@ import org.mule.tck.junit4.AbstractMuleTestCase;
 import org.mule.tck.size.SmallTest;
 import org.mule.test.function.extension.WeaveFunctionExtension;
 import org.mule.test.heisenberg.extension.HeisenbergExtension;
+import org.mule.test.implicit.config.extension.extension.api.ImplicitConfigExtension;
 import org.mule.test.marvel.MarvelExtension;
 import org.mule.test.metadata.extension.MetadataExtension;
+import org.mule.test.nonimplicit.config.extension.extension.api.NonImplicitConfigExtension;
 import org.mule.test.oauth.TestOAuthExtension;
 import org.mule.test.petstore.extension.PetStoreConnector;
 import org.mule.test.ram.RickAndMortyExtension;
@@ -53,6 +57,7 @@ import java.io.IOException;
 import java.net.URISyntaxException;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.function.BiFunction;
@@ -66,6 +71,9 @@ import org.skyscreamer.jsonassert.JSONAssert;
 @SmallTest
 @RunWith(Parameterized.class)
 public class ExtensionModelJsonGeneratorTestCase extends AbstractMuleTestCase {
+
+  private static final boolean UPDATE_EXPECTED_FILES_ON_ERROR =
+      getBoolean(SYSTEM_PROPERTY_PREFIX + "extensionModelJson.updateExpectedFilesOnError");
 
   static final Map<String, ExtensionModel> extensionModels = new HashMap<>();
 
@@ -104,6 +112,8 @@ public class ExtensionModelJsonGeneratorTestCase extends AbstractMuleTestCase {
                         newTestUnit(javaLoader, TestOAuthExtension.class, "test-oauth.json"),
                         newTestUnit(javaLoader, WeaveFunctionExtension.class, "test-fn.json"),
                         newTestUnit(javaLoader, ValuesExtension.class, "values.json"),
+                        newTestUnit(javaLoader, ImplicitConfigExtension.class, "implicit-config.json"),
+                        newTestUnit(javaLoader, NonImplicitConfigExtension.class, "non-implicit-config.json"),
                         newTestUnit(javaLoader, ReconnectionExtension.class, "reconnection-extension.json"));
 
     BiFunction<Class<?>, ExtensionModelLoader, ExtensionModel> createExtensionModel = (extension, loader) -> {
@@ -118,7 +128,7 @@ public class ExtensionModelJsonGeneratorTestCase extends AbstractMuleTestCase {
     };
 
     return extensions.stream()
-        .map(e -> new Object[] {createExtensionModel.apply(e.getExtensionClass(), e.getLoader()), e.getFileName()})
+        .map(e -> e.toTestParams(createExtensionModel))
         .collect(toList());
   }
 
@@ -131,7 +141,7 @@ public class ExtensionModelJsonGeneratorTestCase extends AbstractMuleTestCase {
    * @return whether or not the "expected" test files should be updated when comparison fails
    */
   private boolean shouldUpdateExpectedFilesOnError() {
-    return false;
+    return UPDATE_EXPECTED_FILES_ON_ERROR;
   }
 
   @Before
@@ -158,7 +168,7 @@ public class ExtensionModelJsonGeneratorTestCase extends AbstractMuleTestCase {
   }
 
   @Test
-  public void load() throws Exception {
+  public void load() {
     ExtensionModel result = generator.deserialize(expectedJson);
     assertThat(result, is(extensionUnderTest));
   }
@@ -182,7 +192,7 @@ public class ExtensionModelJsonGeneratorTestCase extends AbstractMuleTestCase {
     // TODO MULE-11797: as this utils is consumed from
     // org.mule.runtime.module.extension.internal.capability.xml.schema.AbstractXmlResourceFactory.generateResource(org.mule.runtime.api.meta.model.ExtensionModel),
     // this util should get dropped once the ticket gets implemented.
-    final DslResolvingContext dslResolvingContext = getDefault(emptySet());
+    final DslResolvingContext dslResolvingContext = getDefault(new HashSet<>(extensionModels.values()));
     return loader.loadExtensionModel(clazz.getClassLoader(), dslResolvingContext, params);
   }
 
@@ -213,6 +223,11 @@ public class ExtensionModelJsonGeneratorTestCase extends AbstractMuleTestCase {
 
     String getFileName() {
       return fileName;
+    }
+
+    public Object[] toTestParams(BiFunction<Class<?>, ExtensionModelLoader, ExtensionModel> createExtensionModel) {
+      final ExtensionModel extensionModel = createExtensionModel.apply(getExtensionClass(), getLoader());
+      return new Object[] {extensionModel, getFileName()};
     }
   }
 }

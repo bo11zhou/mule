@@ -13,6 +13,7 @@ import static java.util.Collections.emptySet;
 import static java.util.Collections.singletonList;
 import static java.util.Optional.empty;
 import static java.util.Optional.of;
+import static java.util.Optional.ofNullable;
 import static org.mockito.Answers.RETURNS_DEEP_STUBS;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -73,7 +74,7 @@ import org.junit.Test;
 import org.junit.rules.ExpectedException;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
-import org.mockito.runners.MockitoJUnitRunner;
+import org.mockito.junit.MockitoJUnitRunner;
 
 @SmallTest
 @RunWith(MockitoJUnitRunner.class)
@@ -219,7 +220,6 @@ public class MetadataComponentModelValidatorTestCase extends AbstractMuleTestCas
 
   @Before
   public void before() {
-    when(extensionModel.getName()).thenReturn("MockExtension");
     when(extensionModel.getOperationModels()).thenReturn(asList(operationModel));
     when(extensionModel.getSourceModels()).thenReturn(asList(sourceModel));
     ExtensionTypeDescriptorModelProperty descriptorModelProperty = mock(ExtensionTypeDescriptorModelProperty.class);
@@ -435,7 +435,6 @@ public class MetadataComponentModelValidatorTestCase extends AbstractMuleTestCas
     Map<String, Supplier<? extends InputTypeResolver>> inputResolvers = new HashedMap();
     ParameterModel parameterModel = mock(ParameterModel.class);
     when(parameterModel.getName()).thenReturn(PARAMETER_NAME);
-    when(parameterModel.getModelProperty(MetadataKeyIdModelProperty.class)).thenReturn(empty());
     when(sourceModel.getModelProperty(MetadataKeyIdModelProperty.class)).thenReturn(empty());
     mockParameters(sourceModel, parameterModel);
     inputResolvers.put(PARAMETER_NAME, ResolverSupplier.of(SimpleInputResolver.class));
@@ -462,6 +461,10 @@ public class MetadataComponentModelValidatorTestCase extends AbstractMuleTestCas
 
   @Test
   public void metadataKeyWithValidDefaultValues() {
+    mockMetadataResolverFactory(sourceModel,
+                                new DefaultMetadataResolverFactory(NULL_RESOLVER_SUPPLIER, emptyMap(), MOCK_RESOLVER_SUPPLIER,
+                                                                   NULL_RESOLVER_SUPPLIER));
+
     ParameterModel param1 = getMockKeyPartParam("Value", 1);
     ParameterModel param2 = getMockKeyPartParam("SomeValue", 2);
     setInvalidKeyId();
@@ -471,10 +474,34 @@ public class MetadataComponentModelValidatorTestCase extends AbstractMuleTestCas
 
   @Test
   public void metadataKeyWithoutDefaultValues() {
+    mockMetadataResolverFactory(sourceModel,
+                                new DefaultMetadataResolverFactory(NULL_RESOLVER_SUPPLIER, emptyMap(), MOCK_RESOLVER_SUPPLIER,
+                                                                   NULL_RESOLVER_SUPPLIER));
+
     ParameterModel param1 = getMockKeyPartParam(null, 1);
     ParameterModel param2 = getMockKeyPartParam(null, 2);
     setInvalidKeyId();
     when(sourceModel.getAllParameterModels()).thenReturn(asList(param1, param2));
+    validate(extensionModel, validator);
+  }
+
+  @Test
+  public void metadataKeyIdWithoutTypeResolver() {
+    exception.expect(IllegalModelDefinitionException.class);
+    exception
+        .expectMessage("Source 'source' defines a MetadataKeyId parameter but neither an Output nor Type resolver that makes use of it was defined");
+    ParameterModel param = getMockKeyPartParam("Value", 1);
+    setValidKeyId(param.getName());
+    when(sourceModel.getAllParameterModels()).thenReturn(singletonList(param));
+    validate(extensionModel, validator);
+  }
+
+  @Test
+  public void metadataKeyIdWithoutTypeResolverOnRuntimeShouldNotFail() {
+    setCompileTime(false);
+    ParameterModel param = getMockKeyPartParam("Value", 1);
+    setValidKeyId(param.getName());
+    when(sourceModel.getAllParameterModels()).thenReturn(singletonList(param));
     validate(extensionModel, validator);
   }
 
@@ -488,6 +515,10 @@ public class MetadataComponentModelValidatorTestCase extends AbstractMuleTestCas
 
   @Test
   public void stringMetadataKeyWithDefaultValue() {
+    mockMetadataResolverFactory(sourceModel,
+                                new DefaultMetadataResolverFactory(NULL_RESOLVER_SUPPLIER, emptyMap(), MOCK_RESOLVER_SUPPLIER,
+                                                                   NULL_RESOLVER_SUPPLIER));
+
     ParameterModel param = getMockKeyPartParam("default", 1);
     setValidKeyId(param.getName());
     when(sourceModel.getAllParameterModels()).thenReturn(singletonList(param));
@@ -561,5 +592,10 @@ public class MetadataComponentModelValidatorTestCase extends AbstractMuleTestCas
     MetadataKeyIdModelProperty keyIdModelProperty =
         new MetadataKeyIdModelProperty(loader.load(InvalidMetadataKeyIdPojo.class), "groupKeyParam");
     when(sourceModel.getModelProperty(MetadataKeyIdModelProperty.class)).thenReturn(of(keyIdModelProperty));
+  }
+
+  private void setCompileTime(boolean compileTime) {
+    when(extensionModel.getModelProperty(CompileTimeModelProperty.class))
+        .thenReturn(ofNullable(compileTime ? new CompileTimeModelProperty() : null));
   }
 }

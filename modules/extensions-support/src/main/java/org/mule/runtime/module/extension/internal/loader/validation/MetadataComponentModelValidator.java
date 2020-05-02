@@ -22,6 +22,8 @@ import static org.mule.runtime.extension.api.util.NameUtils.getComponentModelTyp
 import static org.mule.runtime.module.extension.internal.loader.utils.ModelLoaderUtils.isRouter;
 import static org.mule.runtime.module.extension.internal.loader.utils.ModelLoaderUtils.isScope;
 import static org.mule.runtime.module.extension.internal.util.MuleExtensionUtils.getMetadataResolverFactory;
+import static org.mule.runtime.module.extension.internal.util.MuleExtensionUtils.isCompileTime;
+
 import org.mule.metadata.api.model.ArrayType;
 import org.mule.metadata.api.model.MetadataType;
 import org.mule.metadata.api.model.ObjectType;
@@ -55,15 +57,15 @@ import org.mule.runtime.module.extension.internal.loader.java.property.CompileTi
 import org.mule.runtime.module.extension.internal.loader.java.type.property.ExtensionOperationDescriptorModelProperty;
 import org.mule.runtime.module.extension.internal.loader.java.type.property.ExtensionTypeDescriptorModelProperty;
 
-import com.google.common.collect.HashBasedTable;
-import com.google.common.collect.Table;
-
 import java.io.Serializable;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+
+import com.google.common.collect.HashBasedTable;
+import com.google.common.collect.Table;
 
 /**
  * Validates that all {@link OperationModel operations} which return type is a {@link Object} or a {@link Map} have defined a
@@ -105,7 +107,7 @@ public class MetadataComponentModelValidator implements ExtensionModelValidator 
         validateMetadataReturnType(extensionModel, model, problemsReporter);
         MetadataResolverFactory resolverFactory = getMetadataResolverFactory(model);
         validateMetadataOutputAttributes(model, resolverFactory, problemsReporter);
-        validateMetadataKeyId(model, resolverFactory, problemsReporter);
+        validateMetadataKeyId(extensionModel, model, resolverFactory, problemsReporter);
         validateCategoriesInScope(model, resolverFactory, problemsReporter);
         validateResolversName(model, resolverFactory, names, problemsReporter);
       }
@@ -143,14 +145,16 @@ public class MetadataComponentModelValidator implements ExtensionModelValidator 
         });
   }
 
-  private void validateMetadataKeyId(ComponentModel model, MetadataResolverFactory resolverFactory,
+  private void validateMetadataKeyId(ExtensionModel extensionModel, ComponentModel model, MetadataResolverFactory resolverFactory,
                                      ProblemsReporter problemsReporter) {
     final String modelTypeName = capitalize(getComponentModelTypeName(model));
     Optional<MetadataKeyIdModelProperty> keyId = model.getModelProperty(MetadataKeyIdModelProperty.class);
     if (keyId.isPresent()) {
 
-      if (resolverFactory.getOutputResolver() instanceof NullMetadataResolver &&
-          getAllInputResolvers(model, resolverFactory).isEmpty()) {
+      // This validations has been fixed for runtime since 4.3.p, so we need to keep backwards compatibility somehow for now.
+      if (isCompileTime(extensionModel)
+          && resolverFactory.getOutputResolver() instanceof NullMetadataResolver
+          && !thereIsAnInputTypeResolverDefined(getAllInputResolvers(model, resolverFactory))) {
         problemsReporter.addError(new Problem(model, format("%s '%s' defines a MetadataKeyId parameter but neither"
             + " an Output nor Type resolver that makes use of it was defined",
                                                             modelTypeName, model.getName())));
@@ -211,7 +215,7 @@ public class MetadataComponentModelValidator implements ExtensionModelValidator 
     if (outputResolver instanceof NullMetadataResolver) {
       validateNoOutputResolverIsNeeded(extensionModel, component, problemsReporter, modelOutputType);
 
-    } else if (extensionModel.getModelProperty(CompileTimeModelProperty.class).isPresent()) {
+    } else if (isCompileTime(extensionModel)) {
       // TODO MULE-14517: Validations for types added since 4.1.1, so we need to keep backwards compatibility somehow for now.
       validateVoidOperationsDontDeclareOutputResolver(component, problemsReporter, outputResolver, modelOutputType);
     }
@@ -276,6 +280,10 @@ public class MetadataComponentModelValidator implements ExtensionModelValidator 
                                                                MetadataResolverFactory resolverFactory) {
     return componentModel.getAllParameterModels().stream().map(NamedObject::getName)
         .map(resolverFactory::getInputResolver).collect(toList());
+  }
+
+  private boolean thereIsAnInputTypeResolverDefined(List<InputTypeResolver<Object>> inputTypeResolverList) {
+    return inputTypeResolverList.stream().anyMatch(typeResolver -> !(typeResolver instanceof NullMetadataResolver));
   }
 
   private void validateCategoryNames(ComponentModel componentModel, ProblemsReporter problemsReporter,

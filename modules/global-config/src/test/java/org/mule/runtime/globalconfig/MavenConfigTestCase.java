@@ -6,6 +6,7 @@
  */
 package org.mule.runtime.globalconfig;
 
+import static org.hamcrest.CoreMatchers.equalTo;
 import static org.hamcrest.Matchers.either;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.core.Is.is;
@@ -14,8 +15,9 @@ import static org.junit.Assert.assertThat;
 import static org.mule.runtime.globalconfig.api.GlobalConfigLoader.getMavenConfig;
 import static org.mule.tck.MuleTestUtils.testWithSystemProperties;
 import static org.mule.tck.MuleTestUtils.testWithSystemProperty;
-import static org.mule.test.allure.AllureConstants.RuntimeGlobalConfiguration.MavenGlobalConfiguration.MAVEN_GLOBAL_CONFIGURATION_STORY;
 import static org.mule.test.allure.AllureConstants.RuntimeGlobalConfiguration.RUNTIME_GLOBAL_CONFIGURATION;
+import static org.mule.test.allure.AllureConstants.RuntimeGlobalConfiguration.MavenGlobalConfiguration.MAVEN_GLOBAL_CONFIGURATION_STORY;
+
 import org.mule.maven.client.api.model.MavenConfiguration;
 import org.mule.maven.client.api.model.RemoteRepository;
 import org.mule.runtime.globalconfig.api.GlobalConfigLoader;
@@ -33,6 +35,7 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.ExpectedException;
 import org.junit.rules.TemporaryFolder;
+
 import io.qameta.allure.Description;
 import io.qameta.allure.Feature;
 import io.qameta.allure.Story;
@@ -62,6 +65,16 @@ public class MavenConfigTestCase extends AbstractMuleTestCase {
     assertThat(remoteRepository.getUrl(), is(new URL(MAVEN_CENTRAL_URL)));
     assertThat(remoteRepository.getAuthentication().get().getPassword(), is("password"));
     assertThat(remoteRepository.getAuthentication().get().getUsername(), is("username"));
+
+    assertThat(remoteRepository.getSnapshotPolicy().isPresent(), is(true));
+    assertThat(remoteRepository.getSnapshotPolicy().get().isEnabled(), is(true));
+    assertThat(remoteRepository.getSnapshotPolicy().get().getUpdatePolicy(), equalTo("daily"));
+    assertThat(remoteRepository.getSnapshotPolicy().get().getChecksumPolicy(), equalTo("warn"));
+
+    assertThat(remoteRepository.getReleasePolicy().isPresent(), is(true));
+    assertThat(remoteRepository.getReleasePolicy().get().isEnabled(), is(false));
+    assertThat(remoteRepository.getReleasePolicy().get().getUpdatePolicy(), equalTo("always"));
+    assertThat(remoteRepository.getReleasePolicy().get().getChecksumPolicy(), equalTo("ignore"));
   }
 
   @Description("Loads the configuration from mule-config.json and overrides the maven repository location using a system property")
@@ -200,6 +213,32 @@ public class MavenConfigTestCase extends AbstractMuleTestCase {
       GlobalConfigLoader.reset();
       MavenConfiguration mavenConfig = getMavenConfig();
       assertThat(mavenConfig.getOfflineMode(), is(true));
+    });
+  }
+
+  @Description("Loads the forcePolicyUpdateNever flag from system properties")
+  @Test
+  public void loadForcePolicyUpdateNever() throws Exception {
+    Map<String, String> properties = new HashMap<>();
+    properties.put("muleRuntimeConfig.maven.forcePolicyUpdateNever", "true");
+
+    testWithSystemProperties(properties, () -> {
+      GlobalConfigLoader.reset();
+      MavenConfiguration mavenConfig = getMavenConfig();
+      assertThat(mavenConfig.getForcePolicyUpdateNever(), is(true));
+    });
+  }
+
+  @Description("Loads the forcePolicyUpdateAlways flag from system properties")
+  @Test
+  public void loadForcePolicyUpdateAlways() throws Exception {
+    Map<String, String> properties = new HashMap<>();
+    properties.put("muleRuntimeConfig.maven.forcePolicyUpdateAlways", "true");
+
+    testWithSystemProperties(properties, () -> {
+      GlobalConfigLoader.reset();
+      MavenConfiguration mavenConfig = getMavenConfig();
+      assertThat(mavenConfig.getForcePolicyUpdateAlways(), is(true));
     });
   }
 

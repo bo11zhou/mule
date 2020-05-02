@@ -8,8 +8,12 @@ package org.mule.runtime.module.artifact.api.descriptor;
 
 import static com.google.common.base.Preconditions.checkState;
 import static java.lang.String.format;
+import static org.mule.runtime.module.artifact.api.descriptor.BundleScope.COMPILE;
 
 import java.net.URI;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Set;
 
 /**
@@ -22,12 +26,16 @@ public final class BundleDependency {
   private BundleDescriptor descriptor;
   private BundleScope scope;
   private URI bundleUri;
-  private Set<BundleDependency> additionalDependencies;
+  private List<BundleDependency> additionalDependencies;
+  private List<BundleDependency> transitiveDependencies;
+
+  private Set<String> packages;
+  private Set<String> resources;
 
   private BundleDependency() {}
 
   public BundleScope getScope() {
-    return scope;
+    return scope != null ? scope : COMPILE;
   }
 
   public BundleDescriptor getDescriptor() {
@@ -38,8 +46,42 @@ public final class BundleDependency {
     return bundleUri;
   }
 
+  /**
+   * @deprecated use {@link BundleDependency#getAdditionalDependenciesList()}
+   */
+  @Deprecated
   public Set<BundleDependency> getAdditionalDependencies() {
+    return new LinkedHashSet<>(additionalDependencies);
+  }
+
+  /**
+   * @since 4.2.2, 4.3.0
+   */
+  public List<BundleDependency> getAdditionalDependenciesList() {
     return additionalDependencies;
+  }
+
+  /**
+   * @deprecated use {@link BundleDependency#getTransitiveDependenciesList()}
+   */
+  @Deprecated
+  public Set<BundleDependency> getTransitiveDependencies() {
+    return new LinkedHashSet<>(transitiveDependencies);
+  }
+
+  /**
+   * @since 4.2.2, 4.3.0
+   */
+  public List<BundleDependency> getTransitiveDependenciesList() {
+    return transitiveDependencies;
+  }
+
+  public Set<String> getPackages() {
+    return packages;
+  }
+
+  public Set<String> getResources() {
+    return resources;
   }
 
   @Override
@@ -49,6 +91,8 @@ public final class BundleDependency {
         ", scope=" + scope +
         ", bundleUri=" + bundleUri +
         ", additionalDependencies=" + additionalDependencies +
+        ", packages=" + packages +
+        ", resources=" + resources +
         '}';
   }
 
@@ -61,7 +105,7 @@ public final class BundleDependency {
     private static final String BUNDLE_DESCRIPTOR = "bundle descriptor";
     private static final String REQUIRED_FIELD_IS_NULL = "bundle cannot be created with null %s";
 
-    private BundleDependency bundleDependency = new BundleDependency();
+    private final BundleDependency bundleDependency = new BundleDependency();
 
     public Builder() {}
 
@@ -70,6 +114,9 @@ public final class BundleDependency {
       bundleDependency.descriptor = template.descriptor;
       bundleDependency.scope = template.scope;
       bundleDependency.additionalDependencies = template.additionalDependencies;
+      bundleDependency.transitiveDependencies = template.transitiveDependencies;
+      bundleDependency.packages = template.packages;
+      bundleDependency.resources = template.resources;
     }
 
     /**
@@ -103,8 +150,47 @@ public final class BundleDependency {
       return this;
     }
 
+    /**
+     * @deprecated use {@link Builder#setAdditionalDependencies(List)}
+     */
+    @Deprecated
     public Builder setAdditionalDependencies(Set<BundleDependency> additionalDependencies) {
+      this.bundleDependency.additionalDependencies = new ArrayList<>(additionalDependencies);
+      return this;
+    }
+
+    /**
+     * @since 4.2.2, 4.3.0
+     */
+    public Builder setAdditionalDependencies(List<BundleDependency> additionalDependencies) {
       this.bundleDependency.additionalDependencies = additionalDependencies;
+      return this;
+    }
+
+    /**
+     * @deprecated use {@link Builder#setTransitiveDependencies(List)}
+     */
+    @Deprecated
+    public Builder setTransitiveDependencies(Set<BundleDependency> transitiveDependencies) {
+      this.bundleDependency.transitiveDependencies = new ArrayList<>(transitiveDependencies);
+      return this;
+    }
+
+    /**
+     * @since 4.2.2, 4.3.0
+     */
+    public Builder setTransitiveDependencies(List<BundleDependency> transitiveDependencies) {
+      this.bundleDependency.transitiveDependencies = transitiveDependencies;
+      return this;
+    }
+
+    public Builder setPackages(Set<String> packages) {
+      this.bundleDependency.packages = packages;
+      return this;
+    }
+
+    public Builder setResources(Set<String> resources) {
+      this.bundleDependency.resources = resources;
       return this;
     }
 

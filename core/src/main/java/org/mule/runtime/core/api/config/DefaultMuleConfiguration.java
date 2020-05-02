@@ -6,15 +6,21 @@
  */
 package org.mule.runtime.core.api.config;
 
+import static java.lang.Boolean.parseBoolean;
 import static java.lang.String.format;
 import static java.lang.System.getProperty;
+import static org.mule.runtime.api.i18n.I18nMessageFactory.createStaticMessage;
+import static org.mule.runtime.api.util.MuleSystemProperties.MULE_FLOW_TRACE;
 import static org.mule.runtime.core.api.config.MuleProperties.MULE_LOGGING_INTERVAL_SCHEDULERS_LATENCY_REPORT;
 import static org.mule.runtime.core.api.util.ClassUtils.instantiateClass;
 import static org.mule.runtime.core.internal.util.StandaloneServerUtils.getMuleBase;
 import static org.mule.runtime.core.internal.util.StandaloneServerUtils.getMuleHome;
 import static org.slf4j.LoggerFactory.getLogger;
+
 import org.mule.api.annotation.NoExtend;
+import org.mule.runtime.api.artifact.Registry;
 import org.mule.runtime.api.lifecycle.Initialisable;
+import org.mule.runtime.api.lifecycle.InitialisationException;
 import org.mule.runtime.api.lifecycle.Startable;
 import org.mule.runtime.api.serialization.ObjectSerializer;
 import org.mule.runtime.core.api.MuleContext;
@@ -22,6 +28,7 @@ import org.mule.runtime.core.api.component.InternalComponent;
 import org.mule.runtime.core.api.config.i18n.CoreMessages;
 import org.mule.runtime.core.api.construct.Flow;
 import org.mule.runtime.core.api.context.MuleContextAware;
+import org.mule.runtime.core.api.exception.FlowExceptionHandler;
 import org.mule.runtime.core.api.lifecycle.FatalException;
 import org.mule.runtime.core.api.processor.strategy.ProcessingStrategy;
 import org.mule.runtime.core.api.processor.strategy.ProcessingStrategyFactory;
@@ -29,6 +36,7 @@ import org.mule.runtime.core.api.util.FileUtils;
 import org.mule.runtime.core.api.util.NetworkUtils;
 import org.mule.runtime.core.api.util.StringUtils;
 import org.mule.runtime.core.api.util.UUID;
+import org.mule.runtime.core.privileged.exception.MessagingExceptionHandlerAcceptor;
 
 import java.io.File;
 import java.io.IOException;
@@ -40,6 +48,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import javax.inject.Inject;
+
 import org.apache.commons.collections.CollectionUtils;
 import org.apache.commons.lang3.BooleanUtils;
 import org.slf4j.Logger;
@@ -49,9 +59,11 @@ import org.slf4j.Logger;
  * MULE-13121 Cleanup MuleConfiguration removing redundant config in Mule 4
  */
 @NoExtend
-public class DefaultMuleConfiguration implements MuleConfiguration, MuleContextAware, InternalComponent {
+public class DefaultMuleConfiguration implements MuleConfiguration, MuleContextAware, InternalComponent, Initialisable {
 
   protected static final Logger logger = getLogger(DefaultMuleConfiguration.class);
+
+  private boolean lazyInit = false;
 
   /**
    * When true, each event will keep trace information of the flows and components it traverses to be shown as part of an
@@ -127,7 +139,7 @@ public class DefaultMuleConfiguration implements MuleConfiguration, MuleContextA
    * Whether Thread Logging Notifications are enabled to be logged.
    * Set system property to -1 to avoid logging, but gather statistics.
    */
-  private boolean theadLoggingEnabled = Integer.getInteger(MULE_LOGGING_INTERVAL_SCHEDULERS_LATENCY_REPORT, -1) > 0;
+  private final boolean theadLoggingEnabled = Integer.getInteger(MULE_LOGGING_INTERVAL_SCHEDULERS_LATENCY_REPORT, -1) > 0;
 
   private MuleContext muleContext;
   private boolean containerMode;
@@ -153,7 +165,7 @@ public class DefaultMuleConfiguration implements MuleConfiguration, MuleContextA
   /**
    * List of extensions defined in the configuration element at the application.
    */
-  private List<ConfigurationExtension> extensions = new ArrayList<>();
+  private final List<ConfigurationExtension> extensions = new ArrayList<>();
 
   /**
    * The instance of {@link ObjectSerializer} to use by default
@@ -177,6 +189,19 @@ public class DefaultMuleConfiguration implements MuleConfiguration, MuleContextA
    * @since 3.9.0
    */
   private int maxQueueTransactionFilesSizeInMegabytes = 500;
+
+  /**
+   * Whether streamed iterable objects should follow the repeatability strategy of the iterable or use the default one.
+   *
+   * @since 4.3.0
+   */
+  private boolean inheritIterableRepeatability = false;
+
+  /**
+   * Mule Registry to initialize this configuration
+   */
+  @Inject
+  private Registry registry;
 
   private DynamicConfigExpiration dynamicConfigExpiration =
       DynamicConfigExpiration.getDefault();
@@ -280,7 +305,7 @@ public class DefaultMuleConfiguration implements MuleConfiguration, MuleContextA
     if (p != null) {
       autoWrapMessageAwareTransform = BooleanUtils.toBoolean(p);
     }
-    p = getProperty(MuleProperties.MULE_FLOW_TRACE);
+    p = getProperty(MULE_FLOW_TRACE);
     if (p != null) {
       flowTrace = BooleanUtils.toBoolean(p);
     } else {
@@ -297,7 +322,6 @@ public class DefaultMuleConfiguration implements MuleConfiguration, MuleContextA
       disableTimeouts = Boolean.valueOf(p);
     }
     try {
-      String name = ProcessingStrategyFactory.class.getName();
       p = getProperty(ProcessingStrategyFactory.class.getName());
       if (p != null) {
         defaultProcessingStrategyFactory = (ProcessingStrategyFactory) instantiateClass(p);
@@ -312,7 +336,7 @@ public class DefaultMuleConfiguration implements MuleConfiguration, MuleContextA
    *         {@code false} otherwise.
    */
   public static boolean isFlowTrace() {
-    return flowTrace || logger.isDebugEnabled();
+    return flowTrace;
   }
 
   protected void validateEncoding() throws FatalException {
@@ -476,8 +500,18 @@ public class DefaultMuleConfiguration implements MuleConfiguration, MuleContextA
     }
   }
 
+  @Override
+  public boolean isLazyInit() {
+    return lazyInit;
+  }
+
+  public void setLazyInit(boolean lazyInit) {
+    this.lazyInit = lazyInit;
+  }
+
   protected boolean verifyContextNotInitialized() {
-    if (muleContext != null && muleContext.getLifecycleManager().isPhaseComplete(Initialisable.PHASE_NAME)) {
+    // LazyInit needs to be able to change the configuration
+    if (muleContext != null && !isLazyInit() && muleContext.getLifecycleManager().isPhaseComplete(Initialisable.PHASE_NAME)) {
       logger.warn("Cannot modify MuleConfiguration once the MuleContext has been initialized.  Modification will be ignored.");
       return false;
     } else {
@@ -486,7 +520,8 @@ public class DefaultMuleConfiguration implements MuleConfiguration, MuleContextA
   }
 
   protected boolean verifyContextNotStarted() {
-    if (muleContext != null && muleContext.getLifecycleManager().isPhaseComplete(Startable.PHASE_NAME)) {
+    // LazyInit needs to be able to change the configuration
+    if (muleContext != null && !isLazyInit() && muleContext.getLifecycleManager().isPhaseComplete(Startable.PHASE_NAME)) {
       logger.warn("Cannot modify MuleConfiguration once the MuleContext has been started.  Modification will be ignored.");
       return false;
     } else {
@@ -635,6 +670,14 @@ public class DefaultMuleConfiguration implements MuleConfiguration, MuleContextA
     updateWorkingDirectory();
   }
 
+  public void setInheritIterableRepeatability(String inheritIterableRepeatability) {
+    this.inheritIterableRepeatability = parseBoolean(inheritIterableRepeatability);
+  }
+
+  public void setInheritIterableRepeatability(boolean inheritIterableRepeatability) {
+    this.inheritIterableRepeatability = inheritIterableRepeatability;
+  }
+
   public void addExtensions(List<ConfigurationExtension> extensions) {
     this.extensions.addAll(extensions);
   }
@@ -649,6 +692,11 @@ public class DefaultMuleConfiguration implements MuleConfiguration, MuleContextA
       return Collections.emptyList();
     }
     return Collections.unmodifiableList(extensions);
+  }
+
+  @Override
+  public boolean isInheritIterableRepeatability() {
+    return inheritIterableRepeatability;
   }
 
   @Override
@@ -671,6 +719,7 @@ public class DefaultMuleConfiguration implements MuleConfiguration, MuleContextA
     result = prime * result + ((systemModelType == null) ? 0 : systemModelType.hashCode());
     result = prime * result + ((workingDirectory == null) ? 0 : workingDirectory.hashCode());
     result = prime * result + (containerMode ? 1231 : 1237);
+    result = prime * result + (inheritIterableRepeatability ? 1231 : 1237);
     return result;
   }
 
@@ -755,8 +804,33 @@ public class DefaultMuleConfiguration implements MuleConfiguration, MuleContextA
     if (maxQueueTransactionFilesSizeInMegabytes != other.maxQueueTransactionFilesSizeInMegabytes) {
       return false;
     }
+    if (inheritIterableRepeatability != other.inheritIterableRepeatability) {
+      return false;
+    }
 
     return true;
   }
 
+  @Override
+  public void initialise() throws InitialisationException {
+    initialiseAndValidateDefaultErrorHandler();
+  }
+
+  private void initialiseAndValidateDefaultErrorHandler() throws InitialisationException {
+    String defaultErrorHandler = getDefaultErrorHandlerName();
+    if (defaultErrorHandler != null) {
+      FlowExceptionHandler messagingExceptionHandler = registry.<FlowExceptionHandler>lookupByName(defaultErrorHandler)
+          .orElseThrow(() -> new InitialisationException(createStaticMessage(format("No global error handler defined with name '%s'.",
+                                                                                    defaultErrorHandler)),
+                                                         this));
+      if (messagingExceptionHandler instanceof MessagingExceptionHandlerAcceptor) {
+        MessagingExceptionHandlerAcceptor messagingExceptionHandlerAcceptor =
+            (MessagingExceptionHandlerAcceptor) messagingExceptionHandler;
+        if (!messagingExceptionHandlerAcceptor.acceptsAll()) {
+          throw new InitialisationException(createStaticMessage("Default exception strategy must not have expression attribute. It must accept any message."),
+                                            this);
+        }
+      }
+    }
+  }
 }

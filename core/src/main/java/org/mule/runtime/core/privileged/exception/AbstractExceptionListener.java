@@ -8,16 +8,16 @@ package org.mule.runtime.core.privileged.exception;
 
 import static java.lang.Boolean.TRUE;
 import static java.text.MessageFormat.format;
-import static java.util.Objects.requireNonNull;
 import static org.apache.commons.lang3.StringUtils.defaultString;
 import static org.mule.runtime.api.exception.ExceptionHelper.getRootMuleException;
 import static org.mule.runtime.api.exception.ExceptionHelper.sanitize;
-import static org.mule.runtime.api.exception.MuleException.INFO_ALREADY_LOGGED_KEY;
 import static org.mule.runtime.api.exception.MuleException.isVerboseExceptions;
 import static org.mule.runtime.api.notification.EnrichedNotificationInfo.createInfo;
 import static org.mule.runtime.api.notification.SecurityNotification.SECURITY_AUTHENTICATION_FAILED;
 import static org.mule.runtime.core.api.exception.Errors.CORE_NAMESPACE_NAME;
 import static org.mule.runtime.core.api.exception.Errors.Identifiers.UNKNOWN_ERROR_IDENTIFIER;
+
+import org.mule.api.annotation.NoExtend;
 import org.mule.runtime.api.component.Component;
 import org.mule.runtime.api.exception.MuleException;
 import org.mule.runtime.api.exception.TypedException;
@@ -52,6 +52,7 @@ import org.slf4j.LoggerFactory;
  * <code>AbstractSystemExceptionStrategy</code> (if you are creating a System Exception Strategy) rather than directly from this
  * class.
  */
+@NoExtend
 public abstract class AbstractExceptionListener extends AbstractMessageProcessorOwner {
 
   protected static final String NOT_SET = "<not set>";
@@ -61,14 +62,16 @@ public abstract class AbstractExceptionListener extends AbstractMessageProcessor
   @Inject
   protected NotificationDispatcher notificationFirer;
 
-  private List<Processor> messageProcessors = new CopyOnWriteArrayList<>();
+  private final List<Processor> messageProcessors = new CopyOnWriteArrayList<>();
 
-  private AtomicBoolean initialised = new AtomicBoolean(false);
+  private final AtomicBoolean initialised = new AtomicBoolean(false);
 
   private boolean enableNotifications = true;
   protected String logException = TRUE.toString();
 
   protected FlowConstructStatistics statistics;
+
+  private String representation;
 
   public List<Processor> getMessageProcessors() {
     return messageProcessors;
@@ -93,17 +96,26 @@ public abstract class AbstractExceptionListener extends AbstractMessageProcessor
   @Override
   public final synchronized void initialise() throws InitialisationException {
     if (!initialised.get()) {
-      doInitialise(muleContext);
+      doInitialise();
       super.initialise();
+      representation = this.getClass().getSimpleName() + (getLocation() != null ? " @ " + getLocation().getLocation() : "");
       initialised.set(true);
     }
   }
 
-  protected void doInitialise(MuleContext context) throws InitialisationException {
-    requireNonNull(muleContext);
+  protected void doInitialise() throws InitialisationException {
     if (logger.isDebugEnabled()) {
       logger.debug("Initialising exception listener: " + toString());
     }
+    doInitialise(muleContext);
+  }
+
+  /**
+   * @deprecated Implement {@link #doInitialise()} instead.
+   */
+  @Deprecated
+  protected void doInitialise(MuleContext muleContext) throws InitialisationException {
+    // nothing to do
   }
 
   protected void fireNotification(Exception ex, CoreEvent event) {
@@ -148,12 +160,12 @@ public abstract class AbstractExceptionListener extends AbstractMessageProcessor
       return;
     }
     //First check if exception was not logged already
-    if ((boolean) resolvedException.getFirst().getInfo().getOrDefault(INFO_ALREADY_LOGGED_KEY, false)) {
+    if (resolvedException.getFirst().getExceptionInfo().isAlreadyLogged()) {
       //Don't log anything, error while getting root or exception already logged.
       return;
     }
     doLogException(resolvedException.getSecond(), null);
-    resolvedException.getFirst().addInfo(INFO_ALREADY_LOGGED_KEY, true);
+    resolvedException.getFirst().getExceptionInfo().setAlreadyLogged(true);
   }
 
   protected void doLogException(String message, Throwable t) {
@@ -234,5 +246,10 @@ public abstract class AbstractExceptionListener extends AbstractMessageProcessor
 
   public void setStatistics(FlowConstructStatistics statistics) {
     this.statistics = statistics;
+  }
+
+  @Override
+  public String toString() {
+    return representation;
   }
 }

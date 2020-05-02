@@ -6,11 +6,14 @@
  */
 package org.mule.runtime.module.extension.internal.runtime.source;
 
+import org.mule.runtime.api.component.location.ComponentLocation;
 import org.mule.runtime.core.api.transaction.TransactionConfig;
 import org.mule.runtime.extension.api.runtime.config.ConfigurationInstance;
 import org.mule.runtime.extension.api.runtime.source.Source;
 import org.mule.runtime.extension.api.runtime.source.SourceCallback;
 import org.mule.runtime.module.extension.internal.runtime.transaction.TransactionSourceBinder;
+
+import javax.transaction.TransactionManager;
 
 /**
  * Augments the {@link SourceCallback} contract with internal behavior not to be exposed on the public
@@ -52,4 +55,18 @@ public interface SourceCallbackAdapter<T, A> extends SourceCallback<T, A> {
    */
   String getOwningExtensionName();
 
+  /**
+   * @return the source's {@link ComponentLocation}
+   */
+  ComponentLocation getSourceLocation();
+
+  /**
+   * @return the default {@link TransactionManager}
+   */
+  TransactionManager getTransactionManager();
+
+  /**
+   * @return the default transaction timeout
+   */
+  int getTimeout();
 }

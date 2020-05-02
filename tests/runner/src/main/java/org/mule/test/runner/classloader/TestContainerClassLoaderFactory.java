@@ -7,7 +7,9 @@
 
 package org.mule.test.runner.classloader;
 
+import static java.util.Collections.emptyMap;
 import static org.mule.runtime.core.api.util.ClassUtils.withContextClassLoader;
+
 import org.mule.runtime.container.api.ModuleRepository;
 import org.mule.runtime.container.api.MuleModule;
 import org.mule.runtime.container.internal.ContainerClassLoaderFactory;
@@ -19,15 +21,14 @@ import org.mule.runtime.module.artifact.api.classloader.ClassLoaderLookupPolicy;
 import org.mule.runtime.module.artifact.api.classloader.MuleArtifactClassLoader;
 import org.mule.runtime.module.artifact.api.descriptor.ArtifactDescriptor;
 
-import com.google.common.collect.ImmutableSet;
-
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.net.URL;
 import java.net.URLClassLoader;
-import java.util.Collections;
 import java.util.List;
 import java.util.Set;
+
+import com.google.common.collect.ImmutableSet;
 
 /**
  * Extends the default {@link ContainerClassLoaderFactory} for testing in order to add boot packages and build a
@@ -75,7 +76,7 @@ public class TestContainerClassLoaderFactory extends ContainerClassLoaderFactory
   public ArtifactClassLoader createContainerClassLoader(final ClassLoader parentClassLoader) {
     final List<MuleModule> muleModules = withContextClassLoader(classLoader, () -> testContainerModuleRepository.getModules());
 
-    MuleClassLoaderLookupPolicy lookupPolicy = new MuleClassLoaderLookupPolicy(Collections.emptyMap(), getBootPackages());
+    MuleClassLoaderLookupPolicy lookupPolicy = new MuleClassLoaderLookupPolicy(emptyMap(), getBootPackages());
 
     return createArtifactClassLoader(parentClassLoader, muleModules, lookupPolicy, new ArtifactDescriptor("mule"));
   }
@@ -108,8 +109,9 @@ public class TestContainerClassLoaderFactory extends ContainerClassLoaderFactory
         new MuleArtifactClassLoader(containerDescriptor.getName(), containerDescriptor, urls, parentClassLoader,
                                     containerLookupPolicy);
 
-    return createContainerFilteringClassLoader(withContextClassLoader(classLoader,
-                                                                      () -> testContainerModuleRepository.getModules()),
+    return createContainerFilteringClassLoader(parentClassLoader, withContextClassLoader(classLoader,
+                                                                                         () -> testContainerModuleRepository
+                                                                                             .getModules()),
                                                containerClassLoader);
   }
 

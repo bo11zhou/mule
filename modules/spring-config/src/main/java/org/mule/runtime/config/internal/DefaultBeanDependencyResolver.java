@@ -9,11 +9,12 @@ package org.mule.runtime.config.internal;
 import static com.google.common.graph.Traverser.forTree;
 import static java.util.Arrays.asList;
 import static java.util.stream.Collectors.toList;
+import static java.util.stream.StreamSupport.stream;
+
 import org.mule.runtime.api.util.Pair;
 import org.mule.runtime.config.internal.dsl.model.ConfigurationDependencyResolver;
 import org.mule.runtime.core.internal.lifecycle.InjectedDependenciesProvider;
 
-import java.util.Collection;
 import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
@@ -55,14 +56,10 @@ public class DefaultBeanDependencyResolver implements BeanDependencyResolver {
 
     addDependency(root, beanName, springRegistry.get(beanName));
 
-    List<Object> orderedObjects = new LinkedList<>();
-    forTree(DependencyNode::getChildren).depthFirstPostOrder(root).forEach(node -> {
-      if (node != root) {
-        orderedObjects.add(node.getValue());
-      }
-    });
-
-    return orderedObjects;
+    return stream(forTree(DependencyNode::getChildren).depthFirstPostOrder(root).spliterator(), false)
+        .filter(node -> node != root)
+        .map(DependencyNode::getValue)
+        .collect(toList());
   }
 
   private void addDependency(DependencyNode parent, String key, Object object) {
@@ -103,8 +100,7 @@ public class DefaultBeanDependencyResolver implements BeanDependencyResolver {
    */
   private void addConfigurationDependencies(String key, Set<String> processedKeys,
                                             DependencyNode node) {
-    Collection<String> dependencies = configurationDependencyResolver.resolveComponentDependencies(key);
-    for (String dependency : dependencies) {
+    for (String dependency : configurationDependencyResolver.resolveComponentDependencies(key)) {
       try {
         if (springRegistry.isSingleton(dependency)) {
           addDependency(node, dependency, springRegistry.get(dependency), processedKeys);
@@ -116,8 +112,8 @@ public class DefaultBeanDependencyResolver implements BeanDependencyResolver {
   }
 
   /**
-   * Adds the dependencies that are explicit on the {@link BeanDefinition}. These were inferred from
-   * introspecting fields annotated with {@link Inject} or were programatically added to the definition
+   * Adds the dependencies that are explicit on the {@link BeanDefinition}. These were inferred from introspecting fields
+   * annotated with {@link Inject} or were programmatically added to the definition
    */
   private void addAutoDiscoveredDependencies(String key, Set<String> processedKeys,
                                              DependencyNode node) {

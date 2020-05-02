@@ -16,32 +16,47 @@ import static org.hamcrest.Matchers.instanceOf;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.nullValue;
+import static org.mule.runtime.core.api.config.MuleProperties.OBJECT_POLICY_PROVIDER;
+import static org.mule.runtime.http.policy.api.SourcePolicyAwareAttributes.noAttributes;
 
 import org.mule.functional.junit4.MuleArtifactFunctionalTestCase;
 import org.mule.runtime.api.config.custom.ServiceConfigurator;
+import org.mule.runtime.api.exception.MuleException;
+import org.mule.runtime.api.lifecycle.Disposable;
 import org.mule.runtime.api.lifecycle.Startable;
+import org.mule.runtime.api.scheduler.SchedulerService;
 import org.mule.runtime.core.api.MuleContext;
 import org.mule.runtime.core.api.config.ConfigurationBuilder;
-import org.mule.runtime.core.api.config.ConfigurationException;
+import org.mule.runtime.core.api.event.CoreEvent;
 import org.mule.runtime.core.api.policy.Policy;
 import org.mule.runtime.core.api.policy.PolicyInstance;
 import org.mule.runtime.core.api.policy.PolicyProvider;
+import org.mule.runtime.core.api.processor.Processor;
+import org.mule.runtime.policy.api.PolicyAwareAttributes;
 import org.mule.runtime.policy.api.PolicyPointcutParameters;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 import javax.inject.Inject;
 
+import org.junit.Before;
 import org.junit.Test;
 
 public class PolicyTestCase extends MuleArtifactFunctionalTestCase {
 
   private static final String POLICY_ID = "policyId";
+  private static final AtomicBoolean processorWasDisposed = new AtomicBoolean(false);
 
   @Inject
   private PolicyProvider policyProvider;
+
+  @Inject
+  private SchedulerService schedulerService;
+  private CountDownLatch messageSentTimer;
 
   @Override
   protected String getConfigFile() {
@@ -58,9 +73,9 @@ public class PolicyTestCase extends MuleArtifactFunctionalTestCase {
     return new ConfigurationBuilder() {
 
       @Override
-      public void configure(MuleContext muleContext) throws ConfigurationException {
+      public void configure(MuleContext muleContext) {
         final AtomicReference<Optional<PolicyInstance>> policyReference = new AtomicReference<>();
-        muleContext.getCustomizationService().registerCustomServiceImpl("customPolicyProvider",
+        muleContext.getCustomizationService().registerCustomServiceImpl(OBJECT_POLICY_PROVIDER,
                                                                         new TestPolicyProvider(policyReference));
       }
 
@@ -69,6 +84,12 @@ public class PolicyTestCase extends MuleArtifactFunctionalTestCase {
         // Nothing to do
       }
     };
+  }
+
+  @Before
+  public void setUp() {
+    processorWasDisposed.set(false);
+    messageSentTimer = new CountDownLatch(1);
   }
 
   @Test
@@ -82,6 +103,15 @@ public class PolicyTestCase extends MuleArtifactFunctionalTestCase {
 
     List<Policy> operationParameterizedPolicies = testPolicyProvider.findOperationParameterizedPolicies(null);
     assertThat(operationParameterizedPolicies.size(), equalTo(1));
+  }
+
+  @Test
+  public void policyDisposalStopsSchedulers() {
+    // Once the application is started with it's corresponding test policy. Test whether the policy-specific schedulers, generated
+    // in the PolicyProcessingStrategy, are stopped once the whole application is
+    // disposed.
+    muleContext.dispose();
+    assertThat(schedulerService.getSchedulers().size(), is(0));
   }
 
   private static class TestPolicyProvider implements PolicyProvider, Startable {
@@ -103,6 +133,21 @@ public class PolicyTestCase extends MuleArtifactFunctionalTestCase {
     }
 
     @Override
+    public PolicyAwareAttributes sourcePolicyAwareAttributes() {
+      return noAttributes();
+    }
+
+    @Override
+    public boolean isSourcePoliciesAvailable() {
+      return true;
+    }
+
+    @Override
+    public boolean isOperationPoliciesAvailable() {
+      return true;
+    }
+
+    @Override
     public List<Policy> findOperationParameterizedPolicies(PolicyPointcutParameters policyPointcutParameters) {
       return policyReference.get().map(policy -> policy.getOperationPolicyChain()
           .map(operationChain -> asList(new Policy(operationChain, "policyId")))
@@ -119,6 +164,21 @@ public class PolicyTestCase extends MuleArtifactFunctionalTestCase {
         PolicyInstance policyInstance = getPolicyFromRegistry();
         policyReference.set(ofNullable(policyInstance));
       }
+    }
+  }
+
+  public static class DisposeListenerMessageProcessor implements Processor, Disposable {
+
+    public DisposeListenerMessageProcessor() {}
+
+    @Override
+    public CoreEvent process(CoreEvent event) throws MuleException {
+      return event;
+    }
+
+    @Override
+    public void dispose() {
+      processorWasDisposed.set(true);
     }
   }
 }

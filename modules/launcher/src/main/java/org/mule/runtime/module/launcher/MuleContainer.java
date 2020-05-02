@@ -8,9 +8,12 @@ package org.mule.runtime.module.launcher;
 
 import static java.lang.ClassLoader.getSystemClassLoader;
 import static java.lang.String.format;
+import static java.lang.System.getProperty;
+import static java.lang.System.setProperty;
 import static org.apache.commons.lang3.reflect.MethodUtils.invokeStaticMethod;
 import static org.mule.runtime.api.exception.ExceptionHelper.getRootException;
 import static org.mule.runtime.api.exception.ExceptionHelper.getRootMuleException;
+import static org.mule.runtime.api.util.MuleSystemProperties.MULE_SIMPLE_LOG;
 import static org.mule.runtime.core.api.config.i18n.CoreMessages.fatalErrorInShutdown;
 import static org.mule.runtime.core.api.config.i18n.CoreMessages.fatalErrorWhileRunning;
 import static org.mule.runtime.core.api.util.ClassUtils.withContextClassLoader;
@@ -18,14 +21,15 @@ import static org.mule.runtime.core.api.util.StringMessageUtils.getBoilerPlate;
 import static org.mule.runtime.core.internal.logging.LogUtil.log;
 import static org.mule.runtime.module.deployment.internal.DeploymentDirectoryWatcher.DEPLOYMENT_APPLICATION_PROPERTY;
 import static org.mule.runtime.module.deployment.internal.MuleDeploymentService.findSchedulerService;
+
 import org.mule.runtime.api.exception.MuleException;
 import org.mule.runtime.api.exception.MuleRuntimeException;
 import org.mule.runtime.api.i18n.I18nMessage;
 import org.mule.runtime.container.api.MuleFoldersUtil;
-import org.mule.runtime.core.api.config.MuleProperties;
 import org.mule.runtime.core.api.config.i18n.CoreMessages;
 import org.mule.runtime.core.api.util.SystemUtils;
 import org.mule.runtime.core.internal.context.DefaultMuleContext;
+import org.mule.runtime.core.internal.lock.ServerLockFactory;
 import org.mule.runtime.module.artifact.api.classloader.ArtifactClassLoader;
 import org.mule.runtime.module.artifact.api.classloader.net.MuleArtifactUrlStreamHandler;
 import org.mule.runtime.module.artifact.api.classloader.net.MuleUrlStreamHandlerFactory;
@@ -87,17 +91,18 @@ public class MuleContainer {
   private final RepositoryService repositoryService;
   private final ToolingService toolingService;
   private final MuleCoreExtensionManagerServer coreExtensionManager;
-  private MuleArtifactResourcesRegistry artifactResourcesRegistry = new MuleArtifactResourcesRegistry.Builder().build();
+  private ServerLockFactory muleLockFactory;
+  private final MuleArtifactResourcesRegistry artifactResourcesRegistry = new MuleArtifactResourcesRegistry.Builder().build();
   private static MuleLog4jContextFactory log4jContextFactory;
 
   static {
-    if (System.getProperty(MuleProperties.MULE_SIMPLE_LOG) == null) {
+    if (getProperty(MULE_SIMPLE_LOG) == null) {
       // We need to force the creation of a logger before we can change the manager factory.
       // This is because if not, any logger that will be acquired by MuleLog4jContextFactory code
       // will fail since it will try to use a null factory.
       LoggerFactory.getLogger("triggerDefaultFactoryCreation");
       // We need to set this property so log4j uses the same context factory everywhere
-      System.setProperty("log4j2.loggerContextFactory", MuleLog4jContextFactory.class.getName());
+      setProperty("log4j2.loggerContextFactory", MuleLog4jContextFactory.class.getName());
       log4jContextFactory = new MuleLog4jContextFactory();
       LogManager.setFactory(log4jContextFactory);
     }
@@ -105,8 +110,8 @@ public class MuleContainer {
     logger = LoggerFactory.getLogger(MuleContainer.class);
   }
 
-  private ServiceManager serviceManager;
-  private ExtensionModelLoaderManager extensionModelLoaderManager;
+  private final ServiceManager serviceManager;
+  private final ExtensionModelLoaderManager extensionModelLoaderManager;
 
   /**
    * Application entry point.
@@ -138,6 +143,7 @@ public class MuleContainer {
                                                                           new ClasspathMuleCoreExtensionDiscoverer(artifactResourcesRegistry
                                                                               .getContainerClassLoader()),
                                                                           new ReflectionMuleCoreExtensionDependencyResolver());
+    this.muleLockFactory = artifactResourcesRegistry.getRuntimeLockFactory();
 
     artifactResourcesRegistry.getContainerClassLoader().dispose();
   }
@@ -184,10 +190,10 @@ public class MuleContainer {
 
     String appOption = (String) commandlineOptions.get(APP_COMMAND_LINE_OPTION);
     if (appOption != null) {
-      if (System.getProperty(DEPLOYMENT_APPLICATION_PROPERTY) != null) {
+      if (getProperty(DEPLOYMENT_APPLICATION_PROPERTY) != null) {
         throw new IllegalArgumentException(INVALID_DEPLOY_APP_CONFIGURATION_ERROR);
       }
-      System.setProperty(DEPLOYMENT_APPLICATION_PROPERTY, appOption);
+      setProperty(DEPLOYMENT_APPLICATION_PROPERTY, appOption);
     }
   }
 
@@ -322,6 +328,10 @@ public class MuleContainer {
 
     if (deploymentService != null) {
       deploymentService.stop();
+    }
+
+    if (muleLockFactory != null) {
+      muleLockFactory.dispose();
     }
 
     if (extensionModelLoaderManager != null) {

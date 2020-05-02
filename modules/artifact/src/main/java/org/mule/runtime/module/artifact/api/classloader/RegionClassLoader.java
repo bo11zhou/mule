@@ -18,6 +18,8 @@ import static org.apache.commons.lang3.ClassUtils.getPackageName;
 import static org.mule.runtime.api.util.Preconditions.checkArgument;
 import static org.mule.runtime.module.artifact.api.descriptor.ArtifactConstants.API_CLASSIFIERS;
 import static org.slf4j.LoggerFactory.getLogger;
+
+import org.mule.module.artifact.classloader.ClassLoaderResourceReleaser;
 import org.mule.runtime.api.exception.MuleRuntimeException;
 import org.mule.runtime.core.api.util.CompoundEnumeration;
 import org.mule.runtime.core.api.util.func.CheckedFunction;
@@ -66,7 +68,6 @@ public class RegionClassLoader extends MuleDeployableArtifactClassLoader {
     registerAsParallelCapable();
   }
 
-
   private static final String CLASS_EXTENSION = ".class";
   private static final Logger LOGGER = getLogger(RegionClassLoader.class);
 
@@ -79,7 +80,16 @@ public class RegionClassLoader extends MuleDeployableArtifactClassLoader {
   private final Map<String, List<ArtifactClassLoader>> resourceMapping = new HashMap<>();
   private final Object descriptorMappingLock = new Object();
   private final Map<BundleDescriptor, URLClassLoader> descriptorMapping = new HashMap<>();
+
   private ArtifactClassLoader ownerClassLoader;
+
+  /**
+   * Region specific {@link ResourceReleaser} to add behaviour in the {@link RegionClassLoader#dispose()} execution.
+   * By default it will prompt a gc in the JVM if possible to release the softkeys cleared in the caches.
+   *
+   * This behaviour can be changed by extending {@link RegionClassLoader} and calling the provided protected constructor
+   */
+  private ResourceReleaser regionResourceReleaser = System::gc;
 
   /**
    * Creates a new region.
@@ -89,9 +99,29 @@ public class RegionClassLoader extends MuleDeployableArtifactClassLoader {
    * @param parent parent classloader for the region. Non null
    * @param lookupPolicy lookup policy to use on the region
    */
-  public RegionClassLoader(String artifactId, ArtifactDescriptor artifactDescriptor, ClassLoader parent,
+  public RegionClassLoader(String artifactId,
+                           ArtifactDescriptor artifactDescriptor,
+                           ClassLoader parent,
                            ClassLoaderLookupPolicy lookupPolicy) {
     super(artifactId, artifactDescriptor, new URL[0], parent, lookupPolicy, emptyList());
+  }
+
+  /**
+   * Constructor to be called by extending classes and override the {@link ClassLoaderResourceReleaser} resourceReleaser.
+   *
+   * @param artifactId artifact unique ID for the artifact owning the created class loader instance. Non empty.
+   * @param artifactDescriptor descriptor for the artifact owning the created class loader instance. Non null.
+   * @param parent parent classloader for the region. Non null
+   * @param lookupPolicy lookup policy to use on the region
+   * @param regionResourceReleaser {@link ResourceReleaser} to be called after invocating {@link RegionClassLoader#dispose()}
+   * */
+  protected RegionClassLoader(String artifactId,
+                              ArtifactDescriptor artifactDescriptor,
+                              ClassLoader parent,
+                              ClassLoaderLookupPolicy lookupPolicy,
+                              ResourceReleaser regionResourceReleaser) {
+    super(artifactId, artifactDescriptor, new URL[0], parent, lookupPolicy, emptyList());
+    this.regionResourceReleaser = regionResourceReleaser;
   }
 
   @Override
@@ -144,12 +174,12 @@ public class RegionClassLoader extends MuleDeployableArtifactClassLoader {
       // *.class files may be requested as resources.
       for (String exportedClassPackage : filter.getExportedClassPackages()) {
         String packageAsDirectory =
-            normalize(DOT_REPLACEMENT_PATTERN.matcher(exportedClassPackage).replaceAll(PATH_SEPARATOR), true);
+            DOT_REPLACEMENT_PATTERN.matcher(exportedClassPackage).replaceAll(PATH_SEPARATOR);
         List<ArtifactClassLoader> classLoaders =
             resourceMapping.computeIfAbsent(packageAsDirectory, k -> new ArrayList<>());
         classLoaders.add(artifactClassLoader);
         classLoaders =
-            resourceMapping.computeIfAbsent(normalize(packageAsDirectory + PATH_SEPARATOR), k -> new ArrayList<>());
+            resourceMapping.computeIfAbsent(packageAsDirectory + PATH_SEPARATOR, k -> new ArrayList<>());
         classLoaders.add(artifactClassLoader);
       }
     } finally {
@@ -256,20 +286,22 @@ public class RegionClassLoader extends MuleDeployableArtifactClassLoader {
       if (matcher.matches()) {
         String groupId = matcher.group(1);
         String artifactId = matcher.group(2);
-        String version = matcher.group(3);
+        String baseVersion = matcher.group(3);
         String classifier = matcher.group(4);
         String type = matcher.group(5);
         String resource = matcher.group(6);
         LOGGER.debug("Region request for '{}' in group '{}', artifact '{}' and version '{}', with classifier '{}' and type '{}'.",
-                     resource, groupId, artifactId, version, classifier, type);
+                     resource, groupId, artifactId, baseVersion, classifier, type);
         String normalizedResource = normalize(resource, true);
 
-        if (API_CLASSIFIERS.contains(classifier) && "zip".equals(type) && !WILDCARD.equals(version)) {
+        if (API_CLASSIFIERS.contains(classifier) && "zip".equals(type) && !WILDCARD.equals(baseVersion)) {
           // Check whether it's a resource from an API dependency, since all those should be considered exported
           BundleDescriptor requiredDescriptor = new BundleDescriptor.Builder()
               .setGroupId(groupId)
               .setArtifactId(artifactId)
-              .setVersion(version)
+              .setVersion(baseVersion)
+              // As the requested version could be an SNAPSHOT we have to compare using baseVersion instead of version
+              .setBaseVersion(baseVersion)
               .setClassifier(classifier)
               .setType(type)
               .build();
@@ -288,7 +320,8 @@ public class RegionClassLoader extends MuleDeployableArtifactClassLoader {
                       return descriptorMapping.get(descriptor);
                     } else {
                       try {
-                        return new URLClassLoader(new URL[] {dependency.getBundleUri().toURL()});
+                        return new URLClassLoader(new URL[] {dependency.getBundleUri().toURL()}, getSystemClassLoader(),
+                                                  new NonCachingURLStreamHandlerFactory());
                       } catch (MalformedURLException e) {
                         throw new MuleRuntimeException(e);
                       }
@@ -306,9 +339,9 @@ public class RegionClassLoader extends MuleDeployableArtifactClassLoader {
               BundleDescriptor descriptor = artifactClassLoader.getArtifactDescriptor().getBundleDescriptor();
               // The descriptor may not be present during some tests
               if (descriptor != null
-                  && isRequestedArtifact(descriptor, groupId, artifactId, version, ofNullable(classifier), type, () -> {
+                  && isRequestedArtifact(descriptor, groupId, artifactId, baseVersion, ofNullable(classifier), type, () -> {
                     LOGGER.warn("Required version '{}' for artifact '{}:{}' not found. Searching in available version '{}'...",
-                                version, descriptor.getGroupId(), descriptor.getArtifactId(), descriptor.getVersion());
+                                baseVersion, descriptor.getGroupId(), descriptor.getArtifactId(), descriptor.getVersion());
                     return true;
                   })) {
                 return artifactClassLoader.findResource(normalizedResource);
@@ -339,19 +372,30 @@ public class RegionClassLoader extends MuleDeployableArtifactClassLoader {
   @Override
   public final Enumeration<URL> findResources(final String name) throws IOException {
     String normalizedName = normalize(name, true);
-    final List<ArtifactClassLoader> artifactClassLoaders = resourceMapping.get(normalizedName);
     List<Enumeration<URL>> enumerations = new ArrayList<>(registeredClassLoaders.size());
+    if (normalizedName.endsWith("/")) {
+      List<Map.Entry<String, List<ArtifactClassLoader>>> entries = resourceMapping.entrySet()
+          .stream()
+          .filter(entry -> entry.getKey().startsWith(name))
+          .collect(toList());
+      for (Map.Entry<String, List<ArtifactClassLoader>> entry : entries) {
+        List<ArtifactClassLoader> artifactClassLoaders = entry.getValue();
+        for (ArtifactClassLoader artifactClassLoader : artifactClassLoaders) {
+          enumerations.add(artifactClassLoader.findResources(name));
+        }
+      }
+    } else {
+      final List<ArtifactClassLoader> artifactClassLoaders = resourceMapping.get(normalizedName);
+      if (artifactClassLoaders != null) {
+        for (ArtifactClassLoader artifactClassLoader : artifactClassLoaders) {
 
-    if (artifactClassLoaders != null) {
-      for (ArtifactClassLoader artifactClassLoader : artifactClassLoaders) {
-
-        final Enumeration<URL> partialResources = artifactClassLoader.findResources(normalizedName);
-        if (partialResources.hasMoreElements()) {
-          enumerations.add(partialResources);
+          final Enumeration<URL> partialResources = artifactClassLoader.findResources(normalizedName);
+          if (partialResources.hasMoreElements()) {
+            enumerations.add(partialResources);
+          }
         }
       }
     }
-
     return new CompoundEnumeration<>(enumerations.toArray(new Enumeration[0]));
   }
 
@@ -368,8 +412,10 @@ public class RegionClassLoader extends MuleDeployableArtifactClassLoader {
     });
     descriptorMapping.clear();
     disposeClassLoader(ownerClassLoader);
-
     super.dispose();
+
+    //System.gc() by default
+    regionResourceReleaser.release();
   }
 
   private void disposeClassLoader(ArtifactClassLoader classLoader) {

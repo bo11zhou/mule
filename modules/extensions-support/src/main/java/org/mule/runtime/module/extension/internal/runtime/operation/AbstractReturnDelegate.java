@@ -6,7 +6,7 @@
  */
 package org.mule.runtime.module.extension.internal.runtime.operation;
 
-import static java.util.Optional.ofNullable;
+import static org.apache.commons.io.IOUtils.EOF;
 import static org.mule.runtime.api.metadata.MediaTypeUtils.parseCharset;
 import static org.mule.runtime.core.api.util.StreamingUtils.supportsStreaming;
 import static org.mule.runtime.core.api.util.SystemUtils.getDefaultEncoding;
@@ -23,6 +23,7 @@ import static org.mule.runtime.module.extension.internal.util.MuleExtensionUtils
 
 import org.mule.metadata.api.model.MetadataType;
 import org.mule.runtime.api.connection.ConnectionHandler;
+import org.mule.runtime.api.event.Event;
 import org.mule.runtime.api.message.Message;
 import org.mule.runtime.api.meta.model.ComponentModel;
 import org.mule.runtime.api.meta.model.HasOutputModel;
@@ -53,6 +54,9 @@ import java.util.Iterator;
 import java.util.Map;
 import java.util.Optional;
 
+import org.apache.commons.io.input.ClosedInputStream;
+import org.apache.commons.io.input.ProxyInputStream;
+
 /**
  * Base class for {@link ReturnDelegate} implementations.
  * <p/>
@@ -74,7 +78,7 @@ abstract class AbstractReturnDelegate implements ReturnDelegate {
   private boolean isSpecialHandling = false;
   private ReturnHandler returnHandler = nullHandler();
 
-  private Charset defaultEncoding;
+  private final Charset defaultEncoding;
 
   /**
    * Creates a new instance
@@ -111,9 +115,13 @@ abstract class AbstractReturnDelegate implements ReturnDelegate {
   }
 
   protected Message toMessage(Object value, ExecutionContextAdapter operationContext) {
+    if (value instanceof Event) {
+      return ((Event) value).getMessage();
+    }
+
     Map<String, Object> params = operationContext.getParameters();
-    Optional<MediaType> contextMimeTypeParam = getContextMimeType(params);
-    Optional<Charset> contextEncodingParam = getContextEncoding(params);
+    MediaType contextMimeTypeParam = getContextMimeType(params);
+    Charset contextEncodingParam = getContextEncoding(params);
     final MediaType mediaType = resolveMediaType(value, contextMimeTypeParam, contextEncodingParam);
     final CoreEvent event = operationContext.getEvent();
 
@@ -131,7 +139,7 @@ abstract class AbstractReturnDelegate implements ReturnDelegate {
           ? MessageUtils.toMessage(resultValue, mediaType, cursorProviderFactory, event, returnHandler.getDataType())
           : MessageUtils.toMessage(resultValue, mediaType, cursorProviderFactory, event);
     } else {
-      PayloadMediaTypeResolver payloadMediaTypeResolver = new PayloadMediaTypeResolver(getDefaultEncoding(muleContext),
+      PayloadMediaTypeResolver payloadMediaTypeResolver = new PayloadMediaTypeResolver(defaultEncoding,
                                                                                        defaultMediaType,
                                                                                        contextEncodingParam,
                                                                                        contextMimeTypeParam);
@@ -189,12 +197,14 @@ abstract class AbstractReturnDelegate implements ReturnDelegate {
     return lazyMessageCollection;
   }
 
-  private Optional<MediaType> getContextMimeType(Map<String, Object> params) {
-    return ofNullable((String) params.get(MIME_TYPE_PARAMETER_NAME)).map(mimeType -> MediaType.parse(mimeType));
+  private MediaType getContextMimeType(Map<String, Object> params) {
+    String mimeType = (String) params.get(MIME_TYPE_PARAMETER_NAME);
+    return mimeType != null ? MediaType.parse(mimeType) : null;
   }
 
-  private Optional<Charset> getContextEncoding(Map<String, Object> params) {
-    return ofNullable((String) params.get(ENCODING_PARAMETER_NAME)).map(encoding -> parseCharset(encoding));
+  private Charset getContextEncoding(Map<String, Object> params) {
+    String encoding = (String) params.get(ENCODING_PARAMETER_NAME);
+    return encoding != null ? parseCharset(encoding) : null;
   }
 
   private Object streamingContent(Object value,
@@ -215,83 +225,64 @@ abstract class AbstractReturnDelegate implements ReturnDelegate {
    * If provided, mimeType and encoding configured as operation parameters will take precedence over what comes with the message's
    * {@link DataType}.
    *
-   * @param value
-   * @param operationContext
-   * @return
+   * @param value the operation's value
+   * @param contextMimeType the mimeType specified in the operation
+   * @param contextEncoding the encoding specified in the operation
+   * @return the resolved {@link MediaType}
    */
-  protected MediaType resolveMediaType(Object value, Optional<MediaType> contextMimeType, Optional<Charset> contextEncoding) {
-    Charset existingEncoding = defaultEncoding;
-    MediaType mediaType = defaultMediaType;
-    if (value instanceof Result) {
-      final Optional<MediaType> optionalMediaType = ((Result) value).getMediaType();
-      if (optionalMediaType.isPresent()) {
-        mediaType = optionalMediaType.get();
-        if (mediaType.getCharset().isPresent()) {
-          existingEncoding = mediaType.getCharset().orElse(existingEncoding);
+  protected MediaType resolveMediaType(Object value, MediaType contextMimeType, Charset contextEncoding) {
+    if (contextEncoding == null) {
+      contextEncoding = defaultEncoding;
+    }
+    if (contextMimeType == null) {
+      MediaType mediaType = defaultMediaType;
+      if (value instanceof Result) {
+        final Optional<MediaType> optionalMediaType = ((Result) value).getMediaType();
+        if (optionalMediaType.isPresent()) {
+          mediaType = optionalMediaType.get();
+          if (mediaType.getCharset().isPresent()) {
+            contextEncoding = mediaType.getCharset().orElse(contextEncoding);
+          }
         }
       }
+
+      contextMimeType = mediaType;
     }
 
-    return contextMimeType.orElse(mediaType).withCharset(contextEncoding.orElse(existingEncoding));
+    return contextMimeType.withCharset(contextEncoding);
   }
 
-  protected class ConnectedInputStreamWrapper extends InputStream {
+  protected class ConnectedInputStreamWrapper extends ProxyInputStream {
 
-    private final InputStream delegate;
     private final ConnectionHandler<?> connectionHandler;
 
     private ConnectedInputStreamWrapper(InputStream delegate, ConnectionHandler<?> connectionHandler) {
-      this.delegate = delegate;
+      super(delegate);
       this.connectionHandler = connectionHandler;
     }
 
+    /**
+     * Automatically closes the stream if the end of stream was reached.
+     *
+     * @param n number of bytes read, or -1 if no more bytes are available
+     * @throws IOException if the stream could not be closed
+     */
     @Override
-    public int read() throws IOException {
-      return delegate.read();
-    }
-
-    @Override
-    public int read(byte[] b) throws IOException {
-      return delegate.read(b);
-    }
-
-    @Override
-    public int read(byte[] b, int off, int len) throws IOException {
-      return delegate.read(b, off, len);
-    }
-
-    @Override
-    public long skip(long n) throws IOException {
-      return delegate.skip(n);
-    }
-
-    @Override
-    public int available() throws IOException {
-      return delegate.available();
+    protected void afterRead(final int n) throws IOException {
+      if (n == EOF) {
+        close();
+      }
     }
 
     @Override
     public void close() throws IOException {
       try {
-        delegate.close();
+        super.close();
+        in = new ClosedInputStream();
       } finally {
         connectionHandler.release();
       }
     }
 
-    @Override
-    public void mark(int readlimit) {
-      delegate.mark(readlimit);
-    }
-
-    @Override
-    public void reset() throws IOException {
-      delegate.reset();
-    }
-
-    @Override
-    public boolean markSupported() {
-      return delegate.markSupported();
-    }
   }
 }

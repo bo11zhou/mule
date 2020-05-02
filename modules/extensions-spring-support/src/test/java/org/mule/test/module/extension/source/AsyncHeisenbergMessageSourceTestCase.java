@@ -12,8 +12,10 @@ import static org.junit.Assert.assertThat;
 import static org.junit.Assert.fail;
 import static org.mule.test.heisenberg.extension.AsyncHeisenbergSource.completionCallback;
 
+import org.junit.Ignore;
 import org.junit.Test;
 
+@Ignore("MULE-18067")
 public class AsyncHeisenbergMessageSourceTestCase extends HeisenbergMessageSourceTestCase {
 
   @Override

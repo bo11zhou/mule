@@ -7,8 +7,10 @@
 package org.mule.runtime.config.internal.dsl.declaration;
 
 import static com.google.common.base.Preconditions.checkArgument;
+import static java.util.Collections.emptyMap;
 import static java.util.stream.Collectors.toList;
 import static java.util.stream.Collectors.toMap;
+import static java.util.stream.Collectors.toSet;
 import static org.apache.commons.lang3.StringUtils.isBlank;
 import static org.mule.metadata.api.utils.MetadataTypeUtils.getLocalPart;
 import static org.mule.runtime.api.i18n.I18nMessageFactory.createStaticMessage;
@@ -22,15 +24,16 @@ import static org.mule.runtime.app.declaration.api.fluent.SimpleValueType.DATETI
 import static org.mule.runtime.app.declaration.api.fluent.SimpleValueType.NUMBER;
 import static org.mule.runtime.app.declaration.api.fluent.SimpleValueType.STRING;
 import static org.mule.runtime.app.declaration.api.fluent.SimpleValueType.TIME;
-import static org.mule.runtime.dsl.api.xml.parser.XmlConfigurationDocumentLoader.noValidationDocumentLoader;
-import static org.mule.runtime.deployment.model.internal.application.MuleApplicationClassLoader.resolveContextArtifactPluginClassLoaders;
-import static org.mule.runtime.dsl.internal.xml.parser.XmlApplicationParser.IS_CDATA;
 import static org.mule.runtime.config.internal.dsl.xml.XmlNamespaceInfoProviderSupplier.createFromPluginClassloaders;
+import static org.mule.runtime.deployment.model.internal.application.MuleApplicationClassLoader.resolveContextArtifactPluginClassLoaders;
+import static org.mule.runtime.dsl.api.xml.parser.XmlConfigurationDocumentLoader.noValidationDocumentLoader;
+import static org.mule.runtime.dsl.internal.xml.parser.XmlApplicationParser.IS_CDATA;
 import static org.mule.runtime.extension.api.ExtensionConstants.EXPIRATION_POLICY_PARAMETER_NAME;
 import static org.mule.runtime.extension.api.ExtensionConstants.POOLING_PROFILE_PARAMETER_NAME;
 import static org.mule.runtime.extension.api.ExtensionConstants.RECONNECTION_CONFIG_PARAMETER_NAME;
 import static org.mule.runtime.extension.api.ExtensionConstants.RECONNECTION_STRATEGY_PARAMETER_NAME;
 import static org.mule.runtime.extension.api.ExtensionConstants.REDELIVERY_POLICY_PARAMETER_NAME;
+import static org.mule.runtime.extension.api.ExtensionConstants.SCHEDULING_STRATEGY_PARAMETER_NAME;
 import static org.mule.runtime.extension.api.ExtensionConstants.STREAMING_STRATEGY_PARAMETER_NAME;
 import static org.mule.runtime.extension.api.ExtensionConstants.TLS_PARAMETER_NAME;
 import static org.mule.runtime.extension.api.declaration.type.StreamingStrategyTypeBuilder.NON_REPEATABLE_BYTE_STREAM_ALIAS;
@@ -40,17 +43,22 @@ import static org.mule.runtime.extension.api.util.ExtensionMetadataTypeUtils.get
 import static org.mule.runtime.extension.api.util.ExtensionMetadataTypeUtils.isMap;
 import static org.mule.runtime.extension.api.util.ExtensionModelUtils.isInfrastructure;
 import static org.mule.runtime.internal.dsl.DslConstants.CONFIG_ATTRIBUTE_NAME;
-import static org.mule.runtime.internal.dsl.DslConstants.CORE_PREFIX;
+import static org.mule.runtime.internal.dsl.DslConstants.CORE_NAMESPACE;
+import static org.mule.runtime.internal.dsl.DslConstants.CRON_STRATEGY_ELEMENT_IDENTIFIER;
 import static org.mule.runtime.internal.dsl.DslConstants.EXPIRATION_POLICY_ELEMENT_IDENTIFIER;
+import static org.mule.runtime.internal.dsl.DslConstants.FIXED_FREQUENCY_STRATEGY_ELEMENT_IDENTIFIER;
 import static org.mule.runtime.internal.dsl.DslConstants.KEY_ATTRIBUTE_NAME;
 import static org.mule.runtime.internal.dsl.DslConstants.NAME_ATTRIBUTE_NAME;
 import static org.mule.runtime.internal.dsl.DslConstants.POOLING_PROFILE_ELEMENT_IDENTIFIER;
 import static org.mule.runtime.internal.dsl.DslConstants.RECONNECT_ELEMENT_IDENTIFIER;
 import static org.mule.runtime.internal.dsl.DslConstants.RECONNECT_FOREVER_ELEMENT_IDENTIFIER;
 import static org.mule.runtime.internal.dsl.DslConstants.REDELIVERY_POLICY_ELEMENT_IDENTIFIER;
+import static org.mule.runtime.internal.dsl.DslConstants.SCHEDULING_STRATEGY_ELEMENT_IDENTIFIER;
 import static org.mule.runtime.internal.dsl.DslConstants.TLS_CONTEXT_ELEMENT_IDENTIFIER;
 import static org.mule.runtime.internal.dsl.DslConstants.TLS_REVOCATION_CHECK_ELEMENT_IDENTIFIER;
 import static org.mule.runtime.internal.dsl.DslConstants.VALUE_ATTRIBUTE_NAME;
+
+import org.mule.metadata.api.ClassTypeLoader;
 import org.mule.metadata.api.annotation.TypeIdAnnotation;
 import org.mule.metadata.api.model.ArrayType;
 import org.mule.metadata.api.model.BooleanType;
@@ -78,6 +86,7 @@ import org.mule.runtime.api.meta.model.parameter.ParameterGroupModel;
 import org.mule.runtime.api.meta.model.parameter.ParameterModel;
 import org.mule.runtime.api.meta.model.parameter.ParameterizedModel;
 import org.mule.runtime.api.meta.model.source.HasSourceModels;
+import org.mule.runtime.api.meta.model.source.SourceCallbackModel;
 import org.mule.runtime.api.meta.model.source.SourceModel;
 import org.mule.runtime.api.meta.model.util.ExtensionWalker;
 import org.mule.runtime.api.util.Reference;
@@ -106,11 +115,14 @@ import org.mule.runtime.config.api.dsl.processor.xml.XmlApplicationServiceRegist
 import org.mule.runtime.config.internal.ModuleDelegatingEntityResolver;
 import org.mule.runtime.config.internal.dsl.model.XmlArtifactDeclarationLoader;
 import org.mule.runtime.core.api.registry.SpiServiceRegistry;
+import org.mule.runtime.core.api.source.scheduler.CronScheduler;
+import org.mule.runtime.core.api.source.scheduler.FixedFrequencyScheduler;
 import org.mule.runtime.core.api.util.xmlsecurity.XMLSecureFactories;
 import org.mule.runtime.dsl.api.xml.XmlNamespaceInfoProvider;
 import org.mule.runtime.dsl.api.xml.parser.ConfigLine;
 import org.mule.runtime.dsl.api.xml.parser.SimpleConfigAttribute;
 import org.mule.runtime.dsl.internal.xml.parser.XmlApplicationParser;
+import org.mule.runtime.extension.api.declaration.type.ExtensionsTypeLoaderFactory;
 import org.mule.runtime.extension.api.declaration.type.annotation.ExtensibleTypeAnnotation;
 import org.mule.runtime.extension.api.declaration.type.annotation.FlattenedTypeAnnotation;
 import org.mule.runtime.extension.api.dsl.syntax.DslElementSyntax;
@@ -125,6 +137,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.function.Consumer;
 import java.util.function.Function;
+import java.util.function.Predicate;
 import java.util.stream.Collectors;
 
 import org.w3c.dom.Document;
@@ -143,7 +156,7 @@ public class DefaultXmlArtifactDeclarationLoader implements XmlArtifactDeclarati
   private static final String MESSAGE_GROUP_NAME = "Message";
   private static final String SET_PAYLOAD_PARAM_NAME = "setPayload";
   private static final String SET_ATTRIBUTES_PARAM_NAME = "setAttributes";
-  private static final String SET_VARIABLES_PARAM_NAME = "setVariables";
+  private static final String SET_VARIABLES_PARAM_NAME = "variables";
   private static final String SET_VARIABLES_GROUP_NAME = "Set Variables";
 
   private final DslResolvingContext context;
@@ -153,8 +166,8 @@ public class DefaultXmlArtifactDeclarationLoader implements XmlArtifactDeclarati
   public DefaultXmlArtifactDeclarationLoader(DslResolvingContext context) {
     this.context = context;
     this.resolvers = context.getExtensions().stream()
-        .collect(toMap(e -> e.getXmlDslModel().getPrefix(), e -> DslSyntaxResolver.getDefault(e, context)));
-    this.context.getExtensions().forEach(e -> extensionsByNamespace.put(e.getXmlDslModel().getPrefix(), e));
+        .collect(toMap(e -> e.getXmlDslModel().getNamespace(), e -> DslSyntaxResolver.getDefault(e, context)));
+    this.context.getExtensions().forEach(e -> extensionsByNamespace.put(e.getXmlDslModel().getNamespace(), e));
   }
 
   /**
@@ -303,19 +316,53 @@ public class DefaultXmlArtifactDeclarationLoader implements XmlArtifactDeclarati
 
       @Override
       protected void onSource(HasSourceModels owner, SourceModel model) {
-        declareComponentModel(line, model, extensionElementsDeclarer::newSource).ifPresent(declarer -> {
-          final DslElementSyntax elementDsl = dsl.resolve(model);
-          model.getSuccessCallback()
-              .ifPresent(cb -> declareParameterizedComponent(cb, elementDsl, declarer,
-                                                             line.getConfigAttributes(), line.getChildren()));
 
-          model.getErrorCallback()
-              .ifPresent(cb -> declareParameterizedComponent(cb, elementDsl, declarer,
-                                                             line.getConfigAttributes(), line.getChildren()));
+        Map<String, SimpleConfigAttribute> successCallbackAttributes =
+            filterSourceCallbackAttributes(line.getConfigAttributes(), model.getSuccessCallback(), entry -> true);
+        Map<String, SimpleConfigAttribute> errorCallbackAttributes =
+            filterSourceCallbackAttributes(line.getConfigAttributes(), model.getErrorCallback(),
+                                           entry -> !successCallbackAttributes.containsKey(entry.getKey()));
+        Map<String, SimpleConfigAttribute> sourceAttributes =
+            filterAttributes(line.getConfigAttributes(), entry -> !successCallbackAttributes.containsKey(entry.getKey())
+                && !errorCallbackAttributes.containsKey(entry.getKey()));
 
-          declarationConsumer.accept((ComponentElementDeclaration) declarer.getDeclaration());
-          stop();
-        });
+        declareComponentModel(line.getNamespaceUri(), line.getIdentifier(), sourceAttributes, line.getChildren(), model,
+                              extensionElementsDeclarer::newSource).ifPresent(declarer -> {
+                                final DslElementSyntax elementDsl = dsl.resolve(model);
+                                model.getSuccessCallback()
+                                    .ifPresent(cb -> declareParameterizedComponent(cb, elementDsl, declarer,
+                                                                                   successCallbackAttributes,
+                                                                                   line.getChildren()));
+
+                                model.getErrorCallback()
+                                    .ifPresent(cb -> declareParameterizedComponent(cb, elementDsl, declarer,
+                                                                                   errorCallbackAttributes,
+                                                                                   line.getChildren()));
+                                declarationConsumer.accept((ComponentElementDeclaration) declarer.getDeclaration());
+                                stop();
+                              });
+      }
+
+      private Map<String, SimpleConfigAttribute> filterSourceCallbackAttributes(Map<String, SimpleConfigAttribute> configAttributes,
+                                                                                Optional<SourceCallbackModel> sourceCallbackModel,
+                                                                                Predicate<Map.Entry<String, SimpleConfigAttribute>> filterCondition) {
+        if (sourceCallbackModel.isPresent()) {
+          final Set<String> parameterNames = sourceCallbackModel.map(callbackModel -> callbackModel.getAllParameterModels()
+              .stream().map(parameterModel -> parameterModel.getName()).collect(toSet())).orElse(null);
+          return sourceCallbackModel
+              .map(callbackModel -> filterAttributes(configAttributes,
+                                                     entry -> parameterNames.contains(entry.getKey())
+                                                         && filterCondition.test(entry)))
+              .orElse(emptyMap());
+        } else {
+          return emptyMap();
+        }
+      }
+
+      private Map<String, SimpleConfigAttribute> filterAttributes(Map<String, SimpleConfigAttribute> configAttributes,
+                                                                  Predicate<Map.Entry<String, SimpleConfigAttribute>> filterCondition) {
+        return configAttributes.entrySet().stream().filter(filterCondition)
+            .collect(toMap(entry -> entry.getKey(), entry -> entry.getValue()));
       }
 
       @Override
@@ -457,16 +504,24 @@ public class DefaultXmlArtifactDeclarationLoader implements XmlArtifactDeclarati
   private Optional<ComponentElementDeclarer> declareComponentModel(final ConfigLine line,
                                                                    ComponentModel model,
                                                                    Function<String, ComponentElementDeclarer> declarerBuilder) {
-    final DslElementSyntax elementDsl = resolvers.get(getNamespace(line)).resolve(model);
-    if (elementDsl.getElementName().equals(line.getIdentifier())) {
+    return declareComponentModel(line.getNamespaceUri(), line.getIdentifier(), line.getConfigAttributes(), line.getChildren(),
+                                 model, declarerBuilder);
+  }
+
+  private Optional<ComponentElementDeclarer> declareComponentModel(String namespace, String identifier,
+                                                                   Map<String, SimpleConfigAttribute> configAttributes,
+                                                                   List<ConfigLine> children, ComponentModel model,
+                                                                   Function<String, ComponentElementDeclarer> declarerBuilder) {
+    final DslElementSyntax elementDsl = resolvers.get(getNamespace(namespace)).resolve(model);
+    if (elementDsl.getElementName().equals(identifier)) {
       ComponentElementDeclarer declarer = declarerBuilder.apply(model.getName());
 
-      if (line.getConfigAttributes().get(CONFIG_ATTRIBUTE_NAME) != null) {
-        declarer.withConfig(line.getConfigAttributes().get(CONFIG_ATTRIBUTE_NAME).getValue());
+      if (configAttributes.get(CONFIG_ATTRIBUTE_NAME) != null) {
+        declarer.withConfig(configAttributes.get(CONFIG_ATTRIBUTE_NAME).getValue());
       }
 
-      declareParameterizedComponent(model, elementDsl, declarer, line.getConfigAttributes(), line.getChildren());
-      declareComposableModel(model, elementDsl, line, declarer);
+      declareParameterizedComponent(model, elementDsl, declarer, configAttributes, children);
+      declareComposableModel(model, elementDsl, children, declarer);
       return Optional.of(declarer);
     }
     return Optional.empty();
@@ -500,22 +555,26 @@ public class DefaultXmlArtifactDeclarationLoader implements XmlArtifactDeclarati
   private void declareComposableModel(ComposableModel model,
                                       DslElementSyntax elementDsl,
                                       ConfigLine containerConfig, HasNestedComponentDeclarer declarer) {
-    containerConfig.getChildren()
-        .forEach((ConfigLine child) -> {
-          ExtensionModel extensionModel = getExtensionModel(child);
-          ElementDeclarer extensionElementsDeclarer = forExtension(extensionModel.getName());
-          Reference<Boolean> componentFound = new Reference<>(false);
-          getComponentDeclaringWalker(declaration -> {
-            declarer.withComponent(declaration);
-            componentFound.set(true);
-          }, child, extensionElementsDeclarer)
-              .walk(extensionModel);
+    declareComposableModel(model, elementDsl, containerConfig.getChildren(), declarer);
+  }
 
-          if (!componentFound.get()) {
-            declareRoute(model, elementDsl, child, extensionElementsDeclarer)
-                .ifPresent(declarer::withComponent);
-          }
-        });
+  private void declareComposableModel(ComposableModel model, DslElementSyntax elementDsl,
+                                      List<ConfigLine> children, HasNestedComponentDeclarer declarer) {
+    children.forEach((ConfigLine child) -> {
+      ExtensionModel extensionModel = getExtensionModel(child);
+      ElementDeclarer extensionElementsDeclarer = forExtension(extensionModel.getName());
+      Reference<Boolean> componentFound = new Reference<>(false);
+      getComponentDeclaringWalker(declaration -> {
+        declarer.withComponent(declaration);
+        componentFound.set(true);
+      }, child, extensionElementsDeclarer)
+          .walk(extensionModel);
+
+      if (!componentFound.get()) {
+        declareRoute(model, elementDsl, child, extensionElementsDeclarer)
+            .ifPresent(declarer::withComponent);
+      }
+    });
   }
 
   private Optional<RouteElementDeclaration> declareRoute(ComposableModel model, DslElementSyntax elementDsl,
@@ -619,15 +678,19 @@ public class DefaultXmlArtifactDeclarationLoader implements XmlArtifactDeclarati
 
       @Override
       public void visitArrayType(ArrayType arrayType) {
-        ParameterListValue.Builder listBuilder = ElementDeclarer.newListValue();
-        config.getChildren()
-            .forEach(item -> arrayType.getType().accept(
-                                                        getParameterDeclarerVisitor(item,
-                                                                                    paramDsl.getGeneric(arrayType.getType())
-                                                                                        .get(),
-                                                                                    listBuilder::withValue)));
-
-        valueConsumer.accept(listBuilder.build());
+        if (config.getChildren().isEmpty() && config.getTextContent() != null) {
+          valueConsumer.accept(isCData(config) ? createParameterSimpleCdataValue(config.getTextContent(), arrayType)
+              : createParameterSimpleValue(config.getTextContent(), arrayType));
+        } else {
+          ParameterListValue.Builder listBuilder = ElementDeclarer.newListValue();
+          config.getChildren()
+              .forEach(item -> arrayType.getType().accept(
+                                                          getParameterDeclarerVisitor(item,
+                                                                                      paramDsl.getGeneric(arrayType.getType())
+                                                                                          .get(),
+                                                                                      listBuilder::withValue)));
+          valueConsumer.accept(listBuilder.build());
+        }
       }
 
       @Override
@@ -836,6 +899,42 @@ public class DefaultXmlArtifactDeclarationLoader implements XmlArtifactDeclarati
                   .getDeclaration());
             });
         return;
+
+      case SCHEDULING_STRATEGY_PARAMETER_NAME:
+        findAnyMatchingChildById(declaredConfigs, SCHEDULING_STRATEGY_ELEMENT_IDENTIFIER)
+            .ifPresent(config -> {
+              ParameterObjectValue.Builder schedulingStrategy = newObjectValue().ofType(config.getIdentifier());
+              copyExplicitAttributes(config.getConfigAttributes(), schedulingStrategy, paramModel.getType());
+              config.getChildren().stream()
+                  .filter(child -> child.getIdentifier().equals(FIXED_FREQUENCY_STRATEGY_ELEMENT_IDENTIFIER)
+                      || child.getIdentifier().equals(CRON_STRATEGY_ELEMENT_IDENTIFIER))
+                  .findFirst()
+                  .ifPresent(strategy -> {
+                    ParameterObjectValue.Builder strategyObject = newObjectValue();
+
+                    ClassTypeLoader typeLoader = ExtensionsTypeLoaderFactory.getDefault().createTypeLoader();
+                    MetadataType strategyType;
+                    if (strategy.getIdentifier().equals(FIXED_FREQUENCY_STRATEGY_ELEMENT_IDENTIFIER)) {
+                      strategyType = typeLoader.load(FixedFrequencyScheduler.class);
+                    } else if (strategy.getIdentifier().equals(CRON_STRATEGY_ELEMENT_IDENTIFIER)) {
+                      strategyType = typeLoader.load(CronScheduler.class);
+                    } else {
+                      throw new IllegalArgumentException("Unknown type found for scheduling-strategy parameter: "
+                          + strategy.getIdentifier());
+                    }
+
+                    cloneAsDeclaration(strategy, strategyObject, strategyType);
+                    String typeId = getId(strategyType)
+                        .orElseThrow(() -> new IllegalArgumentException("Missing TypeId for scheduling strategy implementation: "
+                            + strategy.getIdentifier()));
+                    strategyObject.ofType(typeId);
+
+                    declarer.withParameterGroup(newParameterGroup()
+                        .withParameter(SCHEDULING_STRATEGY_PARAMETER_NAME, strategyObject.build())
+                        .getDeclaration());
+                  });
+            });
+        return;
     }
   }
 
@@ -927,7 +1026,11 @@ public class DefaultXmlArtifactDeclarationLoader implements XmlArtifactDeclarati
   }
 
   private String getNamespace(ConfigLine configLine) {
-    return configLine.getNamespace() == null ? CORE_PREFIX : configLine.getNamespace();
+    return getNamespace(configLine.getNamespaceUri());
+  }
+
+  private String getNamespace(String namespace) {
+    return namespace == null ? CORE_NAMESPACE : namespace;
   }
 
   private void copyExplicitAttributes(Map<String, SimpleConfigAttribute> attributes,
@@ -955,7 +1058,7 @@ public class DefaultXmlArtifactDeclarationLoader implements XmlArtifactDeclarati
                                       Map<String, SimpleConfigAttribute> attributes,
                                       ParameterizedElementDeclarer builder) {
     attributes.values().stream()
-        .filter(a -> !a.getName().equals(NAME_ATTRIBUTE_NAME) && !a.getName().equals(CONFIG_ATTRIBUTE_NAME))
+        .filter(a -> !a.getName().equals(CONFIG_ATTRIBUTE_NAME))
         .filter(a -> !a.isValueFromSchema())
         .forEach(a -> {
           Optional<ParameterGroupModel> ownerGroup = model.getParameterGroupModels().stream()
@@ -968,7 +1071,9 @@ public class DefaultXmlArtifactDeclarationLoader implements XmlArtifactDeclarati
                                                                            getGroupParameterType(ownerGroup, a.getName())))
                     .getDeclaration());
           } else {
-            builder.withCustomParameter(a.getName(), a.getValue());
+            if (!a.getName().equals(NAME_ATTRIBUTE_NAME)) {
+              builder.withCustomParameter(a.getName(), a.getValue());
+            }
           }
         });
   }

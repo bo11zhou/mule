@@ -7,9 +7,11 @@
 package org.mule.runtime.config.internal;
 
 import static java.lang.String.format;
+import static java.util.Collections.emptyMap;
 import static org.apache.commons.lang3.StringUtils.EMPTY;
 import static org.mule.runtime.api.i18n.I18nMessageFactory.createStaticMessage;
 import static org.springframework.beans.factory.support.BeanDefinitionBuilder.genericBeanDefinition;
+
 import org.mule.runtime.api.exception.MuleException;
 import org.mule.runtime.api.exception.MuleRuntimeException;
 import org.mule.runtime.api.lifecycle.InitialisationException;
@@ -27,7 +29,6 @@ import org.mule.runtime.core.internal.registry.AbstractRegistry;
 import org.mule.runtime.core.privileged.registry.RegistrationException;
 
 import java.util.Collection;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -53,7 +54,7 @@ public class SpringRegistry extends AbstractRegistry implements Injector {
    * Key used to lookup Spring Application Context from SpringRegistry via Mule's Registry interface.
    */
   public static final String SPRING_APPLICATION_CONTEXT = "springApplicationContext";
-  private BeanDependencyResolver beanDependencyResolver;
+  private final BeanDependencyResolver beanDependencyResolver;
 
   protected ApplicationContext applicationContext;
 
@@ -180,14 +181,25 @@ public class SpringRegistry extends AbstractRegistry implements Injector {
       try {
         object = applicationContext.getBean(key);
       } catch (NoSuchBeanDefinitionException e) {
-        if (logger.isDebugEnabled()) {
-          logger.debug(e.getMessage(), e);
+        if (logger.isTraceEnabled()) {
+          logger.trace(e.getMessage(), e);
+        } else {
+          logger.debug(e.getMessage());
         }
         return null;
       }
+
+      if (isNullBean(object)) {
+        return null;
+      }
+
       applyLifecycleIfPrototype(object, key, applyLifecycle);
       return object;
     }
+  }
+
+  private boolean isNullBean(Object bean) {
+    return bean != null && "org.springframework.beans.factory.support.NullBean".equals(bean.getClass().getName());
   }
 
   private void applyLifecycleIfPrototype(Object object, String key, boolean applyLifecycle) {
@@ -321,8 +333,12 @@ public class SpringRegistry extends AbstractRegistry implements Injector {
       String message = format("Failed to lookup beans of type %s from the Spring registry", type);
       throw new MuleRuntimeException(createStaticMessage(message), fbex);
     } catch (Exception e) {
-      logger.debug(e.getMessage(), e);
-      return Collections.emptyMap();
+      if (logger.isTraceEnabled()) {
+        logger.trace(e.getMessage(), e);
+      } else {
+        logger.debug(e.getMessage());
+      }
+      return emptyMap();
     }
   }
 
@@ -340,10 +356,12 @@ public class SpringRegistry extends AbstractRegistry implements Injector {
       String message = format("Failed to lookup beans of type %s from the Spring registry", type);
       throw new MuleRuntimeException(createStaticMessage(message), fbex);
     } catch (Exception e) {
-      if (logger.isDebugEnabled()) {
-        logger.debug(e.getMessage(), e);
+      if (logger.isTraceEnabled()) {
+        logger.trace(e.getMessage(), e);
+      } else {
+        logger.debug(e.getMessage());
       }
-      return Collections.emptyMap();
+      return emptyMap();
     }
   }
 

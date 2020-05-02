@@ -8,7 +8,7 @@ package org.mule.runtime.module.extension.internal.runtime.connectivity;
 
 import static java.util.Optional.empty;
 import static org.mockito.Answers.RETURNS_DEEP_STUBS;
-import static org.mockito.Matchers.any;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -16,42 +16,41 @@ import static org.mockito.Mockito.when;
 import org.mule.runtime.api.connection.ConnectionException;
 import org.mule.runtime.api.connection.ConnectionHandler;
 import org.mule.runtime.api.meta.model.operation.OperationModel;
-import org.mule.runtime.core.internal.context.MuleContextWithRegistry;
 import org.mule.runtime.extension.api.runtime.config.ConfigurationInstance;
 import org.mule.runtime.extension.internal.property.PagedOperationModelProperty;
 import org.mule.runtime.module.extension.api.runtime.privileged.ExecutionContextAdapter;
 import org.mule.tck.junit4.AbstractMuleContextTestCase;
 import org.mule.test.petstore.extension.PetStoreConnector;
 
-import org.junit.Before;
-import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.mockito.Mock;
-import org.mockito.runners.MockitoJUnitRunner;
-
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
 
+import org.junit.Before;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.mockito.Mock;
+import org.mockito.junit.MockitoJUnitRunner;
+
 @RunWith(MockitoJUnitRunner.class)
 public class ConnectionInterceptorTestCase extends AbstractMuleContextTestCase {
 
-  @Mock(answer = RETURNS_DEEP_STUBS)
+  @Mock(answer = RETURNS_DEEP_STUBS, lenient = true)
   private ExecutionContextAdapter operationContext;
 
-  @Mock
+  @Mock(lenient = true)
   private ConfigurationInstance configurationInstance;
 
-  @Mock
+  @Mock(lenient = true)
   private PetStoreConnector config;
 
-  @Mock
+  @Mock(lenient = true)
   private ExtensionConnectionSupplier connectionSupplier;
 
-  @Mock
+  @Mock(lenient = true)
   private OperationModel operationModel;
 
-  @Mock
+  @Mock(lenient = true)
   private ConnectionHandler connectionHandler;
 
   private ConnectionInterceptor interceptor;
@@ -79,17 +78,7 @@ public class ConnectionInterceptorTestCase extends AbstractMuleContextTestCase {
 
     when(operationContext.getTransactionConfig()).thenReturn(empty());
 
-    interceptor = new ConnectionInterceptor();
-    setupConnectionSupplier();
-  }
-
-  private void setupConnectionSupplier() throws Exception {
-    String connectionSupplierKey = "extensions.connection.supplier";
-
-    ((MuleContextWithRegistry) muleContext).getRegistry().unregisterObject(connectionSupplierKey);
-    ((MuleContextWithRegistry) muleContext).getRegistry().registerObject(connectionSupplierKey, connectionSupplier);
-    muleContext.getInjector().inject(interceptor);
-
+    interceptor = new ConnectionInterceptor(connectionSupplier);
     when(connectionSupplier.getConnection(operationContext)).thenReturn(connectionHandler);
   }
 
@@ -121,6 +110,15 @@ public class ConnectionInterceptorTestCase extends AbstractMuleContextTestCase {
 
   @Test
   public void onNonConnectionException() throws Exception {
+    interceptor.before(operationContext);
+    interceptor.onError(operationContext, new Exception());
+    interceptor.after(operationContext, null);
+    verify(connectionHandler).release();
+  }
+
+  @Test
+  public void onNonConnectionExceptionWithSupport() throws Exception {
+    when(operationModel.supportsStreaming()).thenReturn(true);
     interceptor.before(operationContext);
     interceptor.onError(operationContext, new Exception());
     interceptor.after(operationContext, null);

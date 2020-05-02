@@ -6,9 +6,11 @@
  */
 package org.mule.runtime.core.internal.lifecycle.phases;
 
+import org.mule.runtime.api.el.ExpressionLanguage;
 import org.mule.runtime.api.ioc.ObjectProvider;
 import org.mule.runtime.api.lifecycle.Initialisable;
 import org.mule.runtime.api.lifecycle.LifecycleException;
+import org.mule.runtime.api.store.ObjectStore;
 import org.mule.runtime.core.api.MuleContext;
 import org.mule.runtime.core.api.component.Component;
 import org.mule.runtime.core.api.config.Config;
@@ -17,10 +19,8 @@ import org.mule.runtime.core.api.construct.FlowConstruct;
 import org.mule.runtime.core.api.lifecycle.LifecycleUtils;
 import org.mule.runtime.core.api.processor.InterceptingMessageProcessor;
 import org.mule.runtime.core.api.security.SecurityManager;
-import org.mule.runtime.core.api.source.MessageSource;
 import org.mule.runtime.core.api.streaming.StreamingManager;
 import org.mule.runtime.core.privileged.routing.OutboundRouter;
-import org.mule.runtime.core.privileged.transport.LegacyConnector;
 import org.mule.runtime.core.privileged.util.annotation.AnnotationMetaData;
 import org.mule.runtime.core.privileged.util.annotation.AnnotationUtils;
 import org.mule.runtime.extension.api.runtime.config.ConfigurationProvider;
@@ -50,15 +50,21 @@ public class MuleContextInitialisePhase extends DefaultLifecyclePhase {
     registerSupportedPhase(NotInLifecyclePhase.PHASE_NAME);
     setOrderedLifecycleTypes(new Class<?>[] {
         StreamingManager.class,
+        ObjectStore.class,
+        ExpressionLanguage.class,
         ConfigurationProvider.class,
         Config.class,
-        LegacyConnector.class,
         SecurityManager.class,
         FlowConstruct.class,
         Initialisable.class
     });
-    setIgnoredObjectTypes(new Class[] {Component.class, MessageSource.class, InterceptingMessageProcessor.class,
-        OutboundRouter.class, MuleContext.class, ObjectProvider.class});
+    setIgnoredObjectTypes(new Class[] {
+        Component.class,
+        InterceptingMessageProcessor.class,
+        OutboundRouter.class,
+        MuleContext.class,
+        ObjectProvider.class
+    });
   }
 
   @Override

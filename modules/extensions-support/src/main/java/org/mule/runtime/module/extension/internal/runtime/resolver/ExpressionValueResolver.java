@@ -8,13 +8,15 @@ package org.mule.runtime.module.extension.internal.runtime.resolver;
 
 import static java.lang.Boolean.valueOf;
 import static java.lang.System.getProperty;
+import static org.apache.commons.lang3.StringUtils.isBlank;
+import static org.mule.runtime.api.util.MuleSystemProperties.MULE_MEL_AS_DEFAULT;
 import static org.mule.runtime.api.util.Preconditions.checkArgument;
 import static org.mule.runtime.core.api.config.MuleProperties.COMPATIBILITY_PLUGIN_INSTALLED;
-import static org.mule.runtime.core.api.config.MuleProperties.MULE_MEL_AS_DEFAULT;
 import static org.mule.runtime.core.api.lifecycle.LifecycleUtils.initialiseIfNeeded;
 import static org.mule.runtime.core.api.util.ClassUtils.isInstance;
 import static org.mule.runtime.core.internal.el.DefaultExpressionManager.hasDwExpression;
 import static org.mule.runtime.core.internal.el.DefaultExpressionManager.hasMelExpression;
+
 import org.mule.runtime.api.artifact.Registry;
 import org.mule.runtime.api.exception.MuleException;
 import org.mule.runtime.api.lifecycle.Initialisable;
@@ -22,13 +24,9 @@ import org.mule.runtime.api.lifecycle.InitialisationException;
 import org.mule.runtime.api.metadata.DataType;
 import org.mule.runtime.api.metadata.TypedValue;
 import org.mule.runtime.core.api.el.ExtendedExpressionManager;
-import org.mule.runtime.core.api.util.func.Once;
-import org.mule.runtime.core.api.util.func.Once.RunOnce;
 import org.mule.runtime.core.privileged.util.AttributeEvaluator;
 
 import javax.inject.Inject;
-
-import org.apache.commons.lang3.StringUtils;
 
 /**
  * A {@link ValueResolver} which evaluates a MEL expressions
@@ -50,16 +48,12 @@ public class ExpressionValueResolver<T> implements ExpressionBasedValueResolver<
   final AttributeEvaluator evaluator;
   private final String expression;
 
-  private final RunOnce evaluatorInitialiser = Once.of(() -> {
-    initialiseIfNeeded(extendedExpressionManager);
-    getEvaluator().initialize(extendedExpressionManager);
-  });
-
   private Boolean melDefault;
   private Boolean melAvailable;
+  private boolean isMelExpression;
 
   ExpressionValueResolver(String expression, DataType expectedDataType) {
-    checkArgument(!StringUtils.isBlank(expression), "Expression cannot be blank or null");
+    checkArgument(!isBlank(expression), "Expression cannot be blank or null");
     this.expression = expression;
     this.evaluator = new AttributeEvaluator(expression, expectedDataType);
   }
@@ -71,9 +65,10 @@ public class ExpressionValueResolver<T> implements ExpressionBasedValueResolver<
   }
 
   public ExpressionValueResolver(String expression) {
-    checkArgument(!StringUtils.isBlank(expression), "Expression cannot be blank or null");
+    checkArgument(!isBlank(expression), "Expression cannot be blank or null");
     this.expression = expression;
     this.evaluator = new AttributeEvaluator(expression);
+
   }
 
   void setExtendedExpressionManager(ExtendedExpressionManager extendedExpressionManager) {
@@ -82,13 +77,20 @@ public class ExpressionValueResolver<T> implements ExpressionBasedValueResolver<
 
   @Override
   public void initialise() throws InitialisationException {
-    initEvaluator();
+    initialiseIfNeeded(extendedExpressionManager);
+    getEvaluator().initialize(extendedExpressionManager);
     if (melDefault == null) {
       melDefault = valueOf(getProperty(MULE_MEL_AS_DEFAULT, "false"));
     }
 
     if (melAvailable == null) {
       melAvailable = registry.lookupByName(COMPATIBILITY_PLUGIN_INSTALLED).isPresent();
+    }
+
+    if (isMelAvailable() &&
+        (!hasDwExpression(expression) && !hasMelExpression(expression) && melDefault)
+        || hasMelExpression(expression)) {
+      isMelExpression = true;
     }
   }
 
@@ -106,18 +108,15 @@ public class ExpressionValueResolver<T> implements ExpressionBasedValueResolver<
   }
 
   protected <V> TypedValue<V> resolveTypedValue(ValueResolvingContext context) {
-    if (isMelAvailable()
-        && (!hasDwExpression(expression) && !hasMelExpression(expression) && melDefault)
-        || hasMelExpression(expression)) {
-      // MEL requires an actual event, so in this case we may not optimize by using a precalculated binding context
+    if (isMelExpression) {
       return evaluator.resolveTypedValue(context.getEvent());
     } else {
-      return evaluator.resolveTypedValueFromContext(context.getEvent().asBindingContext());
+      if (context.getSession() != null) {
+        return evaluator.resolveTypedValue(context.getSession());
+      } else {
+        return evaluator.resolveTypedValue(context.getEvent());
+      }
     }
-  }
-
-  void initEvaluator() {
-    evaluatorInitialiser.runOnce();
   }
 
   /**

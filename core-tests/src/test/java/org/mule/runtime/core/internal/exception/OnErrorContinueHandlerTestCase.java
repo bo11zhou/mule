@@ -7,9 +7,12 @@
 package org.mule.runtime.core.internal.exception;
 
 import static java.util.Arrays.asList;
+import static java.util.Collections.singletonList;
 import static org.hamcrest.CoreMatchers.equalTo;
+import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.not;
+import static org.hamcrest.Matchers.nullValue;
 import static org.hamcrest.core.Is.is;
-import static org.junit.Assert.assertThat;
 import static org.junit.rules.ExpectedException.none;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.spy;
@@ -17,23 +20,32 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.mockito.internal.verification.VerificationModeFactory.times;
 import static org.mule.runtime.api.message.Message.of;
+import static org.mule.runtime.core.api.event.CoreEvent.builder;
 import static org.mule.runtime.core.api.lifecycle.LifecycleUtils.initialiseIfNeeded;
+import static org.mule.runtime.core.api.lifecycle.LifecycleUtils.startIfNeeded;
+import static org.mule.runtime.core.api.transaction.TransactionCoordination.getInstance;
+import static org.mule.tck.util.MuleContextUtils.getNotificationDispatcher;
 import static org.mule.tck.util.MuleContextUtils.mockContextWithServices;
 import static org.mule.test.allure.AllureConstants.ErrorHandlingFeature.ERROR_HANDLING;
 import static org.mule.test.allure.AllureConstants.ErrorHandlingFeature.ErrorHandlingStory.ON_ERROR_CONTINUE;
 
 import org.mule.runtime.api.exception.DefaultMuleException;
+import org.mule.runtime.api.exception.MuleException;
+import org.mule.runtime.api.exception.MuleRuntimeException;
 import org.mule.runtime.api.notification.NotificationDispatcher;
 import org.mule.runtime.api.tx.TransactionException;
 import org.mule.runtime.core.api.MuleContext;
 import org.mule.runtime.core.api.event.CoreEvent;
 import org.mule.runtime.core.api.processor.Processor;
 import org.mule.runtime.core.api.transaction.Transaction;
-import org.mule.runtime.core.api.transaction.TransactionCoordination;
 import org.mule.runtime.core.internal.message.InternalEvent;
 import org.mule.runtime.core.internal.message.InternalMessage;
 import org.mule.tck.junit4.rule.VerboseExceptions;
+import org.mule.tck.processor.ContextPropagationChecker;
 import org.mule.tck.testmodels.mule.TestTransaction;
+
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 
 import org.junit.Before;
 import org.junit.Rule;
@@ -42,6 +54,7 @@ import org.junit.rules.ExpectedException;
 
 import io.qameta.allure.Feature;
 import io.qameta.allure.Story;
+import reactor.core.publisher.Flux;
 
 @Feature(ERROR_HANDLING)
 @Story(ON_ERROR_CONTINUE)
@@ -53,9 +66,8 @@ public class OnErrorContinueHandlerTestCase extends AbstractErrorHandlerTestCase
   @Rule
   public ExpectedException expectedException = none();
 
-  private TestTransaction mockTransaction = spy(new TestTransaction(muleContext));
-  private TestTransaction mockXaTransaction = spy(new TestTransaction(muleContext, true));
-
+  private TestTransaction mockTransaction;
+  private TestTransaction mockXaTransaction;
 
   private OnErrorContinueHandler onErrorContinueHandler;
 
@@ -68,23 +80,31 @@ public class OnErrorContinueHandlerTestCase extends AbstractErrorHandlerTestCase
   public void before() throws Exception {
     super.before();
 
-    Transaction currentTransaction = TransactionCoordination.getInstance().getTransaction();
+    Transaction currentTransaction = getInstance().getTransaction();
     if (currentTransaction != null) {
-      TransactionCoordination.getInstance().unbindTransaction(currentTransaction);
+      getInstance().unbindTransaction(currentTransaction);
     }
 
     onErrorContinueHandler = new OnErrorContinueHandler();
     onErrorContinueHandler.setAnnotations(getFlowComponentLocationAnnotations(flow.getName()));
     onErrorContinueHandler.setMuleContext(muleContext);
     onErrorContinueHandler.setNotificationFirer(mock(NotificationDispatcher.class));
+
+    NotificationDispatcher notificationDispatcher = getNotificationDispatcher(muleContext);
+    mockTransaction =
+        spy(new TestTransaction("appName", notificationDispatcher));
+    mockXaTransaction =
+        spy(new TestTransaction("appName", notificationDispatcher, true));
   }
 
   @Test
-  public void testHandleExceptionWithNoConfig() throws Exception {
+  public void handleExceptionWithNoConfig() throws Exception {
     configureXaTransactionAndSingleResourceTransaction();
     when(mockException.handled()).thenReturn(true);
     when(mockException.getDetailedMessage()).thenReturn(DEFAULT_LOG_MESSAGE);
     when(mockException.getEvent()).thenReturn(muleEvent);
+    initialiseIfNeeded(onErrorContinueHandler, muleContext);
+    startIfNeeded(onErrorContinueHandler);
 
     CoreEvent resultEvent = onErrorContinueHandler.handleException(mockException, muleEvent);
     assertThat(resultEvent.getMessage().getPayload().getValue(), equalTo(muleEvent.getMessage().getPayload().getValue()));
@@ -96,10 +116,11 @@ public class OnErrorContinueHandlerTestCase extends AbstractErrorHandlerTestCase
   }
 
   @Test
-  public void testHandleExceptionWithConfiguredMessageProcessors() throws Exception {
+  public void handleExceptionWithConfiguredMessageProcessors() throws Exception {
     onErrorContinueHandler
         .setMessageProcessors(asList(createSetStringMessageProcessor("A"), createSetStringMessageProcessor("B")));
     initialiseIfNeeded(onErrorContinueHandler, muleContext);
+    startIfNeeded(onErrorContinueHandler);
     when(mockException.handled()).thenReturn(true);
     when(mockException.getDetailedMessage()).thenReturn(DEFAULT_LOG_MESSAGE);
     when(mockException.getEvent()).thenReturn(muleEvent);
@@ -111,7 +132,7 @@ public class OnErrorContinueHandlerTestCase extends AbstractErrorHandlerTestCase
   }
 
   @Test
-  public void testHandleExceptionWithMessageProcessorsChangingEvent() throws Exception {
+  public void handleExceptionWithMessageProcessorsChangingEvent() throws Exception {
     CoreEvent lastEventCreated = InternalEvent.builder(context).message(of("")).build();
     onErrorContinueHandler
         .setMessageProcessors(asList(createChagingEventMessageProcessor(InternalEvent.builder(context).message(of(""))
@@ -119,6 +140,7 @@ public class OnErrorContinueHandlerTestCase extends AbstractErrorHandlerTestCase
                                      createChagingEventMessageProcessor(lastEventCreated)));
     onErrorContinueHandler.setAnnotations(getAppleFlowComponentLocationAnnotations());
     initialiseIfNeeded(onErrorContinueHandler, muleContext);
+    startIfNeeded(onErrorContinueHandler);
     when(mockException.handled()).thenReturn(true);
     when(mockException.getDetailedMessage()).thenReturn(DEFAULT_LOG_MESSAGE);
     when(mockException.getEvent()).thenReturn(muleEvent);
@@ -133,17 +155,14 @@ public class OnErrorContinueHandlerTestCase extends AbstractErrorHandlerTestCase
    * data.
    */
   @Test
-  public void testMessageToStringNotCalledOnFailure() throws Exception {
-    muleEvent = CoreEvent.builder(muleEvent).message(spy(of(""))).build();
+  public void messageToStringNotCalledOnFailure() throws Exception {
+    muleEvent = builder(muleEvent).message(spy(of(""))).build();
     muleEvent = spy(muleEvent);
     when(mockException.getStackTrace()).thenReturn(new StackTraceElement[0]);
     when(mockException.getEvent()).thenReturn(muleEvent);
 
-    CoreEvent lastEventCreated = InternalEvent.builder(context).message(of("")).build();
-    onErrorContinueHandler
-        .setMessageProcessors(asList(createFailingEventMessageProcessor(InternalEvent.builder(context).message(of(""))
-            .build()),
-                                     createFailingEventMessageProcessor(lastEventCreated)));
+    onErrorContinueHandler.setMessageProcessors(asList(createFailingEventMessageProcessor(),
+                                                       createFailingEventMessageProcessor()));
     initialiseIfNeeded(onErrorContinueHandler, muleContext);
     when(muleEvent.getMessage().toString()).thenThrow(new RuntimeException("Message.toString() should not be called"));
 
@@ -151,25 +170,47 @@ public class OnErrorContinueHandlerTestCase extends AbstractErrorHandlerTestCase
     onErrorContinueHandler.handleException(mockException, muleEvent);
   }
 
-  private Processor createChagingEventMessageProcessor(final CoreEvent lastEventCreated) {
-    return event -> lastEventCreated;
+  @Test
+  public void subscriberContextPropagation() throws MuleException {
+    final ContextPropagationChecker contextPropagationChecker = new ContextPropagationChecker();
+
+    onErrorContinueHandler
+        .setMessageProcessors(singletonList(contextPropagationChecker));
+
+    initialiseIfNeeded(onErrorContinueHandler, muleContext);
+
+    AtomicReference<CoreEvent> resultRef = new AtomicReference<>();
+    final Consumer<Exception> router = onErrorContinueHandler
+        .router(pub -> Flux.from(pub).subscriberContext(contextPropagationChecker.contextPropagationFlag()),
+                e -> resultRef.set(e),
+                t -> {
+                  throw new MuleRuntimeException(t);
+                });
+
+    when(mockException.getEvent()).thenReturn(muleEvent);
+    when(mockException.handled()).thenReturn(true);
+    router.accept(mockException);
+
+    assertThat(resultRef.get(), not(nullValue()));
   }
 
-  private Processor createFailingEventMessageProcessor(final CoreEvent lastEventCreated) {
+  private Processor createChagingEventMessageProcessor(final CoreEvent lastEventCreated) {
+    return event -> builder(event).message(lastEventCreated.getMessage()).build();
+  }
+
+  private Processor createFailingEventMessageProcessor() {
     return event -> {
       throw new DefaultMuleException(mockException);
     };
   }
 
   private Processor createSetStringMessageProcessor(final String appendText) {
-    return event -> {
-      return CoreEvent.builder(event).message(InternalMessage.builder(event.getMessage()).value(appendText).build()).build();
-    };
+    return event -> builder(event).message(InternalMessage.builder(event.getMessage()).value(appendText).build()).build();
   }
 
   private void configureXaTransactionAndSingleResourceTransaction() throws TransactionException {
-    TransactionCoordination.getInstance().bindTransaction(mockXaTransaction);
-    TransactionCoordination.getInstance().suspendCurrentTransaction();
-    TransactionCoordination.getInstance().bindTransaction(mockTransaction);
+    getInstance().bindTransaction(mockXaTransaction);
+    getInstance().suspendCurrentTransaction();
+    getInstance().bindTransaction(mockTransaction);
   }
 }

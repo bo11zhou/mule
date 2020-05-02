@@ -7,7 +7,9 @@
 package org.mule.test.heisenberg.extension;
 
 import static java.lang.String.format;
+import static java.util.concurrent.Executors.newSingleThreadExecutor;
 import static java.util.stream.Collectors.toList;
+import static org.mule.runtime.api.meta.ExpressionSupport.NOT_SUPPORTED;
 import static org.mule.runtime.api.meta.model.operation.ExecutionType.CPU_INTENSIVE;
 import static org.mule.runtime.api.metadata.TypedValue.of;
 import static org.mule.runtime.extension.api.annotation.param.MediaType.ANY;
@@ -17,7 +19,6 @@ import static org.mule.runtime.extension.api.client.DefaultOperationParameters.b
 import static org.mule.test.heisenberg.extension.HeisenbergExtension.HEISENBERG;
 import static org.mule.test.heisenberg.extension.HeisenbergNotificationAction.KNOCKED_DOOR;
 import static org.mule.test.heisenberg.extension.HeisenbergNotificationAction.KNOCKING_DOOR;
-
 import org.mule.runtime.api.exception.MuleException;
 import org.mule.runtime.api.lifecycle.Disposable;
 import org.mule.runtime.api.metadata.DataType;
@@ -27,9 +28,11 @@ import org.mule.runtime.api.streaming.CursorProvider;
 import org.mule.runtime.core.api.extension.ExtensionManager;
 import org.mule.runtime.core.api.util.IOUtils;
 import org.mule.runtime.extension.api.annotation.Alias;
+import org.mule.runtime.extension.api.annotation.Expression;
 import org.mule.runtime.extension.api.annotation.Ignore;
 import org.mule.runtime.extension.api.annotation.OnException;
 import org.mule.runtime.extension.api.annotation.Streaming;
+import org.mule.runtime.extension.api.annotation.deprecated.Deprecated;
 import org.mule.runtime.extension.api.annotation.error.Throws;
 import org.mule.runtime.extension.api.annotation.execution.Execution;
 import org.mule.runtime.extension.api.annotation.metadata.OutputResolver;
@@ -44,6 +47,7 @@ import org.mule.runtime.extension.api.annotation.param.display.DisplayName;
 import org.mule.runtime.extension.api.annotation.param.display.Example;
 import org.mule.runtime.extension.api.annotation.param.display.Summary;
 import org.mule.runtime.extension.api.annotation.param.stereotype.Stereotype;
+import org.mule.runtime.extension.api.client.DefaultOperationParameters;
 import org.mule.runtime.extension.api.client.DefaultOperationParametersBuilder;
 import org.mule.runtime.extension.api.client.ExtensionsClient;
 import org.mule.runtime.extension.api.client.OperationParameters;
@@ -52,6 +56,7 @@ import org.mule.runtime.extension.api.runtime.operation.Result;
 import org.mule.runtime.extension.api.runtime.parameter.Literal;
 import org.mule.runtime.extension.api.runtime.parameter.ParameterResolver;
 import org.mule.runtime.extension.api.runtime.process.CompletionCallback;
+import org.mule.runtime.extension.api.runtime.route.Chain;
 import org.mule.runtime.extension.api.runtime.streaming.PagingProvider;
 import org.mule.runtime.extension.api.runtime.streaming.StreamingHelper;
 import org.mule.test.heisenberg.extension.exception.CureCancerExceptionEnricher;
@@ -70,12 +75,16 @@ import org.mule.test.heisenberg.extension.model.RecursivePojo;
 import org.mule.test.heisenberg.extension.model.SaleInfo;
 import org.mule.test.heisenberg.extension.model.SimpleKnockeableDoor;
 import org.mule.test.heisenberg.extension.model.Weapon;
+import org.mule.test.heisenberg.extension.model.drugs.DrugBatch;
 import org.mule.test.heisenberg.extension.model.types.IntegerAttributes;
 import org.mule.test.heisenberg.extension.stereotypes.EmpireStereotype;
 import org.mule.test.heisenberg.extension.stereotypes.KillingStereotype;
 
+import com.google.common.collect.ImmutableMap;
+
 import java.io.ByteArrayInputStream;
 import java.io.InputStream;
+import java.io.Serializable;
 import java.nio.charset.Charset;
 import java.util.ArrayList;
 import java.util.Iterator;
@@ -83,10 +92,9 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
+import java.util.concurrent.ExecutorService;
 
 import javax.inject.Inject;
-
-import com.google.common.collect.ImmutableMap;
 
 
 @Stereotype(EmpireStereotype.class)
@@ -272,9 +280,57 @@ public class HeisenbergOperations implements Disposable {
     return enemies;
   }
 
+  @MediaType(TEXT_PLAIN)
+  public String echoStaticMessage(@Expression(NOT_SUPPORTED) String message) {
+    return message;
+  }
+
+  @MediaType(TEXT_PLAIN)
+  public String echoWithSignature(@Optional String message) {
+    return (message == null ? "" : message) + " echoed by Heisenberg";
+  }
+
+  @MediaType(TEXT_PLAIN)
+  public String executeForeingOrders(String extensionName, String operationName, @Optional String configName,
+                                     ExtensionsClient extensionsClient, Map<String, Object> operationParameters)
+      throws MuleException {
+    Object output =
+        extensionsClient.execute(extensionName, operationName, createOperationParameters(configName, operationParameters))
+            .getOutput();
+    return output instanceof TypedValue ? (String) ((TypedValue) output).getValue() : (String) output;
+  }
+
+  private OperationParameters createOperationParameters(String configName, Map<String, Object> operationParameters) {
+    DefaultOperationParametersBuilder builder = DefaultOperationParameters.builder();
+    if (configName != null) {
+      builder.configName(configName);
+    }
+    operationParameters.forEach((key, value) -> builder.addParameter(key, value));
+    return builder.build();
+  }
+
+  @MediaType(ANY)
+  public void tapPhones(Chain operations, CompletionCallback<Object, Object> callback) {
+    System.out.println("Started tapping phone");
+
+    operations.process(result -> {
+      System.out.println("Finished tapping phone successfully");
+      callback.success(result);
+    }, (error, previous) -> {
+      System.out.println("Finished tapping phone with error with message: " + error.getMessage());
+      callback.error(error);
+    });
+  }
+
+  @Deprecated(message = "The usage of this operation must be replaced by the knock operation.", since = "1.5.0",
+      toRemoveIn = "2.0.0")
   @Stereotype(KillingStereotype.class)
   @MediaType(TEXT_PLAIN)
-  public String kill(@Optional(defaultValue = PAYLOAD) String victim, String goodbyeMessage) throws Exception {
+  public String kill(@Optional(defaultValue = PAYLOAD) String victim, @Deprecated(
+      message = "There is now a standarized way to say goodbye to your enemies before knocking them up, using a different message will only be supported until the next mayor release",
+      since = "1.4.0") @Optional(
+          defaultValue = "We are done") String goodbyeMessage)
+      throws Exception {
     KillParameters killParameters = new KillParameters(victim, goodbyeMessage);
     return format("%s, %s", killParameters.getGoodbyeMessage(), killParameters.getVictim());
   }
@@ -336,6 +392,15 @@ public class HeisenbergOperations implements Disposable {
   @MediaType(TEXT_PLAIN)
   public String callGusFring() throws HeisenbergException {
     throw new HeisenbergException(CALL_GUS_MESSAGE);
+  }
+
+  @MediaType(TEXT_PLAIN)
+  public void callGusFringNonBlocking(CompletionCallback<Void, Void> callback) {
+    final ExecutorService executor = newSingleThreadExecutor();
+
+    executor.execute(() -> {
+      callback.error(new HeisenbergException(CALL_GUS_MESSAGE));
+    });
   }
 
   @OnException(CureCancerExceptionEnricher.class)
@@ -490,4 +555,32 @@ public class HeisenbergOperations implements Disposable {
   }
 
   public void blockingNonBlocking(CompletionCallback<Void, Void> completionCallback) {}
+
+  @OutputResolver(output = HeisenbergOutputResolver.class)
+  public Map<String, Object> getInjectedObjects(@Optional Object object, @Optional Serializable serializable) {
+    return ImmutableMap.<String, Object>builder()
+        .put("object", object)
+        .put("serializable", serializable)
+        .build();
+  }
+
+  public PagingProvider<HeisenbergConnection, Result<DrugBatch, String>> getDrugs() {
+    return new PagingProvider<HeisenbergConnection, Result<DrugBatch, String>>() {
+
+      @Override
+      public List<Result<DrugBatch, String>> getPage(HeisenbergConnection connection) {
+        return new ArrayList<>();
+      }
+
+      @Override
+      public java.util.Optional<Integer> getTotalResults(HeisenbergConnection connection) {
+        return java.util.Optional.empty();
+      }
+
+      @Override
+      public void close(HeisenbergConnection connection) throws MuleException {
+
+      }
+    };
+  }
 }

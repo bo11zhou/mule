@@ -7,51 +7,61 @@
 package org.mule.runtime.core.privileged.transaction;
 
 import static java.lang.System.identityHashCode;
+import static java.text.MessageFormat.format;
+import static java.util.Optional.ofNullable;
 import static org.mule.runtime.api.notification.TransactionNotification.TRANSACTION_BEGAN;
 import static org.mule.runtime.api.notification.TransactionNotification.TRANSACTION_COMMITTED;
 import static org.mule.runtime.api.notification.TransactionNotification.TRANSACTION_ROLLEDBACK;
 import static org.mule.runtime.core.api.config.i18n.CoreMessages.notMuleXaTransaction;
 import static org.mule.runtime.core.api.config.i18n.CoreMessages.transactionMarkedForRollback;
-
+import static org.slf4j.LoggerFactory.getLogger;
+import org.mule.runtime.api.component.location.ComponentLocation;
 import org.mule.runtime.api.exception.MuleRuntimeException;
 import org.mule.runtime.api.notification.NotificationDispatcher;
 import org.mule.runtime.api.notification.TransactionNotification;
 import org.mule.runtime.api.notification.TransactionNotificationListener;
 import org.mule.runtime.api.tx.TransactionException;
 import org.mule.runtime.core.api.MuleContext;
-import org.mule.runtime.core.api.transaction.Transaction;
 import org.mule.runtime.core.api.transaction.TransactionCoordination;
 import org.mule.runtime.core.api.util.UUID;
 import org.mule.runtime.core.internal.context.MuleContextWithRegistry;
 import org.mule.runtime.core.privileged.registry.RegistrationException;
 import org.mule.runtime.core.privileged.transaction.xa.IllegalTransactionStateException;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import java.util.Optional;
 
-import java.text.MessageFormat;
+import org.slf4j.Logger;
 
 /**
  * This base class provides low level features for transactions.
  */
-public abstract class AbstractTransaction implements Transaction {
+public abstract class AbstractTransaction implements TransactionAdapter {
 
-  protected final transient Logger logger = LoggerFactory.getLogger(getClass());
+  private static final Logger LOGGER = getLogger(AbstractTransaction.class);
 
   protected String id = UUID.getUUID();
 
   protected int timeout;
+  protected ComponentLocation componentLocation;
 
+  protected String applicationName;
   protected MuleContext muleContext;
-  private final NotificationDispatcher notificationFirer;
+  protected final NotificationDispatcher notificationFirer;
 
+  @Deprecated
   protected AbstractTransaction(MuleContext muleContext) {
     this.muleContext = muleContext;
     try {
+      applicationName = muleContext.getConfiguration().getId();
       notificationFirer = ((MuleContextWithRegistry) muleContext).getRegistry().lookupObject(NotificationDispatcher.class);
     } catch (RegistrationException e) {
       throw new MuleRuntimeException(e);
     }
+  }
+
+  protected AbstractTransaction(String applicationName, NotificationDispatcher notificationFirer) {
+    this.applicationName = applicationName;
+    this.notificationFirer = notificationFirer;
   }
 
   @Override
@@ -78,7 +88,9 @@ public abstract class AbstractTransaction implements Transaction {
 
   @Override
   public void begin() throws TransactionException {
-    logger.debug("Beginning transaction " + identityHashCode(this));
+    if (LOGGER.isDebugEnabled()) {
+      LOGGER.debug("Beginning transaction {}@{}", this.getClass().getName(), identityHashCode(this));
+    }
     doBegin();
     TransactionCoordination.getInstance().bindTransaction(this);
     fireNotification(new TransactionNotification(getId(), TRANSACTION_BEGAN, getApplicationName()));
@@ -87,8 +99,9 @@ public abstract class AbstractTransaction implements Transaction {
   @Override
   public void commit() throws TransactionException {
     try {
-      logger.debug("Committing transaction " + identityHashCode(this));
-
+      if (LOGGER.isDebugEnabled()) {
+        LOGGER.debug("Committing transaction {}@{}", this.getClass().getName(), identityHashCode(this));
+      }
       if (isRollbackOnly()) {
         throw new IllegalTransactionStateException(transactionMarkedForRollback());
       }
@@ -103,7 +116,9 @@ public abstract class AbstractTransaction implements Transaction {
   @Override
   public void rollback() throws TransactionException {
     try {
-      logger.debug("Rolling back transaction " + identityHashCode(this));
+      if (LOGGER.isDebugEnabled()) {
+        LOGGER.debug("Rolling back transaction {}@{}", this.getClass().getName(), identityHashCode(this));
+      }
       setRollbackOnly();
       doRollback();
       fireNotification(new TransactionNotification(getId(), TRANSACTION_ROLLEDBACK, getApplicationName()));
@@ -118,7 +133,6 @@ public abstract class AbstractTransaction implements Transaction {
   protected void unbindTransaction() throws TransactionException {
     TransactionCoordination.getInstance().unbindTransaction(this);
   }
-
 
   /**
    * Really begin the transaction. Note that resources are enlisted yet.
@@ -179,11 +193,11 @@ public abstract class AbstractTransaction implements Transaction {
     } catch (TransactionException e) {
       status = -1;
     }
-    return MessageFormat.format("{0}[id={1} , status={2}]", getClass().getName(), id, status);
+    return format("{0}[id={1} , status={2}]", getClass().getName(), id, status);
   }
 
   private String getApplicationName() {
-    return muleContext.getConfiguration().getId();
+    return applicationName;
   }
 
   @Override
@@ -194,5 +208,15 @@ public abstract class AbstractTransaction implements Transaction {
   @Override
   public void setTimeout(int timeout) {
     this.timeout = timeout;
+  }
+
+  @Override
+  public void setComponentLocation(ComponentLocation componentLocation) {
+    this.componentLocation = componentLocation;
+  }
+
+  @Override
+  public Optional<ComponentLocation> getComponentLocation() {
+    return ofNullable(componentLocation);
   }
 }

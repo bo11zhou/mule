@@ -8,25 +8,38 @@ package org.mule.runtime.module.extension.internal.runtime.resolver;
 
 import static org.hamcrest.core.Is.is;
 import static org.junit.Assert.assertThat;
-import static org.mule.runtime.module.extension.internal.runtime.resolver.ValueResolvingContext.from;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
+import org.mule.runtime.core.api.el.ExpressionManager;
+import org.mule.runtime.core.api.el.ExpressionManagerSession;
 import org.mule.runtime.core.api.event.CoreEvent;
 import org.mule.tck.junit4.AbstractMuleTestCase;
 import org.mule.tck.size.SmallTest;
 
+import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
-import org.mockito.runners.MockitoJUnitRunner;
+import org.mockito.junit.MockitoJUnitRunner;
 
 @SmallTest
 @RunWith(MockitoJUnitRunner.class)
 public class StaticValueResolverTestCase extends AbstractMuleTestCase {
 
+  @Mock(lenient = true)
+  private ExpressionManager expressionManager;
+
   @Mock
   private CoreEvent event;
 
   private ValueResolver resolver;
+
+  @Before
+  public void before() {
+    when(expressionManager.openSession(any())).thenReturn(mock(ExpressionManagerSession.class));
+  }
 
   @Test
   public void staticValue() throws Exception {
@@ -46,6 +59,6 @@ public class StaticValueResolverTestCase extends AbstractMuleTestCase {
 
   private void assertExpected(Object expected) throws Exception {
     resolver = new StaticValueResolver(expected);
-    assertThat(resolver.resolve(ValueResolvingContext.from(event)), is(expected));
+    assertThat(resolver.resolve(ValueResolvingContext.builder(event).build()), is(expected));
   }
 }

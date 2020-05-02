@@ -10,9 +10,13 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
+import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.when;
 
 import org.mule.runtime.api.component.AbstractComponent;
 import org.mule.runtime.api.exception.MuleException;
+import org.mule.runtime.api.lifecycle.Startable;
+import org.mule.runtime.api.lifecycle.Stoppable;
 import org.mule.runtime.core.api.construct.FlowConstruct;
 import org.mule.runtime.core.api.processor.Processor;
 import org.mule.runtime.core.api.source.MessageSource;
@@ -24,7 +28,7 @@ import org.junit.Test;
 
 public abstract class AbstractFlowConstructTestCase extends AbstractMuleContextTestCase {
 
-  protected static class DirectInboundMessageSource extends AbstractComponent implements MessageSource {
+  protected static class DirectInboundMessageSource extends AbstractComponent implements MessageSource, Startable, Stoppable {
 
     private Processor listener;
 
@@ -41,6 +45,16 @@ public abstract class AbstractFlowConstructTestCase extends AbstractMuleContextT
     public String toString() {
       return ObjectUtils.toString(this);
     }
+
+    @Override
+    public void stop() throws MuleException {
+      // Nothing to do
+    }
+
+    @Override
+    public void start() throws MuleException {
+      // Nothing to do
+    }
   }
 
   protected DirectInboundMessageSource directInboundMessageSource;
@@ -49,6 +63,7 @@ public abstract class AbstractFlowConstructTestCase extends AbstractMuleContextT
   protected void doSetUp() throws Exception {
     super.doSetUp();
 
+    muleContext = spy(muleContext);
     directInboundMessageSource = new DirectInboundMessageSource();
   }
 
@@ -148,11 +163,13 @@ public abstract class AbstractFlowConstructTestCase extends AbstractMuleContextT
     assertFalse(flow.isStarted());
     assertFalse(flow.isStopped());
 
+    when(muleContext.isStarting()).thenReturn(true);
     // This should not actually start the flow
     flow.start();
     assertFalse(flow.isStarted());
     assertTrue(flow.isStopped());
 
+    when(muleContext.isStarting()).thenReturn(false);
     // Finally the flow is actually started
     flow.start();
     assertTrue(flow.isStarted());

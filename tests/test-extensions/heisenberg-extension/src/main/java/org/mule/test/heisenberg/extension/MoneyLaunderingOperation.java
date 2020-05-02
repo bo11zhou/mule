@@ -8,12 +8,17 @@ package org.mule.test.heisenberg.extension;
 
 import static java.util.Arrays.asList;
 import static java.util.Collections.emptyList;
+import static java.util.Collections.singletonList;
 import static java.util.Optional.empty;
+import static org.mule.runtime.extension.api.error.MuleErrors.CONNECTIVITY;
+
+import org.mule.runtime.api.connection.ConnectionException;
 import org.mule.runtime.api.exception.MuleException;
 import org.mule.runtime.extension.api.annotation.error.Throws;
 import org.mule.runtime.extension.api.annotation.param.Config;
 import org.mule.runtime.extension.api.annotation.param.stereotype.Stereotype;
 import org.mule.runtime.extension.api.annotation.param.stereotype.Validator;
+import org.mule.runtime.extension.api.exception.ModuleException;
 import org.mule.runtime.extension.api.runtime.streaming.PagingProvider;
 import org.mule.test.heisenberg.extension.exception.ValidationErrorTypeProvider;
 import org.mule.test.heisenberg.extension.model.PersonalInfo;
@@ -39,6 +44,10 @@ public class MoneyLaunderingOperation {
                                                                   new PersonalInfo("Marie", 34),
                                                                   new PersonalInfo("Gus", 45),
                                                                   new PersonalInfo("Tood", 22));
+
+  public static Integer closeEmptyOperationCalls = 0;
+  public static Integer closePagingProviderCalls = 0;
+  public static Integer getPageCalls = 0;
 
   private long totalLaunderedAmount = 0;
 
@@ -96,6 +105,7 @@ public class MoneyLaunderingOperation {
       @Override
       public void close(HeisenbergConnection connection) throws MuleException {
         timesClosed++;
+        closeEmptyOperationCalls = timesClosed;
         if (timesClosed > 1) {
           throw new RuntimeException("Expected to be closed only once but was called twice");
         }
@@ -184,6 +194,59 @@ public class MoneyLaunderingOperation {
       @Override
       public boolean useStickyConnections() {
         return true;
+      }
+    };
+  }
+
+  public PagingProvider<HeisenbergConnection, Integer> pagedOperationWithExtensionClassLoader() {
+    return new PagingProvider<HeisenbergConnection, Integer>() {
+
+      @Override
+      public List<Integer> getPage(HeisenbergConnection heisenbergConnection) {
+        if (Thread.currentThread().getContextClassLoader() != getClass().getClassLoader()) {
+          throw new RuntimeException("Class Loader was not properly switched by the Paging Provider Wrapper");
+        }
+        ArrayList<Integer> list = new ArrayList<>();
+        list.add(1);
+        return list;
+      }
+
+      @Override
+      public java.util.Optional<Integer> getTotalResults(HeisenbergConnection heisenbergConnection) {
+        return java.util.Optional.empty();
+      }
+
+      @Override
+      public void close(HeisenbergConnection heisenbergConnection) throws MuleException {
+        heisenbergConnection.disconnect();
+      }
+    };
+  }
+
+  public PagingProvider<HeisenbergConnection, Integer> failAtClosePagedOperation(Integer failOn) {
+    return new PagingProvider<HeisenbergConnection, Integer>() {
+
+      @Override
+      public List<Integer> getPage(HeisenbergConnection connection) {
+        getPageCalls++;
+        if (getPageCalls == failOn) {
+          throw new ModuleException(CONNECTIVITY, new ConnectionException("Failed to retrieve Page"));
+        }
+        if (getPageCalls > 2) {
+          return emptyList();
+        }
+        return singletonList(0);
+      }
+
+      @Override
+      public Optional<Integer> getTotalResults(HeisenbergConnection connection) {
+        return empty();
+      }
+
+      @Override
+      public void close(HeisenbergConnection connection) {
+        closePagingProviderCalls++;
+        throw new IllegalArgumentException("Failed to close Paging Provider.");
       }
     };
   }

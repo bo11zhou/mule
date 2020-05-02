@@ -18,6 +18,7 @@ import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.nullValue;
 import static org.hamcrest.core.Is.is;
 import static org.mule.tck.ZipUtils.compress;
+
 import org.mule.runtime.api.deployment.meta.MuleArtifactLoaderDescriptor;
 import org.mule.tck.ZipUtils.ZipResource;
 
@@ -192,6 +193,8 @@ public abstract class AbstractArtifactFileBuilder<T extends AbstractArtifactFile
       } else {
         final List<ZipResource> zipResources = new LinkedList<>(resources);
         zipResources.add(new ZipResource(getArtifactPomFile().getAbsolutePath(), getArtifactFileBundledPomPartialUrl()));
+        zipResources.add(new ZipResource(getArtifactPomPropertiesFile().getAbsolutePath(),
+                                         getArtifactFileBundledPomPropertiesPartialUrl()));
         zipResources.addAll(getCustomResources());
         compress(tempFile, zipResources.toArray(new ZipResource[0]));
       }

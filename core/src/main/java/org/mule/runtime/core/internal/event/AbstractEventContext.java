@@ -6,38 +6,39 @@
  */
 package org.mule.runtime.core.internal.event;
 
-import static java.lang.Integer.getInteger;
+import static com.google.common.base.Functions.identity;
 import static java.lang.String.format;
 import static java.lang.System.lineSeparator;
 import static java.util.Objects.requireNonNull;
-import static org.mule.runtime.core.api.functional.Either.left;
-import static org.mule.runtime.core.api.functional.Either.right;
+import static java.util.stream.Collectors.joining;
+import static org.apache.commons.lang3.StringUtils.leftPad;
+import static org.mule.runtime.api.functional.Either.left;
+import static org.mule.runtime.api.functional.Either.right;
+import static org.mule.runtime.core.api.lifecycle.LifecycleUtils.disposeIfNeeded;
 import static reactor.core.publisher.Mono.empty;
-import static reactor.core.publisher.Mono.just;
 
+import org.mule.runtime.api.functional.Either;
+import org.mule.runtime.api.util.LazyValue;
 import org.mule.runtime.core.api.context.notification.FlowCallStack;
 import org.mule.runtime.core.api.event.CoreEvent;
 import org.mule.runtime.core.api.exception.FlowExceptionHandler;
 import org.mule.runtime.core.api.exception.NullExceptionHandler;
-import org.mule.runtime.core.api.functional.Either;
-import org.mule.runtime.core.internal.context.notification.DefaultFlowCallStack;
 import org.mule.runtime.core.internal.exception.MessagingException;
 import org.mule.runtime.core.privileged.event.BaseEventContext;
 
-import org.reactivestreams.Publisher;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
-import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
+
+import org.reactivestreams.Publisher;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import reactor.core.publisher.Mono;
 import reactor.core.publisher.MonoSink;
@@ -54,35 +55,31 @@ abstract class AbstractEventContext implements BaseEventContext {
   private static final byte STATE_COMPLETE = 2;
   private static final byte STATE_TERMINATED = 3;
 
+  private static final int TO_STRING_TAB_SIZE = 4;
   private static final Logger LOGGER = LoggerFactory.getLogger(AbstractEventContext.class);
   private static final FlowExceptionHandler NULL_EXCEPTION_HANDLER = NullExceptionHandler.getInstance();
 
-  private static final int MAX_DEPTH = getInteger(BaseEventContext.class.getName() + ".maxDepth", 25);
-
+  private final boolean debugLogEnabled = LOGGER.isDebugEnabled();
   private transient final List<BaseEventContext> childContexts = new ArrayList<>();
   private transient final FlowExceptionHandler exceptionHandler;
   private transient final CompletableFuture<Void> externalCompletion;
-  private transient final List<BiConsumer<CoreEvent, Throwable>> onResponseConsumerList = new ArrayList<>();
-  private transient final List<BiConsumer<CoreEvent, Throwable>> onCompletionConsumerList = new ArrayList<>(2);
-  private transient final List<BiConsumer<CoreEvent, Throwable>> onTerminatedConsumerList = new ArrayList<>();
+  private transient List<BiConsumer<CoreEvent, Throwable>> onResponseConsumerList = new ArrayList<>();
+  private transient List<BiConsumer<CoreEvent, Throwable>> onCompletionConsumerList = new ArrayList<>(2);
+  private transient List<BiConsumer<CoreEvent, Throwable>> onTerminatedConsumerList = new ArrayList<>();
 
-  private ReadWriteLock childContextsReadWriteLock = new ReentrantReadWriteLock();
+  private final ReadWriteLock childContextsReadWriteLock = new ReentrantReadWriteLock();
 
   private final int depthLevel;
 
   private volatile byte state = STATE_READY;
   private volatile Either<Throwable, CoreEvent> result;
 
-  private final Set<ResponsePublisher> responsePublishers = new HashSet<>();
+  private LazyValue<ResponsePublisher> responsePublisher = new LazyValue<>(ResponsePublisher::new);
 
-  protected FlowCallStack flowCallStack = new DefaultFlowCallStack();
+  protected FlowCallStack flowCallStack;
 
   public AbstractEventContext() {
     this(NULL_EXCEPTION_HANDLER, 0, Optional.empty());
-  }
-
-  public AbstractEventContext(FlowExceptionHandler exceptionHandler) {
-    this(exceptionHandler, 0, Optional.empty());
   }
 
   /**
@@ -99,24 +96,21 @@ abstract class AbstractEventContext implements BaseEventContext {
     this.exceptionHandler = exceptionHandler;
   }
 
-  void addChildContext(BaseEventContext childContext) {
-    if (getDepthLevel() >= MAX_DEPTH) {
-      StringBuilder messageBuilder = new StringBuilder();
-
-      messageBuilder.append("Too many child contexts nested." + lineSeparator());
-
-      if (LOGGER.isDebugEnabled()) {
-        messageBuilder.append("  > " + this.toString() + lineSeparator());
-        Optional<BaseEventContext> current = getParentContext();
-        while (current.isPresent()) {
-          messageBuilder.append("  > " + current.get().toString() + lineSeparator());
-          current = current.get().getParentContext();
-        }
-      }
-
-      throw new EventContextDeepNestingException(messageBuilder.toString());
+  protected void initCompletionLists() {
+    if (onCompletionConsumerList == null) {
+      onResponseConsumerList = new ArrayList<>();
     }
 
+    if (onCompletionConsumerList == null) {
+      onCompletionConsumerList = new ArrayList<>(2);
+    }
+
+    if (onTerminatedConsumerList == null) {
+      onTerminatedConsumerList = new ArrayList<>();
+    }
+  }
+
+  void addChildContext(BaseEventContext childContext) {
     childContextsReadWriteLock.writeLock().lock();
     try {
       childContexts.add(childContext);
@@ -131,14 +125,14 @@ abstract class AbstractEventContext implements BaseEventContext {
   @Override
   public final void success() {
     if (isResponseDone()) {
-      if (LOGGER.isDebugEnabled()) {
-        LOGGER.debug(this + " empty response was already completed, ignoring.");
+      if (debugLogEnabled) {
+        LOGGER.debug("{} empty response was already completed, ignoring.", this);
       }
       return;
     }
 
-    if (LOGGER.isDebugEnabled()) {
-      LOGGER.debug(this + " response completed with no result.");
+    if (debugLogEnabled) {
+      LOGGER.debug("{} response completed with no result.", this);
     }
     responseDone(right(null));
   }
@@ -149,14 +143,14 @@ abstract class AbstractEventContext implements BaseEventContext {
   @Override
   public final void success(CoreEvent event) {
     if (isResponseDone()) {
-      if (LOGGER.isDebugEnabled()) {
-        LOGGER.debug(this + " response was already completed, ignoring.");
+      if (debugLogEnabled) {
+        LOGGER.debug("{} response was already completed, ignoring.", this);
       }
       return;
     }
 
-    if (LOGGER.isDebugEnabled()) {
-      LOGGER.debug(this + " response completed with result.");
+    if (debugLogEnabled) {
+      LOGGER.debug("{} response completed with result.", this);
     }
     responseDone(right(event));
   }
@@ -167,38 +161,43 @@ abstract class AbstractEventContext implements BaseEventContext {
   @Override
   public final Publisher<Void> error(Throwable throwable) {
     if (isResponseDone()) {
-      if (LOGGER.isDebugEnabled()) {
-        LOGGER.debug(this + " error response was already completed, ignoring.");
+      if (debugLogEnabled) {
+        LOGGER.debug("{} error response was already completed, ignoring.", this);
       }
       return empty();
     }
 
-    if (LOGGER.isDebugEnabled()) {
-      LOGGER.debug(this + " responseDone completed with error.");
+    if (debugLogEnabled) {
+      LOGGER.debug("{} responseDone completed with error.", this);
     }
 
     if (throwable instanceof MessagingException) {
-      if (LOGGER.isDebugEnabled()) {
-        LOGGER.debug(this + " handling messaging exception.");
+      if (debugLogEnabled) {
+        LOGGER.debug("{} handling messaging exception.", this);
       }
-      return just((MessagingException) throwable)
-          .flatMapMany(exceptionHandler)
-          .doOnNext(handled -> success(handled))
-          .doOnError(rethrown -> responseDone(left(rethrown)))
-          // This ensures that both handled and rethrown outcome both result in a Publisher<Void>
-          .materialize().then()
-          .toProcessor();
+
+      final Consumer<Exception> router = exceptionHandler.router(identity(),
+                                                                 handled -> success(handled),
+                                                                 rethrown -> responseDone(left(rethrown)));
+      try {
+        router.accept((Exception) throwable);
+      } finally {
+        disposeIfNeeded(router, LOGGER);
+      }
     } else {
       responseDone(left(throwable));
-      return empty();
     }
+    return empty();
   }
 
   private synchronized void responseDone(Either<Throwable, CoreEvent> result) {
     this.result = result;
-    responsePublishers.forEach(rp -> rp.result = result);
+    responsePublisher.ifComputed(rp -> rp.result = result);
+
     state = STATE_RESPONSE;
-    onResponseConsumerList.stream().forEach(consumer -> signalConsumerSilently(consumer));
+    for (BiConsumer<CoreEvent, Throwable> onResponseConsumer : onResponseConsumerList) {
+      signalConsumerSilently(onResponseConsumer);
+    }
     onResponseConsumerList.clear();
     tryComplete();
   }
@@ -206,20 +205,23 @@ abstract class AbstractEventContext implements BaseEventContext {
   protected void tryComplete() {
     boolean allChildrenComplete;
 
-    childContextsReadWriteLock.readLock().lock();
+    getChildContextsReadLock().lock();
     try {
-      allChildrenComplete = childContexts.stream().allMatch(context -> context.isComplete());
+      allChildrenComplete = childContexts.stream().allMatch(BaseEventContext::isComplete);
     } finally {
-      childContextsReadWriteLock.readLock().unlock();
+      getChildContextsReadLock().unlock();
     }
 
     synchronized (this) {
       if (state == STATE_RESPONSE && allChildrenComplete) {
-        if (LOGGER.isDebugEnabled()) {
-          LOGGER.debug(this + " completed.");
+        if (debugLogEnabled) {
+          LOGGER.debug("{} completed.", this);
         }
         this.state = STATE_COMPLETE;
-        onCompletionConsumerList.forEach(consumer -> signalConsumerSilently(consumer));
+
+        for (BiConsumer<CoreEvent, Throwable> consumer : onCompletionConsumerList) {
+          signalConsumerSilently(consumer);
+        }
         onCompletionConsumerList.clear();
         getParentContext().ifPresent(context -> {
           if (context instanceof AbstractEventContext) {
@@ -233,33 +235,35 @@ abstract class AbstractEventContext implements BaseEventContext {
 
   protected synchronized void tryTerminate() {
     if (this.state == STATE_COMPLETE && (externalCompletion == null || externalCompletion.isDone())) {
-      if (LOGGER.isDebugEnabled()) {
-        LOGGER.debug(this + " terminated.");
+      if (debugLogEnabled) {
+        LOGGER.debug("{} terminated.", this);
       }
       this.state = STATE_TERMINATED;
 
-      onTerminatedConsumerList.forEach(consumer -> signalConsumerSilently(consumer));
+      for (BiConsumer<CoreEvent, Throwable> consumer : onTerminatedConsumerList) {
+        signalConsumerSilently(consumer);
+      }
       onTerminatedConsumerList.clear();
 
-      childContextsReadWriteLock.writeLock().lock();
+      getChildContextsWriteLock().lock();
       try {
         this.childContexts.clear();
       } finally {
-        childContextsReadWriteLock.writeLock().unlock();
+        getChildContextsWriteLock().unlock();
       }
 
       getParentContext().ifPresent(context -> {
         AbstractEventContext parent = (AbstractEventContext) context;
-        parent.childContextsReadWriteLock.writeLock().lock();
+        parent.getChildContextsWriteLock().lock();
         try {
           parent.childContexts.remove(this);
         } finally {
-          parent.childContextsReadWriteLock.writeLock().unlock();
+          parent.getChildContextsWriteLock().unlock();
         }
       });
 
       result = null;
-      responsePublishers.clear();
+      responsePublisher = null;
     }
   }
 
@@ -268,7 +272,7 @@ abstract class AbstractEventContext implements BaseEventContext {
       consumer.accept(result.getRight(), result.getLeft());
     } catch (Throwable t) {
       LOGGER.error(format("The event consumer %s, of EventContext %s failed with exception:",
-                          consumer.toString(), this.toString()),
+                          consumer, this),
                    t);
     }
   }
@@ -331,13 +335,11 @@ abstract class AbstractEventContext implements BaseEventContext {
       throw new IllegalStateException("getResponsePublisher() cannot be called after eventContext termination.");
     }
 
-    final ResponsePublisher responsePublisher = new ResponsePublisher();
-    responsePublishers.add(responsePublisher);
-    return Mono.create(responsePublisher);
+    return Mono.create(responsePublisher.get());
   }
 
   public void forEachChild(Consumer<BaseEventContext> childConsumer) {
-    childContextsReadWriteLock.readLock().lock();
+    getChildContextsReadLock().lock();
     try {
       childContexts.stream().filter(context -> !context.isTerminated()).forEach(context -> {
         childConsumer.accept(context);
@@ -346,7 +348,7 @@ abstract class AbstractEventContext implements BaseEventContext {
         }
       });
     } finally {
-      childContextsReadWriteLock.readLock().unlock();
+      getChildContextsReadLock().unlock();
     }
   }
 
@@ -391,6 +393,29 @@ abstract class AbstractEventContext implements BaseEventContext {
   @Override
   public int getDepthLevel() {
     return depthLevel;
+  }
+
+  public Lock getChildContextsReadLock() {
+    return childContextsReadWriteLock.readLock();
+  }
+
+  public Lock getChildContextsWriteLock() {
+    return childContextsReadWriteLock.writeLock();
+  }
+
+  protected abstract String basicToString();
+
+  protected final String detailedToString(int level, BaseEventContext highlight) {
+    return (this == highlight ? "=> " : "") + basicToString()
+        + lineSeparator()
+        + childContexts.stream()
+            .map(ctx -> leftPad("", (1 + level) * TO_STRING_TAB_SIZE)
+                + ((AbstractEventContext) ctx).detailedToString(1 + level, highlight))
+            .collect(joining(lineSeparator()));
+  }
+
+  protected byte getState() {
+    return state;
   }
 
 }

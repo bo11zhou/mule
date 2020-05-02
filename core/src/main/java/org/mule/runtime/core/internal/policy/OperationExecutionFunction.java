@@ -6,11 +6,10 @@
  */
 package org.mule.runtime.core.internal.policy;
 
-import java.util.Map;
-
 import org.mule.runtime.core.api.event.CoreEvent;
+import org.mule.runtime.extension.api.runtime.operation.CompletableComponentExecutor.ExecutorCallback;
 
-import org.reactivestreams.Publisher;
+import java.util.Map;
 
 /**
  * Function for executing an operation.
@@ -25,8 +24,8 @@ public interface OperationExecutionFunction {
    *
    * @param parameters the set of parameters required to execute the function.
    * @param operationEvent the event to use for executing the operation.
-   * @return an {@link CoreEvent} as result of the operation execution.
+   * @param callback a {@link ExecutorCallback} on which the operation result is to be notified on
    */
-  Publisher<CoreEvent> execute(Map<String, Object> parameters, CoreEvent operationEvent);
+  void execute(Map<String, Object> parameters, CoreEvent operationEvent, ExecutorCallback callback);
 
 }

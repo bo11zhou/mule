@@ -6,6 +6,7 @@
  */
 package org.mule.runtime.module.extension.internal.loader.java;
 
+import static org.hamcrest.CoreMatchers.equalTo;
 import static org.hamcrest.CoreMatchers.instanceOf;
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.MatcherAssert.assertThat;
@@ -14,12 +15,14 @@ import static org.mule.metadata.api.model.MetadataFormat.CSV;
 import static org.mule.metadata.api.model.MetadataFormat.JAVA;
 import static org.mule.metadata.api.model.MetadataFormat.JSON;
 import static org.mule.metadata.api.model.MetadataFormat.XML;
+import static org.mule.metadata.api.utils.MetadataTypeUtils.getTypeId;
 import static org.mule.runtime.module.extension.api.util.MuleExtensionUtils.loadExtension;
 
 import org.mule.metadata.api.annotation.TypeIdAnnotation;
+import org.mule.metadata.api.model.ArrayType;
 import org.mule.metadata.api.model.MetadataType;
 import org.mule.metadata.api.model.ObjectType;
-import org.mule.metadata.api.utils.MetadataTypeUtils;
+import org.mule.metadata.api.model.impl.DefaultBinaryType;
 import org.mule.runtime.api.meta.Typed;
 import org.mule.runtime.api.meta.model.ExtensionModel;
 import org.mule.runtime.api.meta.model.OutputModel;
@@ -34,7 +37,10 @@ import org.junit.Test;
 
 public class ExtensionWithCustomStaticTypesTestCase extends AbstractMuleTestCase {
 
-  ExtensionModel extension = loadExtension(MetadataExtension.class);
+  private static final String PERSON_TYPE_ID = "http://example.com/example.json";
+  private static final String PERSONS_TYPE_ID = "http://example.com/persons.json";
+
+  private ExtensionModel extension = loadExtension(MetadataExtension.class);
 
   @Test
   public void withInputXmlStaticType() throws Exception {
@@ -47,6 +53,27 @@ public class ExtensionWithCustomStaticTypesTestCase extends AbstractMuleTestCase
   public void withOutputXmlStaticType() throws Exception {
     OperationModel o = getOperation("xmlOutput");
     assertXmlOrder(o.getOutput());
+  }
+
+  @Test
+  public void withListOutputXmlStaticType() throws Exception {
+    OperationModel o = getOperation("xmlOutputList");
+
+    MetadataType type = o.getOutput().getType();
+    assertThat(type, is(instanceOf(ArrayType.class)));
+    MetadataType innerType = ((ArrayType) type).getType();
+    assertThat(innerType.getMetadataFormat(), is(XML));
+    assertThat(innerType.toString(), is("#root:shiporder"));
+  }
+
+  @Test
+  public void withListOutputAndEmptySchemaXmlStaticType() throws Exception {
+    OperationModel o = getOperation("xmlOutputListWithEmptySchema");
+
+    MetadataType type = o.getOutput().getType();
+    assertThat(type, is(instanceOf(ArrayType.class)));
+    MetadataType innerType = ((ArrayType) type).getType();
+    assertThat(innerType, is(instanceOf(DefaultBinaryType.class)));
   }
 
   @Test
@@ -63,9 +90,69 @@ public class ExtensionWithCustomStaticTypesTestCase extends AbstractMuleTestCase
   }
 
   @Test
+  public void withInputJsonMapType() throws Exception {
+    OperationModel o = getOperation("jsonInputMap");
+    MetadataType type = o.getAllParameterModels().get(0).getType();
+    assertJsonPerson(type);
+  }
+
+  @Test
+  public void withInputJsonListType() throws Exception {
+    OperationModel o = getOperation("jsonInputList");
+    MetadataType type = o.getAllParameterModels().get(0).getType();
+    assertThat(type, is(instanceOf(ArrayType.class)));
+    assertJsonPerson(((ArrayType) type).getType());
+  }
+
+  @Test
   public void withOutputJsonType() throws Exception {
     OperationModel o = getOperation("jsonOutput");
     assertJsonPerson(o.getOutput());
+  }
+
+  @Test
+  public void withArrayOutputJsonType() throws Exception {
+    OperationModel o = getOperation("jsonOutputArray");
+
+    MetadataType type = o.getOutput().getType();
+    assertThat(type, is(instanceOf(ArrayType.class)));
+    assertThat(getTypeId(type).get(), equalTo(PERSONS_TYPE_ID));
+
+    assertJsonPerson(((ArrayType) type).getType());
+  }
+
+  @Test
+  public void withOutputJsonTypeList() throws Exception {
+    OperationModel o = getOperation("jsonOutputList");
+
+    MetadataType type = o.getOutput().getType();
+    assertThat(type, is(instanceOf(ArrayType.class)));
+
+    assertJsonPerson(((ArrayType) type).getType());
+  }
+
+  @Test
+  public void withOutputJsonTypePagingProvider() throws Exception {
+    OperationModel o = getOperationFromDefaultConfig("jsonOutputPagingProvider");
+
+    MetadataType type = o.getOutput().getType();
+    assertThat(type, is(instanceOf(ArrayType.class)));
+
+    assertJsonPerson(((ArrayType) type).getType());
+  }
+
+  @Test
+  public void withOutputJsonArrayTypeList() throws Exception {
+    OperationModel o = getOperation("jsonArrayOutputList");
+
+    MetadataType type = o.getOutput().getType();
+    assertThat(type, is(instanceOf(ArrayType.class)));
+
+    MetadataType innerType = ((ArrayType) type).getType();
+    assertThat(innerType, is(instanceOf(ArrayType.class)));
+    assertThat(getTypeId(innerType).get(), equalTo(PERSONS_TYPE_ID));
+
+    assertJsonPerson(((ArrayType) innerType).getType());
   }
 
   @Test
@@ -75,8 +162,59 @@ public class ExtensionWithCustomStaticTypesTestCase extends AbstractMuleTestCase
   }
 
   @Test
+  public void withOutputAttributesJsonArrayType() throws Exception {
+    OperationModel o = getOperation("jsonArrayAttributes");
+
+    MetadataType type = o.getOutputAttributes().getType();
+    assertThat(type, is(instanceOf(ArrayType.class)));
+    assertThat(getTypeId(type).get(), equalTo(PERSONS_TYPE_ID));
+
+    assertJsonPerson(((ArrayType) type).getType());
+  }
+
+  @Test
+  public void withOutputAttributesJsonTypeList() throws Exception {
+    OperationModel o = getOperation("jsonAttributesList");
+
+    MetadataType type = o.getOutputAttributes().getType();
+    assertThat(type, is(instanceOf(ArrayType.class)));
+
+    assertJsonPerson(((ArrayType) type).getType());
+  }
+
+  @Test
+  public void withOutputAttributesJsonArrayTypeList() throws Exception {
+    OperationModel o = getOperation("jsonArrayAttributesList");
+
+    MetadataType type = o.getOutputAttributes().getType();
+    assertThat(type, is(instanceOf(ArrayType.class)));
+
+    MetadataType innerType = ((ArrayType) type).getType();
+    assertThat(innerType, is(instanceOf(ArrayType.class)));
+    assertThat(getTypeId(innerType).get(), equalTo(PERSONS_TYPE_ID));
+
+    assertJsonPerson(((ArrayType) innerType).getType());
+  }
+
+  @Test
+  public void withOutputAttributesJsonTypePagingProviderWithResult() throws Exception {
+    OperationModel o = getOperationFromDefaultConfig("jsonAttributesPagingProviderWithResult");
+    assertJsonPerson(o.getOutputAttributes().getType());
+  }
+
+  @Test
   public void customTypeOutput() throws Exception {
     OperationModel o = getOperation("customTypeOutput");
+    OutputModel output = o.getOutput();
+    MetadataType type = output.getType();
+    assertThat(output.hasDynamicType(), is(false));
+    assertThat(type.getMetadataFormat(), is(CSV));
+    assertThat(type.toString(), is("csv-object"));
+  }
+
+  @Test
+  public void customTypeListOutput() throws Exception {
+    OperationModel o = getOperation("customTypeListOutput");
     OutputModel output = o.getOutput();
     MetadataType type = output.getType();
     assertThat(output.hasDynamicType(), is(false));
@@ -108,7 +246,7 @@ public class ExtensionWithCustomStaticTypesTestCase extends AbstractMuleTestCase
   public void customTypeOutputWithStaticAttributes() throws Exception {
     OperationModel o = getOperation("customTypeOutputWithStaticAttributes");
     assertJsonPerson(o.getOutput());
-    assertThat(MetadataTypeUtils.getTypeId(o.getOutputAttributes().getType()).get(), is(Banana.class.getName()));
+    assertThat(getTypeId(o.getOutputAttributes().getType()).get(), is(Banana.class.getName()));
   }
 
   @Test
@@ -151,19 +289,28 @@ public class ExtensionWithCustomStaticTypesTestCase extends AbstractMuleTestCase
     MetadataType type = typed.getType();
     assertThat(typed.hasDynamicType(), is(false));
     assertThat(type.getMetadataFormat(), is(XML));
-    assertThat(type.toString(), is("shiporder"));
+    assertThat(type.toString(), is("#root:shiporder"));
   }
 
   private void assertJsonPerson(Typed typed) {
-    MetadataType type = typed.getType();
+    assertJsonPerson(typed.getType());
     assertThat(typed.hasDynamicType(), is(false));
+  }
+
+  private void assertJsonPerson(MetadataType type) {
     assertThat(type.getMetadataFormat(), is(JSON));
     assertThat(type, instanceOf(ObjectType.class));
+    assertThat(getTypeId(type).get(), equalTo(PERSON_TYPE_ID));
     assertThat(((ObjectType) type).getFields(), hasSize(3));
   }
 
   private OperationModel getOperation(String ope) {
     return extension.getOperationModel(ope).orElseThrow(() -> new RuntimeException(ope + " not found"));
+  }
+
+  private OperationModel getOperationFromDefaultConfig(String ope) {
+    return extension.getConfigurationModel("config").get().getOperationModel(ope)
+        .orElseThrow(() -> new RuntimeException(ope + " not found"));
   }
 
   private void assertCustomJsonType(Typed typed) {

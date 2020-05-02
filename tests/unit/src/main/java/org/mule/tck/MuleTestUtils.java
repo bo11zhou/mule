@@ -7,12 +7,18 @@
 package org.mule.tck;
 
 import static java.util.Collections.singletonMap;
+import static java.util.Optional.empty;
 import static java.util.Optional.of;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.withSettings;
 import static org.mule.runtime.api.component.AbstractComponent.LOCATION_KEY;
 import static org.mule.runtime.core.api.construct.Flow.builder;
+import static org.mule.runtime.core.api.lifecycle.LifecycleUtils.initialiseIfNeeded;
+import static org.mule.runtime.core.api.lifecycle.LifecycleUtils.startIfNeeded;
 import static org.mule.runtime.core.api.util.ClassUtils.withContextClassLoader;
 import static org.mule.runtime.dsl.api.component.config.DefaultComponentLocation.fromSingleComponent;
 
@@ -20,6 +26,7 @@ import org.mule.runtime.api.component.location.ConfigurationComponentLocator;
 import org.mule.runtime.api.component.location.Location;
 import org.mule.runtime.api.exception.MuleException;
 import org.mule.runtime.api.message.Error;
+import org.mule.runtime.api.meta.model.ComponentModel;
 import org.mule.runtime.core.api.Injector;
 import org.mule.runtime.core.api.MuleContext;
 import org.mule.runtime.core.api.construct.Flow;
@@ -29,17 +36,19 @@ import org.mule.runtime.core.api.processor.Processor;
 import org.mule.runtime.core.api.processor.ReactiveProcessor;
 import org.mule.runtime.core.api.processor.Sink;
 import org.mule.runtime.core.api.processor.strategy.ProcessingStrategy;
+import org.mule.runtime.core.api.source.MessageSource;
 import org.mule.runtime.core.internal.context.DefaultMuleContext;
 import org.mule.runtime.core.internal.context.MuleContextWithRegistry;
 import org.mule.runtime.core.internal.processor.strategy.StreamPerEventSink;
 import org.mule.runtime.core.internal.registry.MuleRegistry;
-
-import org.mockito.Mockito;
+import org.mule.runtime.extension.api.runtime.operation.CompletableComponentExecutor;
 
 import java.lang.reflect.Method;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+
+import org.mockito.Mockito;
 
 /**
  * Utilities for creating test and Mock Mule objects
@@ -77,14 +86,30 @@ public final class MuleTestUtils {
   }
 
   /**
+   * Creates an empty flow with the provided name and source, if it's not null.
+   */
+  public static Flow createFlowWithSource(MuleContext context, String flowName, MessageSource source)
+      throws MuleException {
+    FlowExceptionHandler defaultErrorHandler = context.getDefaultErrorHandler(empty());
+    initialiseIfNeeded(defaultErrorHandler, context);
+    startIfNeeded(defaultErrorHandler);
+    final Flow.Builder flowBuilder = builder(flowName, context)
+        .processingStrategyFactory((muleContext, schedulersNamePrefix) -> withContextClassLoader(MuleTestUtils.class
+            .getClassLoader(), () -> spy(new TestDirectProcessingStrategy())))
+        .messagingExceptionHandler(defaultErrorHandler);
+    if (source != null) {
+      flowBuilder.source(source);
+    }
+    final Flow flow = flowBuilder.build();
+    flow.setAnnotations(singletonMap(LOCATION_KEY, fromSingleComponent(flowName)));
+    return flow;
+  }
+
+  /**
    * Creates an empty flow with the provided name.
    */
   public static Flow createFlow(MuleContext context, String flowName) throws MuleException {
-    final Flow flow = builder(flowName, context).processingStrategyFactory((muleContext, schedulersNamePrefix) -> {
-      return withContextClassLoader(MuleTestUtils.class.getClassLoader(), () -> spy(new TestDirectProcessingStrategy()));
-    }).build();
-    flow.setAnnotations(singletonMap(LOCATION_KEY, fromSingleComponent(flowName)));
-    return flow;
+    return createFlowWithSource(context, flowName, null);
   }
 
   /**
@@ -179,6 +204,7 @@ public final class MuleTestUtils {
     }
   }
 
+
   public interface TestCallback {
 
     void run() throws Exception;
@@ -210,13 +236,33 @@ public final class MuleTestUtils {
    * @return the list of configured exception listeners
    * @throws IllegalStateException if the provided exception handler does not have the expect method or it cannot be invoked.
    */
+  public static List<FlowExceptionHandler> getExceptionListeners(FlowConstruct flow) {
+    try {
+      Method getExceptionListenerMethod = flow.getClass().getMethod("getExceptionListener");
+      FlowExceptionHandler exceptionListener = (FlowExceptionHandler) getExceptionListenerMethod.invoke(flow);
+      return getExceptionListeners(exceptionListener);
+    } catch (Exception e) {
+      throw new IllegalStateException("Cannot obtain exception listener for flow", e);
+    }
+  }
+
+  /**
+   * Returns the exception listener configured on a messaging exception handler
+   * <p/>
+   * Invokes {@code getExceptionListeners} method on the provided exception handler to avoid exposing that method on the public
+   * API.
+   *
+   * @param exceptionHandler exception handler to inspect
+   * @return the list of configured exception listeners
+   * @throws IllegalStateException if the provided exception handler does not have the expect method or it cannot be invoked.
+   */
   public static List<FlowExceptionHandler> getExceptionListeners(FlowExceptionHandler exceptionHandler) {
     try {
       Method getExceptionListenersMethod = exceptionHandler.getClass().getMethod("getExceptionListeners");
       Object exceptionListeners = getExceptionListenersMethod.invoke(exceptionHandler);
       return (List<FlowExceptionHandler>) exceptionListeners;
     } catch (Exception e) {
-      throw new IllegalStateException("Cannot obtain exception listener for flow");
+      throw new IllegalStateException("Cannot obtain exception listener for flow", e);
     }
   }
 
@@ -237,5 +283,31 @@ public final class MuleTestUtils {
     } catch (Exception e) {
       throw new IllegalStateException("Cannot obtain processors from the object");
     }
+  }
+
+  public static <M extends ComponentModel> CompletableComponentExecutor<M> mockComponentExecutor(Object returnValue) {
+    return stubComponentExecutor(mock(CompletableComponentExecutor.class, withSettings().lenient()), returnValue);
+  }
+
+  public static <M extends ComponentModel> CompletableComponentExecutor<M> stubComponentExecutor(CompletableComponentExecutor<M> executor,
+                                                                                                 Object returnValue) {
+    doAnswer(invocation -> {
+      CompletableComponentExecutor.ExecutorCallback callback = invocation.getArgument(1);
+      callback.complete(returnValue);
+      return null;
+    }).when(executor).execute(any(), any());
+
+    return executor;
+  }
+
+  public static <M extends ComponentModel> CompletableComponentExecutor<M> stubFailingComponentExecutor(CompletableComponentExecutor<M> executor,
+                                                                                                        Throwable t) {
+    doAnswer(invocation -> {
+      CompletableComponentExecutor.ExecutorCallback callback = invocation.getArgument(1);
+      callback.error(t);
+      return null;
+    }).when(executor).execute(any(), any());
+
+    return executor;
   }
 }

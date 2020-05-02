@@ -9,9 +9,9 @@ package org.mule.runtime.module.extension.internal.config.dsl;
 import static java.lang.String.format;
 import static org.mule.runtime.api.i18n.I18nMessageFactory.createStaticMessage;
 import static org.mule.runtime.api.util.NameUtils.hyphenize;
-import static org.mule.runtime.core.api.config.MuleDeploymentProperties.MULE_LAZY_INIT_DEPLOYMENT_PROPERTY;
-import static org.mule.runtime.module.extension.internal.config.dsl.ExtensionDefinitionParser.CHILD_ELEMENT_KEY_PREFIX;
-import static org.mule.runtime.module.extension.internal.config.dsl.ExtensionDefinitionParser.CHILD_ELEMENT_KEY_SUFFIX;
+import static org.mule.runtime.core.api.lifecycle.LifecycleUtils.isLazyInitMode;
+import static org.mule.runtime.module.extension.internal.config.dsl.ExtensionParsingUtils.isChildKey;
+import static org.mule.runtime.module.extension.internal.config.dsl.ExtensionParsingUtils.unwrapChildKey;
 
 import org.mule.metadata.api.model.ObjectType;
 import org.mule.runtime.api.component.ConfigurationProperties;
@@ -19,6 +19,7 @@ import org.mule.runtime.api.component.location.ComponentLocation;
 import org.mule.runtime.api.util.LazyValue;
 import org.mule.runtime.core.api.MuleContext;
 import org.mule.runtime.core.api.config.ConfigurationException;
+import org.mule.runtime.core.api.el.ExpressionManager;
 import org.mule.runtime.dsl.api.component.AbstractComponentFactory;
 import org.mule.runtime.dsl.api.component.ObjectFactory;
 import org.mule.runtime.module.extension.internal.runtime.exception.RequiredParameterNotSetException;
@@ -48,6 +49,9 @@ public abstract class AbstractExtensionObjectFactory<T> extends AbstractComponen
 
   @Inject
   protected ReflectionCache reflectionCache;
+
+  @Inject
+  protected ExpressionManager expressionManager;
 
   protected final MuleContext muleContext;
   protected Map<String, Object> parameters = new HashMap<>();
@@ -88,11 +92,7 @@ public abstract class AbstractExtensionObjectFactory<T> extends AbstractComponen
   }
 
   private ParametersResolver parametersResolverFromValues(MuleContext muleContext) {
-    return ParametersResolver.fromValues(parameters, muleContext, isLazyModeEnabled(), reflectionCache);
-  }
-
-  protected boolean isLazyModeEnabled() {
-    return properties.resolveBooleanProperty(MULE_LAZY_INIT_DEPLOYMENT_PROPERTY).orElse(false);
+    return ParametersResolver.fromValues(parameters, muleContext, isLazyInitMode(properties), reflectionCache, expressionManager);
   }
 
   public Map<String, Object> getParameters() {
@@ -132,11 +132,4 @@ public abstract class AbstractExtensionObjectFactory<T> extends AbstractComponen
     return normalized;
   }
 
-  private boolean isChildKey(String key) {
-    return key.startsWith(CHILD_ELEMENT_KEY_PREFIX) && key.endsWith(CHILD_ELEMENT_KEY_SUFFIX);
-  }
-
-  private String unwrapChildKey(String key) {
-    return key.replaceAll(CHILD_ELEMENT_KEY_PREFIX, "").replaceAll(CHILD_ELEMENT_KEY_SUFFIX, "");
-  }
 }

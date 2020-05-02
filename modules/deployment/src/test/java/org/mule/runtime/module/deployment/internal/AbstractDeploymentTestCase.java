@@ -36,8 +36,8 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
-import static org.mockito.Matchers.any;
-import static org.mockito.Matchers.eq;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
@@ -54,6 +54,7 @@ import static org.mule.runtime.container.internal.ClasspathModuleDiscoverer.EXPO
 import static org.mule.runtime.core.api.config.MuleProperties.MULE_HOME_DIRECTORY_PROPERTY;
 import static org.mule.runtime.core.api.util.ClassUtils.withContextClassLoader;
 import static org.mule.runtime.core.internal.config.RuntimeComponentBuildingDefinitionsUtil.getRuntimeComponentBuildingDefinitionProvider;
+import static org.mule.runtime.core.internal.config.RuntimeLockFactoryUtil.getRuntimeLockFactory;
 import static org.mule.runtime.deployment.model.api.application.ApplicationStatus.STARTED;
 import static org.mule.runtime.deployment.model.api.artifact.ArtifactDescriptorConstants.EXPORTED_PACKAGES;
 import static org.mule.runtime.deployment.model.api.artifact.ArtifactDescriptorConstants.EXPORTED_RESOURCES;
@@ -72,6 +73,7 @@ import static org.mule.runtime.module.deployment.internal.DefaultArchiveDeployer
 import static org.mule.runtime.module.deployment.internal.DeploymentDirectoryWatcher.CHANGE_CHECK_INTERVAL_PROPERTY;
 import static org.mule.runtime.module.deployment.internal.MuleDeploymentService.PARALLEL_DEPLOYMENT_PROPERTY;
 import static org.mule.runtime.module.deployment.internal.MuleDeploymentService.findSchedulerService;
+import static org.mule.runtime.module.deployment.internal.TestPolicyProcessor.correlationIdCount;
 import static org.mule.runtime.module.deployment.internal.TestPolicyProcessor.invocationCount;
 import static org.mule.runtime.module.deployment.internal.TestPolicyProcessor.policyParametrization;
 import static org.mule.runtime.module.extension.api.loader.java.DefaultJavaExtensionModelLoader.JAVA_LOADER_ID;
@@ -90,6 +92,7 @@ import org.mule.runtime.api.exception.MuleException;
 import org.mule.runtime.api.lifecycle.Initialisable;
 import org.mule.runtime.api.lifecycle.InitialisationException;
 import org.mule.runtime.api.scheduler.SchedulerService;
+import org.mule.runtime.api.util.collection.SmallMap;
 import org.mule.runtime.api.util.concurrent.Latch;
 import org.mule.runtime.config.internal.ModuleDelegatingEntityResolver;
 import org.mule.runtime.container.api.ModuleRepository;
@@ -144,22 +147,12 @@ import org.mule.tck.util.CompilerUtils.JarCompiler;
 import org.mule.tck.util.CompilerUtils.SingleClassCompiler;
 import org.mule.test.runner.classloader.TestModuleDiscoverer;
 
-import org.junit.After;
-import org.junit.Before;
-import org.junit.BeforeClass;
-import org.junit.Rule;
-import org.junit.rules.TemporaryFolder;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
-import org.mockito.verification.VerificationMode;
-
 import java.io.File;
 import java.io.IOException;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.URL;
 import java.nio.file.Paths;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
@@ -169,6 +162,15 @@ import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
+
+import org.junit.After;
+import org.junit.Before;
+import org.junit.BeforeClass;
+import org.junit.Rule;
+import org.junit.rules.TemporaryFolder;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
+import org.mockito.verification.VerificationMode;
 
 @RunWith(Parameterized.class)
 /**
@@ -195,6 +197,7 @@ public abstract class AbstractDeploymentTestCase extends AbstractMuleTestCase {
   protected static final int ONE_HOUR_IN_MILLISECONDS = 3600000;
   protected static final String MULE_POLICY_CLASSIFIER = "mule-policy";
   protected static final String MULE_EXTENSION_CLASSIFIER = "mule-plugin";
+  protected static final String MANUAL_EXECUTION_CORRELATION_ID = "manualExecution";
 
   // Resources
   protected static final String MULE_CONFIG_XML_FILE = "mule-config.xml";
@@ -217,11 +220,8 @@ public abstract class AbstractDeploymentTestCase extends AbstractMuleTestCase {
   private TestModuleDiscoverer moduleDiscoverer;
 
   @Parameterized.Parameters(name = "Parallel: {0}")
-  public static List<Object[]> parameters() {
-    return asList(new Object[][] {
-        {false},
-        {true}
-    });
+  public static List<Boolean> params() {
+    return asList(false, true);
   }
 
   // Dynamically compiled classes and jars
@@ -231,6 +231,19 @@ public abstract class AbstractDeploymentTestCase extends AbstractMuleTestCase {
   protected static File barUtils2ClassFile;
   protected static File barUtils2_0JarFile;
 
+  protected static File barUtilsJavaxClassFile;
+  protected static File barUtilsJavaxJarFile;
+
+  protected static File barUtilsForbiddenJavaClassFile;
+  protected static File barUtilsForbiddenJavaJarFile;
+
+  protected static File barUtilsForbiddenMuleContainerClassFile;
+  protected static File barUtilsForbiddenMuleContainerJarFile;
+
+  protected static File barUtilsForbiddenMuleThirdPartyClassFile;
+  protected static File barUtilsForbiddenMuleThirdPartyJarFile;
+
+  protected static File echoTestClassFile;
   protected static File echoTestJarFile;
 
   private static File defaulServiceEchoJarFile;
@@ -239,9 +252,9 @@ public abstract class AbstractDeploymentTestCase extends AbstractMuleTestCase {
 
   protected static File helloExtensionV1JarFile;
 
-  private static File helloExtensionV2JarFile;
+  protected static File goodbyeExtensionV1JarFile;
 
-  protected static File echoTestClassFile;
+  private static File helloExtensionV2JarFile;
 
   protected static File loadsAppResourceCallbackClassFile;
   protected static File loadsAppResourceCallbackJarFile;
@@ -250,7 +263,6 @@ public abstract class AbstractDeploymentTestCase extends AbstractMuleTestCase {
   private static Boolean internalIsRunningTests;
 
   protected static Latch undeployLatch = new Latch();
-
 
   @BeforeClass
   public static void beforeClass() throws URISyntaxException, IllegalAccessException {
@@ -263,6 +275,27 @@ public abstract class AbstractDeploymentTestCase extends AbstractMuleTestCase {
     barUtils2ClassFile = new SingleClassCompiler().compile(getResourceFile("/org/bar2/BarUtils.java"));
     barUtils2_0JarFile = new JarCompiler().compiling(getResourceFile("/org/bar2/BarUtils.java")).compile("bar-2.0.jar");
 
+    barUtilsJavaxClassFile = new SingleClassCompiler().compile(getResourceFile("/javax/annotation/BarUtils.java"));
+    barUtilsJavaxJarFile =
+        new JarCompiler().compiling(getResourceFile("/javax/annotation/BarUtils.java")).compile("bar-javax.jar");
+
+    barUtilsForbiddenJavaClassFile = new SingleClassCompiler().compile(getResourceFile("/java/lang/BarUtils.java"));
+    barUtilsForbiddenJavaJarFile =
+        new JarCompiler().compiling(getResourceFile("/java/lang/BarUtils.java")).compile("bar-javaForbidden.jar");
+
+    barUtilsForbiddenMuleContainerClassFile =
+        new SingleClassCompiler().compile(getResourceFile("/org/mule/runtime/api/util/BarUtils.java"));
+    barUtilsForbiddenMuleContainerJarFile =
+        new JarCompiler().compiling(getResourceFile("/org/mule/runtime/api/util/BarUtils.java"))
+            .compile("bar-muleContainerForbidden.jar");
+
+    barUtilsForbiddenMuleThirdPartyClassFile =
+        new SingleClassCompiler().compile(getResourceFile("/org/slf4j/BarUtils.java"));
+    barUtilsForbiddenMuleThirdPartyJarFile =
+        new JarCompiler().compiling(getResourceFile("/org/slf4j/BarUtils.java"))
+            .compile("bar-muleThirdPartyForbidden.jar");
+
+    echoTestClassFile = new SingleClassCompiler().compile(getResourceFile("/org/foo/EchoTest.java"));
     echoTestJarFile = new JarCompiler().compiling(getResourceFile("/org/foo/EchoTest.java")).compile("echo.jar");
 
     defaulServiceEchoJarFile = new JarCompiler()
@@ -282,11 +315,14 @@ public abstract class AbstractDeploymentTestCase extends AbstractMuleTestCase {
                    "META-INF/org/mule/runtime/core/config/registry-bootstrap.properties")
         .compile("mule-module-hello-1.0.0.jar", "1.0.0");
 
+    goodbyeExtensionV1JarFile = new ExtensionCompiler()
+        .compiling(getResourceFile("/org/foo/goodbye/GoodByeConfiguration.java"),
+                   getResourceFile("/org/foo/goodbye/GoodByeExtension.java"))
+        .compile("mule-module-goodbye-1.0.0.jar", "1.0.0");
+
     helloExtensionV2JarFile = new ExtensionCompiler().compiling(getResourceFile("/org/foo/hello/HelloExtension.java"),
                                                                 getResourceFile("/org/foo/hello/HelloOperation.java"))
         .compile("mule-module-hello-2.0.0.jar", "2.0.0");
-
-    echoTestClassFile = new SingleClassCompiler().compile(getResourceFile("/org/foo/EchoTest.java"));
 
     loadsAppResourceCallbackClassFile =
         new SingleClassCompiler().compile(getResourceFile("/org/foo/LoadsAppResourceCallback.java"));
@@ -315,6 +351,7 @@ public abstract class AbstractDeploymentTestCase extends AbstractMuleTestCase {
       .dependingOn(new JarFileBuilder("echoTestJar", echoTestJarFile));
   protected final ArtifactPluginFileBuilder helloExtensionV1Plugin = createHelloExtensionV1PluginFileBuilder();
   protected final ArtifactPluginFileBuilder helloExtensionV2Plugin = createHelloExtensionV2PluginFileBuilder();
+  protected final ArtifactPluginFileBuilder goodbyeExtensionV1Plugin = createGoodbyeExtensionV1PluginFileBuilder();
 
   protected final ArtifactPluginFileBuilder exceptionThrowingPlugin = createExceptionThrowingPluginFileBuilder();
 
@@ -442,11 +479,7 @@ public abstract class AbstractDeploymentTestCase extends AbstractMuleTestCase {
     deploymentService = new TestMuleDeploymentService(muleArtifactResourcesRegistry.getDomainFactory(),
                                                       muleArtifactResourcesRegistry.getApplicationFactory(),
                                                       () -> findSchedulerService(serviceManager));
-    deploymentService.addDeploymentListener(applicationDeploymentListener);
-    deploymentService.addDomainDeploymentListener(domainDeploymentListener);
-    deploymentService.addDeploymentListener(testDeploymentListener);
-    deploymentService.addDomainDeploymentListener(testDeploymentListener);
-    deploymentService.addDomainBundleDeploymentListener(domainBundleDeploymentListener);
+    configureDeploymentService();
 
     policyManager = new TestPolicyManager(deploymentService,
                                           new PolicyTemplateDescriptorFactory(
@@ -456,7 +489,16 @@ public abstract class AbstractDeploymentTestCase extends AbstractMuleTestCase {
                                                                               ArtifactDescriptorValidatorBuilder.builder()));
     // Reset test component state
     invocationCount = 0;
+    correlationIdCount.clear();
     policyParametrization = "";
+  }
+
+  protected void configureDeploymentService() {
+    deploymentService.addDeploymentListener(applicationDeploymentListener);
+    deploymentService.addDomainDeploymentListener(domainDeploymentListener);
+    deploymentService.addDeploymentListener(testDeploymentListener);
+    deploymentService.addDomainDeploymentListener(testDeploymentListener);
+    deploymentService.addDomainBundleDeploymentListener(domainBundleDeploymentListener);
   }
 
   /**
@@ -1006,7 +1048,8 @@ public abstract class AbstractDeploymentTestCase extends AbstractMuleTestCase {
                                                                    new MuleClassLoaderLookupPolicy(emptyMap(), emptySet())),
                                              new DomainDescriptor(DEFAULT_DOMAIN_NAME), emptyList()),
                                  artifactClassLoaderManager, serviceManager, emptyList(), extensionModelLoaderManager,
-                                 getRuntimeComponentBuildingDefinitionProvider());
+                                 getRuntimeComponentBuildingDefinitionProvider(),
+                                 getRuntimeLockFactory());
   }
 
   /**
@@ -1233,11 +1276,26 @@ public abstract class AbstractDeploymentTestCase extends AbstractMuleTestCase {
   }
 
   protected void executeApplicationFlow(String flowName) throws Exception {
+    executeApplicationFlow(flowName, null);
+  }
+
+  protected void executeApplicationFlow(String flowName, String correlationId) throws Exception {
     ClassLoader appClassLoader = deploymentService.getApplications().get(0).getArtifactClassLoader().getClassLoader();
     withContextClassLoader(appClassLoader, () -> {
-      final FlowRunner flowRunner = new FlowRunner(deploymentService.getApplications().get(0).getRegistry(), flowName);
-      CoreEvent result = flowRunner.withPayload(TEST_MESSAGE).run();
-      flowRunner.dispose();
+      final FlowRunner flowRunner = new FlowRunner(deploymentService.getApplications().get(0).getRegistry(), flowName)
+          .withPayload(TEST_MESSAGE);
+
+      if (correlationId != null) {
+        flowRunner.withSourceCorrelationId(correlationId);
+      }
+
+      CoreEvent result;
+      try {
+        result = flowRunner.run();
+      } finally {
+        flowRunner.dispose();
+      }
+
       assertThat(currentThread().getContextClassLoader(), sameInstance(appClassLoader));
 
       return result;
@@ -1291,12 +1349,11 @@ public abstract class AbstractDeploymentTestCase extends AbstractMuleTestCase {
 
   protected static MuleArtifactLoaderDescriptor createBundleDescriptorLoader(String artifactId, String classifier,
                                                                              String bundleDescriptorLoaderId, String version) {
-    Map<String, Object> attributes = new HashMap();
-    attributes.put(VERSION, version);
-    attributes.put(GROUP_ID, "org.mule.test");
-    attributes.put(ARTIFACT_ID, artifactId);
-    attributes.put(CLASSIFIER, classifier);
-    attributes.put(TYPE, EXTENSION_BUNDLE_TYPE);
+    Map<String, Object> attributes = SmallMap.of(VERSION, version,
+                                                 GROUP_ID, "org.mule.test",
+                                                 ARTIFACT_ID, artifactId,
+                                                 CLASSIFIER, classifier,
+                                                 TYPE, EXTENSION_BUNDLE_TYPE);
 
     return new MuleArtifactLoaderDescriptor(bundleDescriptorLoaderId, attributes);
   }
@@ -1324,6 +1381,21 @@ public abstract class AbstractDeploymentTestCase extends AbstractMuleTestCase {
         .addProperty("version", "2.0.0");
     return new ArtifactPluginFileBuilder("helloExtensionPlugin-2.0.0")
         .dependingOn(new JarFileBuilder("helloExtensionV2", helloExtensionV2JarFile))
+        .describedBy((mulePluginModelBuilder.build()));
+  }
+
+  private ArtifactPluginFileBuilder createGoodbyeExtensionV1PluginFileBuilder() {
+    MulePluginModelBuilder mulePluginModelBuilder = new MulePluginModelBuilder()
+        .setMinMuleVersion(MIN_MULE_VERSION).setName("goodbyeExtensionPlugin").setRequiredProduct(MULE)
+        .withBundleDescriptorLoader(createBundleDescriptorLoader("goodbyeExtensionPlugin", MULE_EXTENSION_CLASSIFIER,
+                                                                 PROPERTIES_BUNDLE_DESCRIPTOR_LOADER_ID, "2.0.0"));
+    mulePluginModelBuilder.withClassLoaderModelDescriptorLoader(new MuleArtifactLoaderDescriptorBuilder()
+        .setId(MULE_LOADER_ID).build());
+    mulePluginModelBuilder.withExtensionModelDescriber().setId(JAVA_LOADER_ID)
+        .addProperty("type", "org.foo.goodbye.GoodByeExtension")
+        .addProperty("version", "2.0.0");
+    return new ArtifactPluginFileBuilder("goodbyeExtensionPlugin-1.0.0")
+        .dependingOn(new JarFileBuilder("goodbyeExtensionV1", goodbyeExtensionV1JarFile))
         .describedBy((mulePluginModelBuilder.build()));
   }
 
@@ -1544,7 +1616,7 @@ public abstract class AbstractDeploymentTestCase extends AbstractMuleTestCase {
    * Updates a file's last modified time to be greater than the original timestamp
    *
    * @param timestamp time value in milliseconds of the original file's last modified time
-   * @param file file to update
+   * @param file      file to update
    */
   protected void updateFileModifiedTime(long timestamp, File file) {
     do {
@@ -1554,6 +1626,16 @@ public abstract class AbstractDeploymentTestCase extends AbstractMuleTestCase {
 
   protected void resetUndeployLatch() {
     undeployLatch = new Latch();
+  }
+
+  protected void assertManualExecutionsCount(int expectedInvokations) throws Exception {
+    executeApplicationFlow("main", MANUAL_EXECUTION_CORRELATION_ID);
+    if (expectedInvokations > 0) {
+      assertThat(correlationIdCount.containsKey(MANUAL_EXECUTION_CORRELATION_ID), is(true));
+      assertThat(correlationIdCount.get(MANUAL_EXECUTION_CORRELATION_ID).get(), is(expectedInvokations));
+    } else {
+      assertThat(correlationIdCount.containsKey(MANUAL_EXECUTION_CORRELATION_ID), is(false));
+    }
   }
 
   private static class TestMuleDeploymentService extends MuleDeploymentService {

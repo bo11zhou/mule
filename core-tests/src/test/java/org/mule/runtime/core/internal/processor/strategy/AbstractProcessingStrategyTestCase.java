@@ -7,18 +7,21 @@
 package org.mule.runtime.core.internal.processor.strategy;
 
 import static java.lang.Thread.currentThread;
-import static java.lang.Thread.sleep;
 import static java.util.Arrays.asList;
 import static java.util.Collections.synchronizedSet;
 import static java.util.concurrent.Executors.newFixedThreadPool;
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
 import static org.hamcrest.CoreMatchers.allOf;
+import static org.hamcrest.CoreMatchers.equalTo;
 import static org.hamcrest.CoreMatchers.instanceOf;
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.greaterThanOrEqualTo;
+import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.lessThanOrEqualTo;
+import static org.hamcrest.core.IsCollectionContaining.hasItem;
 import static org.junit.Assert.assertThat;
+import static org.junit.Assume.assumeThat;
 import static org.mule.runtime.api.notification.MessageProcessorNotification.MESSAGE_PROCESSOR_POST_INVOKE;
 import static org.mule.runtime.api.notification.MessageProcessorNotification.MESSAGE_PROCESSOR_PRE_INVOKE;
 import static org.mule.runtime.core.api.construct.Flow.builder;
@@ -30,13 +33,17 @@ import static org.mule.runtime.core.api.processor.ReactiveProcessor.ProcessingTy
 import static org.mule.runtime.core.api.processor.ReactiveProcessor.ProcessingType.CPU_LITE_ASYNC;
 import static org.mule.runtime.core.api.processor.ReactiveProcessor.ProcessingType.IO_RW;
 import static org.mule.runtime.core.api.rx.Exceptions.rxExceptionToMuleException;
+import static org.mule.runtime.core.api.transaction.TransactionCoordination.getInstance;
 import static org.mule.runtime.core.internal.processor.strategy.AbstractProcessingStrategy.PROCESSOR_SCHEDULER_CONTEXT_KEY;
 import static org.mule.runtime.core.internal.processor.strategy.AbstractProcessingStrategyTestCase.Mode.SOURCE;
+import static org.mule.runtime.core.internal.processor.strategy.AbstractStreamProcessingStrategyFactory.CORES;
 import static org.mule.runtime.core.internal.util.rx.Operators.requestUnbounded;
 import static org.mule.tck.probe.PollingProber.DEFAULT_POLLING_INTERVAL;
 import static org.mule.tck.probe.PollingProber.DEFAULT_TIMEOUT;
+import static org.mule.tck.util.MuleContextUtils.getNotificationDispatcher;
 import static org.slf4j.LoggerFactory.getLogger;
 import static reactor.core.Exceptions.bubble;
+import static reactor.core.Exceptions.propagate;
 import static reactor.core.publisher.Flux.from;
 import static reactor.core.publisher.Mono.just;
 import static reactor.core.scheduler.Schedulers.fromExecutorService;
@@ -48,7 +55,6 @@ import org.mule.runtime.api.notification.IntegerAction;
 import org.mule.runtime.api.notification.MessageProcessorNotification;
 import org.mule.runtime.api.notification.MessageProcessorNotificationListener;
 import org.mule.runtime.api.scheduler.Scheduler;
-import org.mule.runtime.api.scheduler.SchedulerService;
 import org.mule.runtime.api.util.concurrent.Latch;
 import org.mule.runtime.core.api.MuleContext;
 import org.mule.runtime.core.api.construct.Flow;
@@ -57,12 +63,13 @@ import org.mule.runtime.core.api.event.CoreEvent;
 import org.mule.runtime.core.api.processor.Processor;
 import org.mule.runtime.core.api.processor.ReactiveProcessor.ProcessingType;
 import org.mule.runtime.core.api.processor.strategy.ProcessingStrategy;
+import org.mule.runtime.core.api.processor.strategy.ProcessingStrategyFactory;
 import org.mule.runtime.core.api.source.MessageSource.BackPressureStrategy;
 import org.mule.runtime.core.api.util.concurrent.NamedThreadFactory;
 import org.mule.runtime.core.internal.construct.FlowBackPressureException;
-import org.mule.runtime.core.internal.context.MuleContextWithRegistry;
 import org.mule.runtime.core.internal.exception.MessagingException;
 import org.mule.runtime.core.internal.message.InternalEvent;
+import org.mule.runtime.core.internal.util.rx.RetrySchedulerWrapper;
 import org.mule.runtime.core.privileged.event.BaseEventContext;
 import org.mule.runtime.core.privileged.processor.AnnotatedProcessor;
 import org.mule.runtime.core.privileged.processor.InternalProcessor;
@@ -71,18 +78,7 @@ import org.mule.tck.TriggerableMessageSource;
 import org.mule.tck.junit4.AbstractMuleContextTestCase;
 import org.mule.tck.probe.JUnitLambdaProbe;
 import org.mule.tck.probe.PollingProber;
-
-import org.hamcrest.Matcher;
-import org.hamcrest.TypeSafeMatcher;
-import org.junit.After;
-import org.junit.Before;
-import org.junit.Rule;
-import org.junit.Test;
-import org.junit.rules.ExpectedException;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
-import org.reactivestreams.Publisher;
-import org.slf4j.Logger;
+import org.mule.tck.testmodels.mule.TestTransaction;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -103,10 +99,23 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
+import java.util.function.Function;
 import java.util.function.Supplier;
 
+import org.hamcrest.Description;
+import org.hamcrest.Matcher;
+import org.hamcrest.TypeSafeMatcher;
+import org.junit.After;
+import org.junit.Before;
+import org.junit.Rule;
+import org.junit.Test;
+import org.junit.rules.ExpectedException;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
+import org.reactivestreams.Publisher;
+import org.slf4j.Logger;
+
 import reactor.core.publisher.Flux;
-import reactor.core.publisher.Mono;
 
 @RunWith(Parameterized.class)
 public abstract class AbstractProcessingStrategyTestCase extends AbstractMuleContextTestCase {
@@ -120,13 +129,14 @@ public abstract class AbstractProcessingStrategyTestCase extends AbstractMuleCon
   protected static final String CPU_INTENSIVE = "cpuIntensive";
   protected static final String CUSTOM = "custom";
   protected static final String RING_BUFFER = "ringBuffer";
-  protected static final int STREAM_ITERATIONS = 3000;
+  protected static final String EXECUTOR = "executor";
+  protected static final int STREAM_ITERATIONS = 5000;
 
   protected Supplier<Builder> flowBuilder;
   protected Flow flow;
   protected Set<String> threads = synchronizedSet(new HashSet<>());
   protected Set<String> schedulers = synchronizedSet(new HashSet<>());
-  private TriggerableMessageSource triggerableMessageSource = getTriggerableMessageSource();
+  protected TriggerableMessageSource triggerableMessageSource = getTriggerableMessageSource();
   protected Processor cpuLightProcessor = new ThreadTrackingProcessor() {
 
     @Override
@@ -167,7 +177,7 @@ public abstract class AbstractProcessingStrategyTestCase extends AbstractMuleCon
 
   protected Processor errorSuccessProcessor = new ThreadTrackingProcessor() {
 
-    private AtomicInteger count = new AtomicInteger();
+    private final AtomicInteger count = new AtomicInteger();
 
     @Override
     public CoreEvent process(CoreEvent event) throws MuleException {
@@ -193,7 +203,7 @@ public abstract class AbstractProcessingStrategyTestCase extends AbstractMuleCon
   protected Scheduler custom;
   protected Scheduler ringBuffer;
   protected Scheduler asyncExecutor;
-  protected ExecutorService cachedThreadPool = newFixedThreadPool(4);
+  protected ExecutorService cachedThreadPool = newFixedThreadPool(4, new NamedThreadFactory("cachedThreadPool"));
 
   @Rule
   public ExpectedException expectedException = ExpectedException.none();
@@ -212,12 +222,13 @@ public abstract class AbstractProcessingStrategyTestCase extends AbstractMuleCon
     cpuLight = new TestScheduler(2, CPU_LIGHT, false);
     blocking = new TestScheduler(4, IO, true);
     cpuIntensive = new TestScheduler(2, CPU_INTENSIVE, true);
-    custom = new TestScheduler(4, CUSTOM, true);
+    custom = new RetrySchedulerWrapper(new TestScheduler(4, CUSTOM, true), 5, () -> {
+    });
     ringBuffer = new TestScheduler(1, RING_BUFFER, true);
-    asyncExecutor = ((MuleContextWithRegistry) muleContext).getRegistry().lookupObject(SchedulerService.class).ioScheduler();
+    asyncExecutor = new TestScheduler(CORES, EXECUTOR, false);
 
     flowBuilder = () -> builder("test", muleContext)
-        .processingStrategyFactory((muleContext, prefix) -> createProcessingStrategy(muleContext, prefix))
+        .processingStrategyFactory(createProcessingStrategyFactory())
         .source(triggerableMessageSource)
         // Avoid logging of errors by using a null exception handler.
         .messagingExceptionHandler((exception, event) -> event);
@@ -226,6 +237,10 @@ public abstract class AbstractProcessingStrategyTestCase extends AbstractMuleCon
   @Override
   protected InternalEvent.Builder getEventBuilder() throws MuleException {
     return InternalEvent.builder(create(flow, TEST_CONNECTOR_LOCATION));
+  }
+
+  protected ProcessingStrategyFactory createProcessingStrategyFactory() {
+    return (muleContext, prefix) -> createProcessingStrategy(muleContext, prefix);
   }
 
   protected abstract ProcessingStrategy createProcessingStrategy(MuleContext muleContext, String schedulersNamePrefix);
@@ -253,7 +268,7 @@ public abstract class AbstractProcessingStrategyTestCase extends AbstractMuleCon
     flow.start();
     processFlow(testEvent());
 
-    assertThat(schedulers, cpuLightSchedulerMatcher());
+    assertThat(schedulers.toString(), schedulers, cpuLightSchedulerMatcher());
   }
 
   protected Matcher<Iterable<? extends String>> cpuLightSchedulerMatcher() {
@@ -285,7 +300,8 @@ public abstract class AbstractProcessingStrategyTestCase extends AbstractMuleCon
       asyncExecutor.submit(() -> processFlow(newEvent()));
     }
 
-    latchedProcessor.getAllLatchedLatch().await();
+    assertThat("Processors not executed in time",
+               latchedProcessor.getAllLatchedLatch().await(RECEIVE_TIMEOUT, MILLISECONDS), is(true));
 
     asyncExecutor.submit(() -> processFlow(newEvent()));
 
@@ -323,7 +339,7 @@ public abstract class AbstractProcessingStrategyTestCase extends AbstractMuleCon
 
     processFlow(testEvent());
 
-    assertThat(schedulers, ioSchedulerMatcher());
+    assertThat(schedulers.toString(), schedulers, ioSchedulerMatcher());
   }
 
   protected Matcher<Iterable<? extends String>> ioSchedulerMatcher() {
@@ -347,7 +363,7 @@ public abstract class AbstractProcessingStrategyTestCase extends AbstractMuleCon
 
     processFlow(testEvent());
 
-    assertThat(schedulers, cpuIntensiveSchedulerMatcher());
+    assertThat(schedulers.toString(), schedulers, cpuIntensiveSchedulerMatcher());
   }
 
   protected Matcher<Iterable<? extends String>> cpuIntensiveSchedulerMatcher() {
@@ -412,6 +428,36 @@ public abstract class AbstractProcessingStrategyTestCase extends AbstractMuleCon
   }
 
   @Test
+  public void streamAfterRestart() throws Exception {
+    flow = flowBuilder.get().processors(cpuLightProcessor).build();
+    flow.initialise();
+    flow.start();
+
+    CountDownLatch latch = new CountDownLatch(STREAM_ITERATIONS);
+    for (int i = 0; i < STREAM_ITERATIONS; i++) {
+      dispatchFlow(newEvent(), t -> latch.countDown(), response -> bubble(new AssertionError("Unexpected error")));
+    }
+    assertThat(latch.await(RECEIVE_TIMEOUT, MILLISECONDS), is(true));
+
+    flow.stop();
+    cpuLight.stop();
+    blocking.stop();
+    cpuIntensive.stop();
+    ringBuffer.stop();
+    cpuLight = new TestScheduler(2, CPU_LIGHT, false);
+    blocking = new TestScheduler(4, IO, true);
+    cpuIntensive = new TestScheduler(2, CPU_INTENSIVE, true);
+    ringBuffer = new TestScheduler(1, RING_BUFFER, true);
+    flow.start();
+
+    CountDownLatch latchAfter = new CountDownLatch(STREAM_ITERATIONS);
+    for (int i = 0; i < STREAM_ITERATIONS; i++) {
+      dispatchFlow(newEvent(), t -> latchAfter.countDown(), response -> bubble(new AssertionError("Unexpected error")));
+    }
+    assertThat(latchAfter.await(RECEIVE_TIMEOUT, MILLISECONDS), is(true));
+  }
+
+  @Test
   public void concurrentStream() throws Exception {
     flow = flowBuilder.get().processors(cpuLightProcessor).build();
     flow.initialise();
@@ -463,6 +509,50 @@ public abstract class AbstractProcessingStrategyTestCase extends AbstractMuleCon
   @Test
   public abstract void tx() throws Exception;
 
+  @Test
+  public void txSameThreadPolicyHonored() throws Exception {
+    assumeThat(this, instanceOf(TransactionAwareProcessingStrategyTestCase.class));
+
+    triggerableMessageSource = new TriggerableMessageSource();
+
+    flow = flowBuilder.get()
+        .source(triggerableMessageSource)
+        .processors(cpuLightProcessor, cpuIntensiveProcessor, blockingProcessor).build();
+    flow.initialise();
+    flow.start();
+
+    getInstance()
+        .bindTransaction(new TestTransaction("appName", getNotificationDispatcher(muleContext)));
+    processFlow(newEvent());
+
+    assertThat(threads.toString(), threads, hasSize(equalTo(1)));
+    assertThat(threads.toString(), threads, hasItem(currentThread().getName()));
+  }
+
+  @Test
+  public void txSameThreadPolicyHonoredWithAsyncProcessorInFlow() throws Exception {
+    assumeThat(this, instanceOf(TransactionAwareProcessingStrategyTestCase.class));
+
+    triggerableMessageSource = new TriggerableMessageSource();
+
+    flow = flowBuilder.get()
+        .source(triggerableMessageSource)
+        .processors(asyncProcessor, cpuLightProcessor, cpuIntensiveProcessor, blockingProcessor).build();
+    flow.initialise();
+    flow.start();
+
+    getInstance()
+        .bindTransaction(new TestTransaction("appName", getNotificationDispatcher(muleContext)));
+    processFlow(newEvent());
+
+    assertThat(threads.toString(), threads, hasSize(equalTo(1)));
+    assertThat(threads.toString(), threads, hasItem(currentThread().getName()));
+  }
+
+  protected interface TransactionAwareProcessingStrategyTestCase {
+
+  }
+
   protected void singleIORW(Callable<CoreEvent> eventSupplier, Matcher<Iterable<? extends String>> schedulerNameMatcher)
       throws Exception {
     flow = flowBuilder.get().processors(ioRWProcessor).build();
@@ -470,7 +560,7 @@ public abstract class AbstractProcessingStrategyTestCase extends AbstractMuleCon
     flow.initialise();
     flow.start();
     processFlow(eventSupplier.call());
-    assertThat(schedulers, schedulerNameMatcher);
+    assertThat(schedulers.toString(), schedulers, schedulerNameMatcher);
   }
 
   protected CoreEvent processFlow(CoreEvent event) throws Exception {
@@ -479,16 +569,29 @@ public abstract class AbstractProcessingStrategyTestCase extends AbstractMuleCon
       case FLOW:
         return flow.process(event);
       case SOURCE:
-        Publisher<CoreEvent> responsePublisher = ((BaseEventContext) event.getContext()).getResponsePublisher();
-        just(event).transform(triggerableMessageSource.getListener()).subscribe(requestUnbounded());
         try {
-          return Mono.from(responsePublisher).block();
+          return just(event)
+              .doOnNext(flow::checkBackpressure)
+              .onErrorMap(FlowBackPressureException.class,
+                          backPressureExceptionMapper())
+              .transform(triggerableMessageSource.getListener())
+              .block();
         } catch (Throwable throwable) {
           throw rxExceptionToMuleException(throwable);
         }
       default:
         return null;
     }
+  }
+
+  private Function<FlowBackPressureException, Throwable> backPressureExceptionMapper() {
+    return backpressureException -> {
+      try {
+        return new MessagingException(newEvent(), backpressureException);
+      } catch (MuleException e) {
+        throw propagate(e);
+      }
+    };
   }
 
   protected void dispatchFlow(CoreEvent event, Consumer<CoreEvent> onSuccess,
@@ -565,9 +668,14 @@ public abstract class AbstractProcessingStrategyTestCase extends AbstractMuleCon
 
       for (int i = 0; i < STREAM_ITERATIONS; i++) {
         cachedThreadPool.submit(() -> Flux.just(newEvent())
-            .cast(CoreEvent.class).transform(triggerableMessageSource.getListener())
+            .cast(CoreEvent.class)
+            .doOnNext(flow::checkBackpressure)
+            .onErrorMap(FlowBackPressureException.class,
+                        backPressureExceptionMapper())
+            .transform(triggerableMessageSource.getListener())
             .doOnNext(event -> processed.getAndIncrement())
-            .doOnError(e -> rejected.getAndIncrement()).subscribe());
+            .doOnError(e -> rejected.getAndIncrement())
+            .subscribe());
         if (i == STREAM_ITERATIONS / 2) {
           latch.release();
         }
@@ -575,7 +683,7 @@ public abstract class AbstractProcessingStrategyTestCase extends AbstractMuleCon
 
       new PollingProber(DEFAULT_TIMEOUT * 10, DEFAULT_POLLING_INTERVAL)
           .check(new JUnitLambdaProbe(() -> {
-            LOGGER.info("DONE " + processed.get() + " , REJECTED " + rejected.get() + ", ");
+            LOGGER.debug("DONE " + processed.get() + " , REJECTED " + rejected.get() + ", ");
 
             assertThat("total", rejected.get() + processed.get(), totalAssertion);
             assertThat("processed", processed.get(), processedAssertion);
@@ -588,11 +696,11 @@ public abstract class AbstractProcessingStrategyTestCase extends AbstractMuleCon
 
   class MultipleInvocationLatchedProcessor extends AbstractComponent implements Processor {
 
-    private ProcessingType type;
+    private final ProcessingType type;
     private volatile Latch latch = new Latch();
     private volatile CountDownLatch allLatchedLatch;
     private volatile Latch unlatchedInvocationLatch;
-    private AtomicInteger invocations;
+    private final AtomicInteger invocations;
 
     public MultipleInvocationLatchedProcessor(ProcessingType type, int latchedInvocations) {
       this.type = type;
@@ -638,8 +746,8 @@ public abstract class AbstractProcessingStrategyTestCase extends AbstractMuleCon
 
   static class TestScheduler extends ScheduledThreadPoolExecutor implements Scheduler {
 
-    private String threadNamePrefix;
-    private ExecutorService executor;
+    private final String threadNamePrefix;
+    private final ExecutorService executor;
 
     public TestScheduler(int threads, String threadNamePrefix, boolean reject) {
       super(1, new NamedThreadFactory(threadNamePrefix + ".tasks"));
@@ -690,8 +798,9 @@ public abstract class AbstractProcessingStrategyTestCase extends AbstractMuleCon
   static class RejectingScheduler extends TestScheduler {
 
     static int REJECTION_COUNT = 10;
-    private int rejections;
-    private Scheduler delegate;
+    private final AtomicInteger rejections = new AtomicInteger();
+    private final AtomicInteger accepted = new AtomicInteger();
+    private final Scheduler delegate;
 
     public RejectingScheduler(Scheduler delegate) {
       super(1, "prefix", true);
@@ -700,20 +809,35 @@ public abstract class AbstractProcessingStrategyTestCase extends AbstractMuleCon
 
     @Override
     public Future<?> submit(Runnable task) {
-      if (rejections++ < REJECTION_COUNT) {
+      if (rejections.getAndUpdate(r -> r < REJECTION_COUNT ? r + 1 : r) < REJECTION_COUNT) {
         throw new RejectedExecutionException();
       } else {
+        accepted.incrementAndGet();
         return delegate.submit(task);
       }
     }
 
     @Override
     public Future<?> submit(Callable task) {
-      if (rejections++ < REJECTION_COUNT) {
+      if (rejections.getAndUpdate(r -> r < REJECTION_COUNT ? r + 1 : r) < REJECTION_COUNT) {
         throw new RejectedExecutionException();
       } else {
+        accepted.incrementAndGet();
         return delegate.submit(task);
       }
+    }
+
+    public int getRejections() {
+      return rejections.get();
+    }
+
+    public int getAccepted() {
+      return accepted.get();
+    }
+
+    public void reset() {
+      rejections.set(0);
+      accepted.set(0);
     }
   }
 
@@ -749,13 +873,13 @@ public abstract class AbstractProcessingStrategyTestCase extends AbstractMuleCon
     return allOf(greaterThanOrEqualTo(min), lessThanOrEqualTo(max));
   }
 
-  protected void expectRejected() {
+  protected void expectRejected(Class<? extends FlowBackPressureException> backpressureExceptionClass) {
     expectedException.expect(MessagingException.class);
     expectedException.expect(overloadErrorTypeMatcher());
-    expectedException.expectCause(instanceOf(FlowBackPressureException.class));
+    expectedException.expectCause(instanceOf(backpressureExceptionClass));
   }
 
-  private TypeSafeMatcher<MessagingException> overloadErrorTypeMatcher() {
+  private Matcher<MessagingException> overloadErrorTypeMatcher() {
     return new TypeSafeMatcher<MessagingException>() {
 
       private String errorTypeId;
@@ -769,6 +893,11 @@ public abstract class AbstractProcessingStrategyTestCase extends AbstractMuleCon
       protected boolean matchesSafely(MessagingException item) {
         errorTypeId = item.getEvent().getError().get().getErrorType().getIdentifier();
         return FLOW_BACK_PRESSURE_ERROR_IDENTIFIER.equals(errorTypeId);
+      }
+
+      @Override
+      protected void describeMismatchSafely(MessagingException item, Description mismatchDescription) {
+        mismatchDescription.appendValue(item.getEvent().getError().get().getErrorType().getIdentifier());
       }
     };
   }
@@ -806,4 +935,10 @@ public abstract class AbstractProcessingStrategyTestCase extends AbstractMuleCon
      */
     SOURCE
   }
+
+  @Override
+  protected boolean isGracefulShutdown() {
+    return true;
+  }
+
 }
